@@ -53,3 +53,15 @@ git -C bd-main worktree prune
 - Each worktree has its own working directory state but shares the repository history
 - Branches checked out in one worktree cannot be checked out in another simultaneously
 - See the [beads repository](https://github.com/maphew/beads) for development guidelines
+
+## Current Worktrees
+
+- **main**: from steveyegge/beads. Sync frequently, don't change (always branch first)
+- **fix-ci**: debugging the persistent github CI problems
+- **mui**: monitor ui/webui experiments
+- **worktree-test**: dev on beads' incomplete worktree features
+
+## Metadata
+
+- **_working_on/**: {worktree}.md - the current area of focus. Ephemeral, move into history when done.
+- **_history/**: {worktree}/{worktree}_yyyy-mm-dd.md - where date is last-modified
