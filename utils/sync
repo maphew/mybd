@@ -1,0 +1,85 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.14"
+# dependencies = ["rich"]
+# ///
+'''Sync specific files to OneDrive directory and show diffs for updated files.
+
+~/dev/beads is a container for git worktrees on the beads project.
+The files in this dir plus the underscore dirs are metadata for the worktrees.
+This script syncs only the metadata files Onedrive for backup. 
+'''
+
+import shutil
+import os
+from pathlib import Path
+from difflib import unified_diff
+from glob import glob
+from rich.console import Console
+from rich.syntax import Syntax
+console = Console()
+
+SYNC_LIST = ["readme.md", "sync"]
+SYNC_LIST += glob("_working_on/*")
+SYNC_LIST += glob("_history/*")
+SYNC_LIST += glob(".beads/*")
+SYNC_LIST += glob(".github/*")
+
+
+def main() -> None:
+    cwd = os.getcwd()
+    print(f"Hello from {cwd} sync!")
+    
+    # Copy files and directories to OneDrive
+    dest_dir = Path("~/OneDrive/dev/framation/dev/beads").expanduser()
+    
+    # Create destination directory if it doesn't exist
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Process files
+    for file in SYNC_LIST:
+        src_path = Path(cwd) / file
+        if src_path.exists():
+            dest_path = dest_dir / file
+            # Ensure destination subdirectory exists
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            # Read original file if it exists
+            original_content = None
+            if dest_path.exists():
+                with open(dest_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    original_content = f.readlines()
+            # Copy file
+            shutil.copy2(src_path, dest_path)
+            # Read new file
+            with open(dest_path, 'r', encoding='utf-8', errors='ignore') as f:
+                new_content = f.readlines()
+            console.print(f"[cyan]✓[/cyan] Copied [bold]{file}[/bold] to {dest_dir}")
+            # Show diff if file was updated
+            if original_content and original_content != new_content:
+                console.print(f"[yellow]  Changes:[/yellow]")
+                diff = unified_diff(
+                    original_content,
+                    new_content,
+                    fromfile=f"{file} (old)",
+                    tofile=f"{file} (new)",
+                    lineterm="",
+                    n=0
+                )
+                for line in diff:
+                    line = line.rstrip('\n')
+                    if line.startswith("---") or line.startswith("+++"):
+                        console.print(f"[blue]{line}[/blue]")
+                    elif line.startswith("-"):
+                        console.print(f"[red]{line}[/red]")
+                    elif line.startswith("+"):
+                        console.print(f"[green]{line}[/green]")
+                    elif line.startswith("@@"):
+                        console.print(f"[cyan]{line}[/cyan]")
+                    else:
+                        console.print(f"[dim]{line}[/dim]")
+        else:
+            console.print(f"[yellow]⚠[/yellow] Warning: {file} not found in {cwd}")
+
+
+if __name__ == "__main__":
+    main()
