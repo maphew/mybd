@@ -1,5 +1,3 @@
 .bare/
 bd-main/
-bd-main.OLD/
 *.bundle
-.git.STALE/
