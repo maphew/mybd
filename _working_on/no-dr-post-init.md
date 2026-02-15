@@ -33,6 +33,8 @@ Once all issues are created, systematically work through each one, creating a de
 
 IMPORTANT: Always maintain clear awareness of which build directory you are working with at any given time. You must distinguish between the system build directory (system bd) and fix-in-progress development build directory (development bd). The system build directory should be used exclusively for managing issues, running builds, and performing development tasks within the mybd project root. Never use the development build directory for managing issues in the mybd project root - reserve it only for testing and implementing fixes in progress. Before executing any build commands or making changes to the project, verify which build directory context you are in and ensure you are using the appropriate one for the task at hand. If you are uncertain about which build directory to use, default to the system build directory for project root operations.
 
+ALWAYS use system bd with `--no-db` flag (conversely, never use `--no-db` with development bd)
+
 For each issue, engage sub-agents with the specific context needed to diagnose and resolve the problem.
 Monitor the context window consumption throughout this process and trigger a handoff to fresh sub-agents when the context reaches 70% (soft limit), preserving all accumulated knowledge in the transition. 
 
