@@ -22,7 +22,7 @@ scratch: ~/dev/mybd/scratch
 system bd binary: ~/.local/bin/bd
 dev bd binary: ~/dev/mybd/bd-main/bd, ~/dev/mybd/fix-<issue>/bd, etc.
 
-Create a comprehensive Epic plan to achieve zero doctor issues for a beads-using project in a clean environment (~/dev/mybd/scratch). 
+Create a comprehensive plan to achieve zero doctor issues for a beads-using project in a clean environment (~/dev/mybd/scratch). 
 
 Begin running `bd init` in a new directory to initialize the beads tracking system.
 Then execute `bd doctor` to identify all errors and warnings. 
