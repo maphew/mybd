@@ -89,6 +89,26 @@ After all fixes, the clean room test must produce:
 bd doctor v0.x.x  ──────────────  ✓ N passed  ⚠ 0 warnings  ✖ 0 errors
 ```
 
+## Upstream Cross-Reference (steveyegge/beads)
+
+| Our Issue | Upstream Issue/PR | Status | Relevance |
+|-----------|------------------|--------|-----------|
+| **mybd-71w.1** (federation DB name) | None found | — | **Unreported upstream.** Novel bug — should file upstream after fixing. |
+| **mybd-71w.2** (noms LOCK) | PR #1802 (closed, not merged) | Closed | Attempted LOCK cleanup with >5min age threshold. Right idea, wrong approach for init-created locks (0 sec old). |
+| | PR #1850 (merged) | Merged | Added `releaseDiagnosticLocks()` — cleans LOCK between doctor phases, but not after `bd init`. |
+| | Issue #1861 (open) | Open | `bd doctor --fix` hangs on Dolt embedded mode — related deadlock class. |
+| **mybd-71w.3** (git upstream) | Issue #1095 (open) | Open | Generic `doctor.suppress` config — would solve this. No specific issue filed. |
+| **mybd-71w.4** (Claude plugin) | Issue #1095 (open) | Open | Same suppress mechanism solves this. |
+| | Issue #1787 (open) | Open | False positive warnings for specific backend configs — same problem class. |
+| **mybd-71w.5** (init doesn't commit) | Issue #409 (closed) | Closed | Related init file creation issue. No specific issue for auto-commit gap. |
+
+### Key Takeaways for Implementation
+
+1. **mybd-71w.1 is novel** — no upstream awareness. Highest value fix.
+2. **LOCK cleanup (mybd-71w.2)** was attempted in PR #1802 but closed. PR #1850 partially addressed it. The remaining gap is `bd init` not cleaning up after itself.
+3. **Warning suppression (mybd-71w.3, .4)** has upstream support via Issue #1095 but no implementation yet. We can either implement `doctor.suppress` or fix the check logic directly.
+4. **Init workflow (mybd-71w.5)** has no upstream attention — opportunity to contribute.
+
 ## Context for Sub-Agents
 
 - bd source code is in `~/dev/mybd/bd-main/` (Go codebase)
