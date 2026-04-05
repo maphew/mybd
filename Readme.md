@@ -57,9 +57,6 @@ git -C bd-main worktree prune
 ## Current Worktrees
 
 - **main**: from steveyegge/beads. Sync frequently, don't change (always branch first)
-- **fix-ci**: debugging the persistent github CI problems
-- **mui**: monitor ui/webui experiments
-- **worktree-test**: dev on beads' incomplete worktree features
 
 ## Metadata
 
