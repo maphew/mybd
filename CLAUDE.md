@@ -50,14 +50,44 @@ bd close <id>         # Complete work
 <!-- END BEADS INTEGRATION -->
 
 
-## Build & Test
+## PR Hygiene (CRITICAL)
 
-_Add your build and test commands here_
+**One issue per PR, one PR per issue. No piggybacking.**
+
+### Branch base for upstream PRs
+
+This is a fork. `origin/main` diverges from `upstream/main`. When creating
+branches for PRs that target **upstream** (gastownhall/beads):
 
 ```bash
-# Example:
-# npm install
-# npm test
+git fetch upstream
+git checkout -b fix/NNNN-description upstream/main
+```
+
+**NEVER branch from `origin/main` or local `main` for upstream PRs** — that
+drags in every fork-only commit and pollutes the PR history.
+
+Before opening the PR, verify: `git log --oneline HEAD --not upstream/main`
+should show ONLY your commits.
+
+### Worktree / agent branches
+
+When spawning agents with `isolation: "worktree"`, the worktree is created
+from the current HEAD. If HEAD is not on `upstream/main`, the agent must
+rebase onto `upstream/main` before pushing:
+
+```bash
+git fetch upstream
+git rebase --onto upstream/main origin/main <branch>
+```
+
+## Build & Test
+
+```bash
+go build -o bd ./cmd/bd          # build
+go test -short ./...             # fast tests
+go test ./...                    # full suite (before committing)
+go test -race ./...              # with race detection
 ```
 
 ## Architecture Overview
@@ -66,4 +96,4 @@ _Add a brief overview of your project architecture_
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
