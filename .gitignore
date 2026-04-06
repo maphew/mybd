@@ -9,3 +9,10 @@ scratch/cleanroom/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+.beads/backup/
+
+# Git worktrees managed outside the repo
+.worktrees/
+
+# Temporary files
+tmp/
