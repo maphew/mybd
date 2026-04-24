@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beads Codebase Health Assessment</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #5b6472;
+      --line: #d8dee8;
+      --panel: #f7f9fc;
+      --accent: #0f766e;
+      --warn: #a16207;
+      --risk: #b42318;
+      --good: #166534;
+      --code: #102033;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 40px 24px 72px;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+      margin-bottom: 28px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 38px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 36px 0 12px;
+      font-size: 24px;
+      border-top: 1px solid var(--line);
+      padding-top: 24px;
+    }
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 18px;
+    }
+    p { margin: 0 0 14px; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 6px 0; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #eef2f7;
+      color: var(--code);
+      padding: 0.12em 0.35em;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    pre {
+      background: #102033;
+      color: #f8fafc;
+      padding: 16px;
+      overflow-x: auto;
+      border-radius: 8px;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .summary {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 22px 0;
+    }
+    .grade {
+      display: inline-block;
+      font-weight: 700;
+      color: #fff;
+      background: var(--warn);
+      border-radius: 999px;
+      padding: 3px 10px;
+      margin-left: 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+      background: #fff;
+    }
+    .card strong {
+      display: block;
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .card span { color: var(--muted); }
+    .risk { color: var(--risk); font-weight: 700; }
+    .good { color: var(--good); font-weight: 700; }
+    .phase {
+      border-left: 4px solid var(--accent);
+      padding-left: 16px;
+      margin: 20px 0;
+    }
+    @media (max-width: 640px) {
+      main { padding: 28px 18px 56px; }
+      h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Beads Codebase Health Assessment</h1>
+    <div class="meta">Date: 2026-04-24 · Scope: local checkout <code>./bd-main</code>, upstream <code>gastownhall/beads</code></div>
+  </header>
+
+  <section class="summary">
+    <p><strong>Executive summary:</strong> Beads is in a workable but stressed state. It has real engineering assets: a strong test culture, broad CI, regression and migration gates, meaningful documentation, and a clear product thesis. It is also carrying the normal scars of a fast, model-heavy first year: a very large CLI package, transitional global state, broad interfaces, duplicated storage behavior across server and embedded Dolt modes, release and packaging complexity, and a backlog clustered around data safety.</p>
+    <p>Overall health: <span class="grade">C+ / B-</span></p>
+    <p>The codebase is shippable with discipline, but refactoring should now become a first-class program rather than opportunistic cleanup. The safest path is staged extraction, not a rewrite.</p>
+  </section>
+
+  <h2>Evidence Snapshot</h2>
+  <div class="grid">
+    <div class="card"><strong>1,566</strong><span>tracked files</span></div>
+    <div class="card"><strong>1,074</strong><span>tracked Go files</span></div>
+    <div class="card"><strong>524</strong><span>Go test files</span></div>
+    <div class="card"><strong>320,398</strong><span>tracked Go lines</span></div>
+    <div class="card"><strong>178,429</strong><span>Go test lines</span></div>
+    <div class="card"><strong>613</strong><span>Go files in <code>cmd/bd</code></span></div>
+    <div class="card"><strong>26</strong><span>nested local worktrees</span></div>
+    <div class="card"><strong>5 ahead / 3 behind</strong><span>local branch vs <code>upstream/main</code></span></div>
+  </div>
+
+  <p>Local branch: <code>fix/admin-embedded-mode</code>. Local dirty files in <code>bd-main</code>: <code>cmd/bd/dolt.go</code> and <code>cmd/bd/dolt_embedded_test.go</code>. The local Beads database reports 11 total issues, 8 open, 1 in progress, and 0 blocked.</p>
+  <p class="risk">Operational warning: running <code>bd stats</code> in <code>bd-main</code> triggered an auto-push failure because local and remote Dolt histories have no common ancestor.</p>
+
+  <h3>Validation Run</h3>
+  <pre><code>go test -tags gms_pure_go -short -skip '^TestEmbedded' ./...</code></pre>
+  <p class="good">Result: passed.</p>
+  <p>Slowest observed packages: <code>cmd/bd</code> at 102.152s, <code>internal/gitlab</code> at 10.836s, <code>internal/storage/dolt</code> at 5.982s, and <code>internal/storage/doltutil</code> at 5.014s.</p>
+
+  <h2>What Is Healthy</h2>
+  <h3>Test Investment Is Real</h3>
+  <p>The repository has a high ratio of tests to implementation. Large suites exist around CLI behavior, Dolt storage, migrations, issue operations, tracker integrations, regression scenarios, and embedded Dolt flows. CI also separates fast PR checks, embedded Dolt checks, nightly full tests, regression tests, migration tests, release checks, documentation deployment, and Nix builds.</p>
+
+  <h3>Product Boundaries Are Visible</h3>
+  <p>The domain is visible through <code>internal/types</code>, <code>internal/storage</code>, <code>internal/storage/dolt</code>, <code>internal/storage/embeddeddolt</code>, <code>internal/storage/issueops</code>, external tracker packages, UI helpers, validation, config, and Dolt server packages. The architecture is not absent. It is partially submerged under CLI orchestration.</p>
+
+  <h3>Release Engineering Is Serious</h3>
+  <p>The project has GoReleaser, npm packaging, PyPI integration for MCP, Docusaurus docs, winget metadata, Nix support, install scripts, checksum/security docs, and cross-version smoke tests. That indicates the project has crossed into product territory.</p>
+
+  <h3>The Backlog Names the Right Problems</h3>
+  <p>The local issue tracker already clusters risk around embedded/server Dolt reliability, remote/sync data safety, admin/status command regressions, ready/list JSON behavior, and packaging portability. That aligns with the code evidence.</p>
+
+  <h2>Primary Risks</h2>
+  <h3>1. <code>cmd/bd</code> Is Too Large</h3>
+  <p><code>cmd/bd</code> has 613 Go files and roughly 183k lines. It imports most internal packages directly and still contains global state, command lifecycle logic, storage selection, formatting, error exits, hooks, telemetry, profiling, and domain workflows.</p>
+  <p><strong>Refactoring direction:</strong> keep Cobra as the adapter, move command behavior into injectable services, and make process exit and terminal output adapter concerns.</p>
+
+  <h3>2. Storage Interfaces Are Too Broad</h3>
+  <p><code>Storage</code> and <code>DoltStorage</code> expose issue CRUD, dependencies, labels, queries, wisps, events, config, transactions, merge slots, version control, sync, federation, compaction, and advanced queries. That breadth makes every concrete store feel responsible for the whole product.</p>
+  <p><strong>Refactoring direction:</strong> introduce narrow ports such as <code>IssueReader</code>, <code>IssueWriter</code>, <code>DependencyStore</code>, <code>VersionedStore</code>, <code>RemoteSyncStore</code>, and <code>MaintenanceStore</code>.</p>
+
+  <h3>3. Dolt Lifecycle Is the Highest Operational Risk</h3>
+  <p>The most concerning live issues are around embedded startup, lock lifecycle, journal corruption, bootstrap stale server state, watcher races, migration idempotence, server auto-start, stale locks, and remote push/pull safety.</p>
+  <p><strong>Refactoring direction:</strong> treat Dolt lifecycle as its own subsystem with a small state machine and scenario tests.</p>
+
+  <h3>4. Process Exit and JSON Contracts Need Hardening</h3>
+  <p>Direct <code>os.Exit</code> calls in command code make failures harder to test and make JSON/error contracts harder to preserve. Commands should return typed results and typed errors, then a single CLI runner should map them to text, JSON, and exit codes.</p>
+
+  <h3>5. Documentation Is Extensive but Likely Drifty</h3>
+  <p>The docs are strong, but there are many overlapping surfaces: root docs, versioned site docs, integration docs, agent docs, generated references, setup docs, testing docs, and old design notes. Canonical repository URLs and install instructions should be normalized.</p>
+
+  <h2>Recommended Refactoring Program</h2>
+  <div class="phase">
+    <h3>Phase 0: Stabilize Before Large Refactors</h3>
+    <p>Resolve the <code>bd-main</code> Dolt history divergence, land or reject high-priority embedded/server lifecycle fixes, make auto-push policy predictable, and keep the short Go suite green.</p>
+  </div>
+  <div class="phase">
+    <h3>Phase 1: Create a CLI Service Layer</h3>
+    <p>Introduce services for high-churn commands such as <code>ready</code>, <code>list</code>, <code>show</code>, <code>create</code>, <code>update</code>, <code>close</code>, <code>dolt</code>, and <code>doctor</code>. Cobra should parse and render, not own behavior.</p>
+  </div>
+  <div class="phase">
+    <h3>Phase 2: Narrow Storage Capabilities</h3>
+    <p>Add narrow interfaces at use sites, move common SQL issue behavior into <code>issueops</code>, and add contract tests that run against both server and embedded implementations where behavior should match.</p>
+  </div>
+  <div class="phase">
+    <h3>Phase 3: Make Dolt Lifecycle a State Machine</h3>
+    <p>Centralize state detection for uninitialized, embedded, server, unavailable, migration-required, lock-contended, remote-configured, remote-diverged, and recovery-required states.</p>
+  </div>
+  <div class="phase">
+    <h3>Phase 4: Clean Packaging and Docs Drift</h3>
+    <p>Normalize repository URLs and install paths across README, package metadata, PyPI metadata, website, and scripts. Add release-blocking consistency checks.</p>
+  </div>
+
+  <h2>GPT-5.5 Refactoring Rules</h2>
+  <ol>
+    <li>Start from a Beads issue with a single behavioral objective.</li>
+    <li>Capture existing behavior with a failing or characterization test.</li>
+    <li>Extract one boundary at a time.</li>
+    <li>Preserve CLI output and JSON contracts unless the issue explicitly changes them.</li>
+    <li>Run targeted tests first, then the short suite.</li>
+    <li>File follow-up issues instead of expanding the patch.</li>
+  </ol>
+
+  <h2>Top Follow-Up Issues</h2>
+  <ol>
+    <li>Extract <code>bd dolt status/show</code> into a service with JSON contract tests.</li>
+    <li>Replace direct <code>os.Exit</code> calls in <code>cmd/bd/dolt.go</code> with returned typed errors.</li>
+    <li>Define lifecycle state detection for embedded, server, and recovery modes.</li>
+    <li>Add server and embedded contract tests for ready/list/show/create/update/close.</li>
+    <li>Split <code>DoltStorage</code> usage at command call sites into narrow capability interfaces.</li>
+    <li>Resolve <code>bd-main</code> Dolt remote divergence and document the recovery.</li>
+    <li>Normalize canonical repository URLs across Go docs, npm metadata, PyPI metadata, and install scripts.</li>
+    <li>Add a contributor PR intake checklist that protects existing contributor work while reducing backlog.</li>
+  </ol>
+
+  <h2>Bottom Line</h2>
+  <p>Beads is past the point where "vibe-coded" is the right operating model. It has enough users, storage complexity, tests, packaging, and recovery surface that it needs product-grade maintenance. The good news is that the foundations are much better than a typical one-year prototype: the tests and CI are strong enough to support careful refactoring.</p>
+  <p><strong>The right next move is a stabilization and extraction campaign, not a rewrite.</strong></p>
+</main>
+</body>
+</html>
