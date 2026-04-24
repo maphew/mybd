@@ -32,3 +32,4 @@
 {"id":"int-56ea0a39","kind":"field_change","created_at":"2026-04-24T18:11:51.50448713Z","actor":"maphew","issue_id":"mybd-668","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"completed"}}
 {"id":"int-38244acb","kind":"field_change","created_at":"2026-04-24T18:12:22.385902412Z","actor":"maphew","issue_id":"mybd-uw6","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"completed"}}
 {"id":"int-ebffb08d","kind":"field_change","created_at":"2026-04-24T18:16:46.047364323Z","actor":"maphew","issue_id":"mybd-4dq","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"completed"}}
+{"id":"int-20695bb9","kind":"field_change","created_at":"2026-04-24T18:24:13.565667554Z","actor":"maphew","issue_id":"mybd-8pt","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"completed"}}
