@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Upstream beads PR triage — 2026-04-27</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; margin: 1.5rem; max-width: 1400px; }
+  h1 { margin: 0 0 .25rem; }
+  .meta { color: #666; margin-bottom: 1rem; }
+  .cards { display: flex; gap: .75rem; margin: 1rem 0; flex-wrap: wrap; }
+  .card { flex: 1; min-width: 130px; background: #f3f4f6; padding: .75rem 1rem; border-radius: 8px; }
+  .card .big { font-size: 1.8rem; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { padding: .5rem .6rem; border-bottom: 1px solid #e5e7eb; vertical-align: top; text-align: left; }
+  th { background: #f9fafb; position: sticky; top: 0; cursor: pointer; user-select: none; }
+  th:hover { background: #eef2ff; }
+  td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.title { max-width: 560px; }
+  .t-head { font-weight: 600; }
+  .t-body { color: #666; font-size: 12.5px; margin: .25rem 0; }
+  .t-factors { font-size: 11.5px; }
+  .f { display: inline-block; padding: 1px 5px; margin: 1px 2px 1px 0; border-radius: 3px; }
+  .f.plus { background: #dcfce7; color: #14532d; }
+  .f.minus { background: #fee2e2; color: #7f1d1d; }
+  .f.zero { background: #f3f4f6; color: #555; }
+  .ok { color: #166534; }
+  .warn { color: #92400e; }
+  .bad { color: #991b1b; font-weight: 600; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #fde68a; color: #78350f; vertical-align: middle; margin-left: 4px; }
+  .tier-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; color: #fff; }
+  .tier-1 .tier-badge, .tier-badge.tier-1 { background: #15803d; }
+  .tier-2 .tier-badge, .tier-badge.tier-2 { background: #2563eb; }
+  .tier-3 .tier-badge, .tier-badge.tier-3 { background: #ca8a04; }
+  .tier-4 .tier-badge, .tier-badge.tier-4 { background: #6b7280; }
+  .tier-5 .tier-badge, .tier-badge.tier-5 { background: #b91c1c; }
+  tr.tier-1 { background: #f0fdf4; }
+  tr.tier-2 { background: #eff6ff; }
+  tr.tier-3 { background: #fefce8; }
+  tr.tier-5 { background: #fef2f2; }
+  .filters { margin: 1rem 0; display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .filters button { padding: .35rem .75rem; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+  .filters button.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+  .muted { color: #6b7280; }
+  ol li { margin-bottom: .35rem; }
+  details { margin-top: 1rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    .card { background: #1f2937; }
+    th { background: #1f2937; }
+    th:hover { background: #312e81; }
+    .t-body { color: #aaa; }
+    .f.plus { background: #14532d; color: #dcfce7; }
+    .f.minus { background: #7f1d1d; color: #fee2e2; }
+    .f.zero { background: #374151; color: #ddd; }
+    tr.tier-1 { background: #052e16; }
+    tr.tier-2 { background: #172554; }
+    tr.tier-3 { background: #422006; }
+    tr.tier-5 { background: #450a0a; }
+    th, td { border-bottom-color: #374151; }
+    .filters button { background: #1f2937; color: #eee; border-color: #374151; }
+  }
+</style>
+</head><body>
+
+<h1>Upstream beads PR triage</h1>
+<div class="meta">
+  Source: <code>steveyegge/beads</code> · 50 open PRs · generated 2026-04-27 22:00 UTC
+</div>
+
+<div class="cards"><div class="card"><div class="big">8</div><div>Merge candidates</div></div><div class="card"><div class="big">11</div><div>Review soon</div></div><div class="card"><div class="big">13</div><div>Needs attention</div></div><div class="card"><div class="big">7</div><div>Blocked / low</div></div><div class="card"><div class="big">11</div><div>Hold</div></div></div>
+
+<details open>
+<summary>Top 10 picks (by score)</summary>
+<ol><li><a href="https://github.com/gastownhall/beads/pull/3482" target="_blank">#3482</a> <strong>fix(export): sort memory keys for deterministic JSONL output (GH#3474)</strong> <span class="muted">— kevglynn, score +6</span></li><li><a href="https://github.com/gastownhall/beads/pull/3488" target="_blank">#3488</a> <strong>fix(gate): drop removed &#x27;merged&#x27; field from gh pr view call (GH#3411)</strong> <span class="muted">— kevglynn, score +6</span></li><li><a href="https://github.com/gastownhall/beads/pull/3503" target="_blank">#3503</a> <strong>fix(history): respect --json flag when issue has no history</strong> <span class="muted">— seanmartinsmith, score +6</span></li><li><a href="https://github.com/gastownhall/beads/pull/3555" target="_blank">#3555</a> <strong>test(setup): use filepath.Join in TestGeminiSettingsPaths assertions</strong> <span class="muted">— seanmartinsmith, score +6</span></li><li><a href="https://github.com/gastownhall/beads/pull/3557" target="_blank">#3557</a> <strong>fix(hooks): preserve user content when migrating v0.62.x → v1.0.x (GH#3536)</strong> <span class="muted">— pmgledhill102, score +6</span></li><li><a href="https://github.com/gastownhall/beads/pull/3549" target="_blank">#3549</a> <strong>fix: resolve symlinks in DirToFileURL for cross-filesystem-view backup remotes</strong> <span class="muted">— shaunc, score +5</span></li><li><a href="https://github.com/gastownhall/beads/pull/3550" target="_blank">#3550</a> <strong>fix(dolt): bd dolt status probes SQL when local server is externally-managed (be-0eyj)</strong> <span class="muted">— quad341, score +5</span></li><li><a href="https://github.com/gastownhall/beads/pull/3556" target="_blank">#3556</a> <strong>fix(hooks): inject BEADS INTEGRATION above trailing exec block (GH#3537)</strong> <span class="muted">— pmgledhill102, score +5</span></li><li><a href="https://github.com/gastownhall/beads/pull/3267" target="_blank">#3267</a> <strong>fix(create): add --rig flag to bd create for Gas Town rig routing</strong> <span class="muted">— rohanmyer, score +4</span></li><li><a href="https://github.com/gastownhall/beads/pull/3282" target="_blank">#3282</a> <strong>fix: include _meta truncation indicator in bd list --json</strong> <span class="muted">— jakeefr, score +4</span></li></ol>
+</details>
+
+<details>
+<summary>Scoring rubric</summary>
+<ul>
+  <li><strong>+3</strong> bug fix · <strong>+2</strong> perf / test · <strong>+1</strong> feat / refactor · <strong>+0</strong> docs / chore</li>
+  <li><strong>+2</strong> small (≤50) · <strong>+1</strong> medium (≤300) · <strong>−2</strong> very large (&gt;1000)</li>
+  <li><strong>+1</strong> fresh (&lt;1d) · <strong>+1</strong> closes a tracked issue · <strong>+2</strong> approved</li>
+  <li><strong>−1</strong> stale (&gt;7d since update) · <strong>−1</strong> open &gt;14d · <strong>−1</strong> dependabot</li>
+  <li><strong>−2</strong> changes requested · <strong>−3</strong> draft · <strong>−3</strong> merge conflicts</li>
+</ul>
+<p>Tiers: T1 ≥ 5 (merge candidate) · T2 ≥ 3 (review soon) · T3 ≥ 1 (needs attention) · T4 ≥ −2 (blocked/low) · T5 &lt; −2 (hold).</p>
+</details>
+
+<div class="filters">
+  <span class="muted">Filter:</span>
+  <button data-tier="all" class="active">All (50)</button>
+  <button data-tier="T1">T1 (8)</button>
+  <button data-tier="T2">T2 (11)</button>
+  <button data-tier="T3">T3 (13)</button>
+  <button data-tier="T4">T4 (7)</button>
+  <button data-tier="T5">T5 (11)</button>
+</div>
+
+<table id="pr-table">
+<thead>
+<tr>
+  <th>#</th><th>Tier</th><th>Title / factors</th><th>Author</th>
+  <th>± lines</th><th>Review</th><th>Merge</th><th>Dates</th>
+</tr>
+</thead>
+<tbody>
+
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3482" target="_blank">#3482</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+6</small></td>
+      <td class="title">
+        <div class="t-head">fix(export): sort memory keys for deterministic JSONL output (GH#3474) </div>
+        <div class="t-body">## Summary - Sorts `_type:&quot;memory&quot;` keys alphabetically before writing to JSONL, eliminating non-deterministic order from Go map iteration - Fixes noisy diffs i…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (13 lines)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">10/3<br><small>1 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-25</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3488" target="_blank">#3488</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+6</small></td>
+      <td class="title">
+        <div class="t-head">fix(gate): drop removed &#x27;merged&#x27; field from gh pr view call (GH#3411) </div>
+        <div class="t-body">## Summary - Removes `merged` from `gh pr view --json` call — field was removed in gh CLI v2.89+ - Removes `Merged bool` from `ghPRStatus` struct - Simplifies C…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (14 lines)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">5/9<br><small>1 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-25</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3503" target="_blank">#3503</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+6</small></td>
+      <td class="title">
+        <div class="t-head">fix(history): respect --json flag when issue has no history </div>
+        <div class="t-body">## Problem `bd history &lt;id&gt; --json` returns prose, not JSON, when the bead has no history. Breaks any consumer that pipes the output to `jq` or otherwise expect…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (33 lines)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>seanmartinsmith</td>
+      <td class="num">28/5<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-26<br>upd 2026-04-26</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="test">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3555" target="_blank">#3555</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+6</small></td>
+      <td class="title">
+        <div class="t-head">test(setup): use filepath.Join in TestGeminiSettingsPaths assertions </div>
+        <div class="t-body">## Problem `TestGeminiSettingsPaths` at `cmd/bd/setup/gemini_test.go:469-479` fails on Windows: ``` gemini_test.go:472: unexpected project path: \my\project\.ge…</div>
+        <div class="t-factors"><span class="f plus">+2 type=test</span> <span class="f plus">+2 small (8 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>seanmartinsmith</td>
+      <td class="num">4/4<br><small>1 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3557" target="_blank">#3557</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+6</small></td>
+      <td class="title">
+        <div class="t-head">fix(hooks): preserve user content when migrating v0.62.x → v1.0.x (GH#3536) </div>
+        <div class="t-body">Fixes #3536. ## Summary `preservePreexistingHooks` (`cmd/bd/hooks.go`) treated any file containing the `# --- BEGIN BEADS INTEGRATION` marker as wholly bd-manag…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (193 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>pmgledhill102</td>
+      <td class="num">190/3<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3549" target="_blank">#3549</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+5</small></td>
+      <td class="title">
+        <div class="t-head">fix: resolve symlinks in DirToFileURL for cross-filesystem-view backup remotes </div>
+        <div class="t-body">## Summary When the operator&#x27;s pwd traverses a symlink (e.g. `~/src` → `/data/disk-b/src/`) but the Dolt SQL server runs in a container with a bind-mount of the…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (108 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>shaunc</td>
+      <td class="num">107/1<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3550" target="_blank">#3550</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+5</small></td>
+      <td class="title">
+        <div class="t-head">fix(dolt): bd dolt status probes SQL when local server is externally-managed (be-0eyj) </div>
+        <div class="t-body">## Summary `bd dolt status` previously printed **\&quot;Dolt server: not running\&quot;** when the rig pointed at a **local** Dolt sql-server whose lifecycle was owned by…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (150 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">143/7<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-1" data-tier="T1" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3556" target="_blank">#3556</a></td>
+      <td class="tier"><span class="tier-badge tier-1">T1</span><br><small>+5</small></td>
+      <td class="title">
+        <div class="t-head">fix(hooks): inject BEADS INTEGRATION above trailing exec block (GH#3537) </div>
+        <div class="t-body">Fixes #3537. ## Summary When `bd hooks install --beads` (and `bd init`) preserves an existing hook (typically copying `.git/hooks/&lt;name&gt;` into `.beads/hooks/&lt;na…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f zero">0 large (419 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>pmgledhill102</td>
+      <td class="num">418/1<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3267" target="_blank">#3267</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">fix(create): add --rig flag to bd create for Gas Town rig routing </div>
+        <div class="t-body">## Problem `gt done` (and agents following Gas Town documentation) calls `bd create --rig=&lt;rig&gt;` to create MR beads in a specific rig&#x27;s beads database. However,…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (30 lines)</span> <span class="f minus">-1 stale (13d since update)</span></div>
+      </td>
+      <td>rohanmyer</td>
+      <td class="num">29/1<br><small>1 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-14<br>upd 2026-04-14</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3282" target="_blank">#3282</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">fix: include _meta truncation indicator in bd list --json </div>
+        <div class="t-body">Fixes #3280. Added `_meta` field to JSON output from `bd list --json` to indicate when results are truncated. Makes it easier to detect pagination needs program…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (13 lines)</span> <span class="f minus">-2 changes requested</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>jakeefr</td>
+      <td class="num">12/1<br><small>1 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-15<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3438" target="_blank">#3438</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">fix: bd admin commands fail with &#x27;embedded mode&#x27; error in server mode </div>
+        <div class="t-body">## Problem `bd admin compact`, `bd admin cleanup`, and `bd admin reset` all return: ``` Error: &#x27;bd admin&#x27; is not yet supported in embedded mode ``` ...even when…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (137 lines)</span></div>
+      </td>
+      <td>medhatgalal</td>
+      <td class="num">130/7<br><small>5 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-23<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3483" target="_blank">#3483</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">fix(init): chmod existing .beads/ to 0700 instead of only warning (GH#3391) </div>
+        <div class="t-body">## Summary - `bd init` now fixes permissions on pre-existing `.beads/` directories to 0700 - Adds `config.FixBeadsDirPermissions()` that checks and repairs over…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+2 small (34 lines)</span> <span class="f minus">-2 changes requested</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">34/0<br><small>3 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3540" target="_blank">#3540</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">perf(storage): gate compat migrations with tracking table </div>
+        <div class="t-body">## What this changes Every time a `bd` command opens the Dolt store, the backward-compat migration runner unconditionally executed all 17 entries in `compatMigr…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f plus">+1 medium (180 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">176/4<br><small>3 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3560" target="_blank">#3560</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+4</small></td>
+      <td class="title">
+        <div class="t-head">fix(create): validate --deps type and fix blocked-by/depends-on aliases </div>
+        <div class="t-body">## Summary - **`blocked-by:&lt;id&gt;` now recognized** as an alias for `blocks` with correct direction (new issue depends on target), matching how `bd dep add --bloc…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f zero">0 large (674 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">659/15<br><small>11 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3275" target="_blank">#3275</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+3</small></td>
+      <td class="title">
+        <div class="t-head">fix(init): run embedded post-init diagnostics </div>
+        <div class="t-body">## Summary - run the post-init verification path after `bd init` in embedded mode as well as server mode - validate embedded init against the real read-only emb…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (180 lines)</span> <span class="f minus">-1 stale (13d since update)</span></div>
+      </td>
+      <td>oculairmedia</td>
+      <td class="num">162/18<br><small>3 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-14<br>upd 2026-04-14</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3526" target="_blank">#3526</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+3</small></td>
+      <td class="title">
+        <div class="t-head">perf(issueops): replace per-id wisp check in 3 bulk fetchers </div>
+        <div class="t-body">## What this changes `bd list --json --include-infra --include-gates --all --limit 50000` on a 50K-issue rig used to time out at 124s; on the 50,956-issue gm ci…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f plus">+1 medium (148 lines)</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">126/22<br><small>3 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-26<br>upd 2026-04-26</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3535" target="_blank">#3535</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+3</small></td>
+      <td class="title">
+        <div class="t-head">Fix issue-prefix precedence in issueops ID generation </div>
+        <div class="t-body">## Summary Companion fix to #2469. The YAML config `issue-prefix` precedence was corrected in `cmd/bd/create.go` but the same issue exists in `internal/storage/…</div>
+        <div class="t-factors"><span class="f plus">+2 small (15 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>trillium</td>
+      <td class="num">12/3<br><small>1 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="test">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3551" target="_blank">#3551</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+3</small></td>
+      <td class="title">
+        <div class="t-head">test: AD-01 isProductionPort + DB-name firewall </div>
+        <div class="t-body">## What this changes Test processes can no longer accidentally connect to a production Dolt server. Two new defenses: 1. **Production-port detection.** `BEADS_T…</div>
+        <div class="t-factors"><span class="f plus">+2 type=test</span> <span class="f zero">0 large (312 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">302/10<br><small>16 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-2" data-tier="T2" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3559" target="_blank">#3559</a></td>
+      <td class="tier"><span class="tier-badge tier-2">T2</span><br><small>+3</small></td>
+      <td class="title">
+        <div class="t-head">feat(setup): omit bd dolt push from template when no remote configured </div>
+        <div class="t-body">## Summary - Adds `RenderOpts` with `HasRemote` flag to the template rendering system (`internal/templates/agents/render.go`). When `HasRemote` is false, `bd do…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f plus">+1 medium (268 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">238/30<br><small>9 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3435" target="_blank">#3435</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">/go.{mod,sum}: bump dolt driver </div>
+        <div class="t-body"></div>
+        <div class="t-factors"><span class="f plus">+2 small (41 lines)</span></div>
+      </td>
+      <td>coffeegoddd</td>
+      <td class="num">21/20<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-22<br>upd 2026-04-22</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3462" target="_blank">#3462</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">feat(schema): stderr progress + large-rig warning for MigrateUp (be-8ja) </div>
+        <div class="t-body">## Summary Emits a one-line progress message to stderr before each migration&#x27;s statement-execution loop (&quot;Applying migration NNNN: name…&quot;) and a ` done (N.Ns)` …</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f plus">+1 medium (261 lines)</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">261/0<br><small>3 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3492" target="_blank">#3492</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">fix(embeddeddolt): pass DOLT_REMOTE_USER to push/pull/fetch </div>
+        <div class="t-body">## Summary Embedded-mode `bd dolt push`/`pull`/`fetch` failed against any Dolt remotesapi server that requires `CLONE_ADMIN` authentication (DoltHub, self-hoste…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (76 lines)</span> <span class="f minus">-2 changes requested</span></div>
+      </td>
+      <td>GGPrompts</td>
+      <td class="num">60/16<br><small>2 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3493" target="_blank">#3493</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">fix(storage/dolt): DOLT_COMMIT after label/comment writes </div>
+        <div class="t-body">## Summary `DoltStore.{AddLabel,RemoveLabel,AddComment,AddIssueComment,ImportIssueComment}` only committed the SQL transaction; they did not fire `CALL DOLT_COM…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f plus">+1 medium (142 lines)</span> <span class="f minus">-2 changes requested</span></div>
+      </td>
+      <td>GGPrompts</td>
+      <td class="num">134/8<br><small>3 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3548" target="_blank">#3548</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">Add suppress-history update primitive </div>
+        <div class="t-body">## Problem Some downstream callers need to persist issue changes without appending a durable update-history event row for every volatile metadata update. ## Why…</div>
+        <div class="t-factors"><span class="f plus">+1 medium (154 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>kingfly55</td>
+      <td class="num">141/13<br><small>7 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3558" target="_blank">#3558</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+2</small></td>
+      <td class="title">
+        <div class="t-head">init: harden --remote error path and broaden test coverage </div>
+        <div class="t-body">## Summary Three follow-ups to merged #3527 (`bd init --remote` bootstrap path). - **mybd-cb4** — `init_embedded_test.go::remote_bootstraps_existing_dolt_data` …</div>
+        <div class="t-factors"><span class="f plus">+1 medium (68 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span></div>
+      </td>
+      <td>maphew</td>
+      <td class="num">67/1<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3401" target="_blank">#3401</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">feat(session): capture created_by_session on bd create (phase 1a of #3400) </div>
+        <div class="t-body">Refs #3400 ## Problem bd has a first-class `closed_by_session` column that captures which Claude Code session closed a bead (added in commit `b362b3682` per dec…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f zero">0 large (323 lines)</span></div>
+      </td>
+      <td>seanmartinsmith</td>
+      <td class="num">306/17<br><small>13 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-21<br>upd 2026-04-26</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3405" target="_blank">#3405</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">feat(session): capture claimed_by_session on claim / status=in_progress (phase 1b of #3400) </div>
+        <div class="t-body">Stacked on #3401 (phase 1a). this PR is only mergeable once #3401 lands — GitHub will auto-rebase the diff onto `main` after that, or i can rebase + force-push …</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f zero">0 large (557 lines)</span></div>
+      </td>
+      <td>seanmartinsmith</td>
+      <td class="num">519/38<br><small>22 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-21<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3439" target="_blank">#3439</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">fix(doctor): run full pipeline in embedded mode </div>
+        <div class="t-body">## Summary Fixes the silent no-op where `bd doctor` short-circuited in embedded mode — the default backend — hiding ~70 diagnostic checks behind a three-bullet …</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f zero">0 large (590 lines)</span> <span class="f minus">-2 changes requested</span></div>
+      </td>
+      <td>sjsyrek</td>
+      <td class="num">494/96<br><small>16 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-23<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3452" target="_blank">#3452</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">feat(cli): add bd prove issue evidence command </div>
+        <div class="t-body">## Summary - add a native `bd prove &lt;id&gt;` command - emit deterministic proof packets with classification, confidence, path evidence, duplicate candidates, and r…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f zero">0 large (606 lines)</span></div>
+      </td>
+      <td>acrinym</td>
+      <td class="num">606/0<br><small>3 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="chore">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3468" target="_blank">#3468</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">chore(deps): bump github.com/anthropics/anthropic-sdk-go from 1.37.0 to 1.38.0 </div>
+        <div class="t-body">Bumps [github.com/anthropics/anthropic-sdk-go](https://github.com/anthropics/anthropic-sdk-go) from 1.37.0 to 1.38.0. &lt;details&gt; &lt;summary&gt;Release notes&lt;/summary&gt;…</div>
+        <div class="t-factors"><span class="f plus">+2 small (22 lines)</span> <span class="f minus">-1 dependabot routine</span></div>
+      </td>
+      <td>app/dependabot</td>
+      <td class="num">19/3<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="chore">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3469" target="_blank">#3469</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">chore(deps): bump github.com/dolthub/driver from 1.84.1 to 1.86.4 </div>
+        <div class="t-body">Bumps [github.com/dolthub/driver](https://github.com/dolthub/driver) from 1.84.1 to 1.86.4. &lt;details&gt; &lt;summary&gt;Release notes&lt;/summary&gt; &lt;p&gt;&lt;em&gt;Sourced from &lt;a hr…</div>
+        <div class="t-factors"><span class="f plus">+2 small (41 lines)</span> <span class="f minus">-1 dependabot routine</span></div>
+      </td>
+      <td>app/dependabot</td>
+      <td class="num">21/20<br><small>2 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-3" data-tier="T3" data-kind="docs">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3509" target="_blank">#3509</a></td>
+      <td class="tier"><span class="tier-badge tier-3">T3</span><br><small>+1</small></td>
+      <td class="title">
+        <div class="t-head">docs(import): enumerate all fields the importer handles in --help </div>
+        <div class="t-body">## Problem `bd import --help` lists only four optional fields: &gt; &quot;Optional fields: description, issue_type (type), priority, acceptance_criteria.&quot; But `bd impor…</div>
+        <div class="t-factors"><span class="f plus">+2 small (28 lines)</span> <span class="f minus">-2 changes requested</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>seanmartinsmith</td>
+      <td class="num">26/2<br><small>1 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-26<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3395" target="_blank">#3395</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>+0</small></td>
+      <td class="title">
+        <div class="t-head">Add The Agentic Covenant — agentic-forward Code of Conduct and community standards </div>
+        <div class="t-body">## Summary This PR adds complete community standards to the beads project, checking every box on the [GitHub Community Standards page](https://github.com/gastow…</div>
+        <div class="t-factors"><span class="f zero">0 large (590 lines)</span></div>
+      </td>
+      <td>kevglynn</td>
+      <td class="num">588/2<br><small>9 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-21<br>upd 2026-04-23</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3417" target="_blank">#3417</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-1</small></td>
+      <td class="title">
+        <div class="t-head">fix(dolt): batch wisp-ID partition in bulk hydrators (GH#3414) </div>
+        <div class="t-body">## Summary Fixes #3414 — every mutating `bd` command (`create` / `close` / `update`) and bare `bd ready` against a remote Dolt backend hangs ~10–15s with: ``` W…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f zero">0 large (836 lines)</span> <span class="f minus">-3 merge conflicts</span> <span class="f minus">-2 changes requested</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>harry-miller-trimble</td>
+      <td class="num">687/149<br><small>10 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-21<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3422" target="_blank">#3422</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-1</small></td>
+      <td class="title">
+        <div class="t-head">feat(nix): turn packages into an overlay to allow for overriding </div>
+        <div class="t-body">## Summary Turn the nix packages into an overlay so they can be more easily overridden. ## Details Currently the exported bd / default package is a stdenv.mkDer…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f plus">+1 medium (130 lines)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>DylanRJohnston</td>
+      <td class="num">63/67<br><small>4 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-22<br>upd 2026-04-22</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3475" target="_blank">#3475</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-1</small></td>
+      <td class="title">
+        <div class="t-head">feat(telemetry): adopt standard OTel SDK env vars, wire WrapStorage, partition bd.* by bd.prefix </div>
+        <div class="t-body">## Summary Three related changes: 1. Telemetry configuration moves to the standard OpenTelemetry SDK environment variables, behind an explicit `BD_OTEL_ENABLED=…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f minus">-2 very large (1509 lines)</span></div>
+      </td>
+      <td>GraemeF</td>
+      <td class="num">1372/137<br><small>19 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-25<br>upd 2026-04-26</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3533" target="_blank">#3533</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-1</small></td>
+      <td class="title">
+        <div class="t-head">Add dolt.mode config key with ambiguous-config warning </div>
+        <div class="t-body">## Summary - `bd init` can now read `dolt.mode: server` from config.yaml instead of requiring `--server` or `BEADS_DOLT_SERVER_MODE=1` every time. Valid values:…</div>
+        <div class="t-factors"><span class="f zero">0 large (323 lines)</span> <span class="f plus">+1 fresh (&lt;1d)</span> <span class="f minus">-2 changes requested</span></div>
+      </td>
+      <td>trillium</td>
+      <td class="num">321/2<br><small>6 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-27<br>upd 2026-04-27</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3242" target="_blank">#3242</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-2</small></td>
+      <td class="title">
+        <div class="t-head">fix: repair shared-server bootstrap and doctor metadata drift </div>
+        <div class="t-body">## Summary - repair shared-server bootstrap/doctor metadata recovery so local metadata can realign with the authoritative server database - add regression cover…</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f zero">0 large (372 lines)</span> <span class="f minus">-1 stale (14d since update)</span> <span class="f minus">-1 old (14d open)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>Bella-Giraffety</td>
+      <td class="num">368/4<br><small>6 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-13<br>upd 2026-04-13</small></td>
+    </tr>
+    <tr class="tier-4" data-tier="T4" data-kind="fix">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3278" target="_blank">#3278</a></td>
+      <td class="tier"><span class="tier-badge tier-4">T4</span><br><small>-2</small></td>
+      <td class="title">
+        <div class="t-head">fix(nix): use gms_pure_go, fix vendorHash, drop ICU dependency </div>
+        <div class="t-body">The Nix flake failed to build on NixOS due to three issues: 1. Stale vendorHash (reported in #3221) — updated to the correct value for proxyVendor mode. 2. ICU …</div>
+        <div class="t-factors"><span class="f plus">+3 type=fix</span> <span class="f minus">-2 very large (4518 lines)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>TheCTD</td>
+      <td class="num">3571/947<br><small>122 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-14<br>upd 2026-04-25</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3220" target="_blank">#3220</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-3</small></td>
+      <td class="title">
+        <div class="t-head">Feat: copilot cli integration </div>
+        <div class="t-body">Summary Adds first-class GitHub Copilot CLI integration to bd setup and bd doctor. This introduces a new copilot setup target that manages Copilot instruction f…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f minus">-2 very large (1558 lines)</span> <span class="f minus">-1 stale (15d since update)</span> <span class="f minus">-1 old (15d open)</span></div>
+      </td>
+      <td>julianpalmerio</td>
+      <td class="num">1547/11<br><small>16 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-12<br>upd 2026-04-12</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3458" target="_blank">#3458</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-3</small></td>
+      <td class="title">
+        <div class="t-head">perf(storage): SearchIssueSummaries narrow-projection list (be-nu4.3, stacks on #3453) </div>
+        <div class="t-body">## Summary D3 of the bd-perf ADR (be-nu4): adds `SearchIssueSummaries` for narrow-projection list paths so `bd list --all` and similar commands stop materializi…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f minus">-2 very large (2078 lines)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">2039/39<br><small>31 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3461" target="_blank">#3461</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-3</small></td>
+      <td class="title">
+        <div class="t-head">perf(storage): CountIssues / CountIssuesGroupedBy (be-nu4.1, stacks on #3458) </div>
+        <div class="t-body">## What this changes Moves `bd count` aggregation into the storage layer. Before this, `bd count` called `SearchIssues` and returned `len(rows)` — paying the fu…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f minus">-2 very large (2947 lines)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">2853/94<br><small>35 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-24<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3215" target="_blank">#3215</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-4</small></td>
+      <td class="title">
+        <div class="t-head">Fix orphan dependency doctor checks for tracks and wisps <span class="badge draft">draft</span></div>
+        <div class="t-body">## Summary - exclude `tracks` dependencies from orphan dependency validation and cleanup - exclude dependencies that intentionally target wisps from orphan depe…</div>
+        <div class="t-factors"><span class="f zero">0 large (903 lines)</span> <span class="f minus">-1 old (16d open)</span> <span class="f minus">-3 draft</span></div>
+      </td>
+      <td>vernon99</td>
+      <td class="num">723/180<br><small>7 files</small></td>
+      <td class="">—</td>
+      <td class="ok">Mergeable</td>
+      <td><small>2026-04-12<br>upd 2026-04-21</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3264" target="_blank">#3264</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-4</small></td>
+      <td class="title">
+        <div class="t-head">feat(dream): add bd dream subcommand for memory consolidation (#3263) </div>
+        <div class="t-body">Closes #3263. ## Summary Adds `bd dream` — a subcommand that consolidates the memory store (`bd remember` / `bd memories`) by asking an LLM to identify duplicat…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f minus">-2 very large (1425 lines)</span> <span class="f minus">-1 stale (14d since update)</span> <span class="f minus">-3 merge conflicts</span> <span class="f plus">+1 closes a tracked issue</span></div>
+      </td>
+      <td>boaz-hwang</td>
+      <td class="num">1424/1<br><small>9 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-14<br>upd 2026-04-14</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3337" target="_blank">#3337</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-4</small></td>
+      <td class="title">
+        <div class="t-head">perf: batch wisp routing and enable InterpolateParams to eliminate remote bd latency </div>
+        <div class="t-body">## Summary Eliminate remote `bd` latency on LAN-central Dolt-server topologies. Two compounding fixes, one per commit, both motivated by the same investigation:…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f minus">-2 very large (2500 lines)</span> <span class="f minus">-1 stale (9d since update)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>alexmsu75</td>
+      <td class="num">2443/57<br><small>16 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-19<br>upd 2026-04-19</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="perf">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3351" target="_blank">#3351</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-4</small></td>
+      <td class="title">
+        <div class="t-head">perf(export): incremental auto-export via dolt_diff </div>
+        <div class="t-body">## Summary `maybeAutoExport` currently re-serializes every non-infra, non-template issue plus its relational data (labels, dependencies, comments) on every auto…</div>
+        <div class="t-factors"><span class="f plus">+2 type=perf</span> <span class="f minus">-2 very large (1011 lines)</span> <span class="f minus">-1 stale (8d since update)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>quad341</td>
+      <td class="num">1003/8<br><small>4 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-19<br>upd 2026-04-19</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="docs">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3426" target="_blank">#3426</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-4</small></td>
+      <td class="title">
+        <div class="t-head">docs(claude): fix stale CLAUDE.md content for Dolt default </div>
+        <div class="t-body">## Summary Root `CLAUDE.md` had drifted and was actively misleading agents. Worst offense: it prescribed a routine `bd export → git add → bd import` sync loop t…</div>
+        <div class="t-factors"><span class="f plus">+1 medium (58 lines)</span> <span class="f minus">-3 merge conflicts</span> <span class="f minus">-2 changes requested</span></div>
+      </td>
+      <td>sjsyrek</td>
+      <td class="num">30/28<br><small>1 files</small></td>
+      <td class="warn">Changes Requested</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-22<br>upd 2026-04-24</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3317" target="_blank">#3317</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-5</small></td>
+      <td class="title">
+        <div class="t-head">Add Codex hooks and shared agent plugin </div>
+        <div class="t-body">###### Why/Context/Summary - Add a first-class Codex integration for Beads. `bd setup codex` now installs a repo-local Beads agent skill under `.agents/skills/b…</div>
+        <div class="t-factors"><span class="f minus">-2 very large (2789 lines)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>ebrevdo</td>
+      <td class="num">2455/334<br><small>90 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-17<br>upd 2026-04-25</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="feat">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3238" target="_blank">#3238</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-6</small></td>
+      <td class="title">
+        <div class="t-head">feat: cross-project inbox for shared Dolt servers </div>
+        <div class="t-body">## Summary Adds a cross-project inbox feature for sending issues between projects on a shared Dolt server. ### New Commands - **`bd send &lt;issue-id&gt; --to &lt;target…</div>
+        <div class="t-factors"><span class="f plus">+1 type=feat</span> <span class="f minus">-2 very large (3350 lines)</span> <span class="f minus">-1 stale (14d since update)</span> <span class="f minus">-1 old (14d open)</span> <span class="f minus">-3 merge conflicts</span></div>
+      </td>
+      <td>harry-miller-trimble</td>
+      <td class="num">3349/1<br><small>21 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-13<br>upd 2026-04-14</small></td>
+    </tr>
+    <tr class="tier-5" data-tier="T5" data-kind="other">
+      <td class="num"><a href="https://github.com/gastownhall/beads/pull/3528" target="_blank">#3528</a></td>
+      <td class="tier"><span class="tier-badge tier-5">T5</span><br><small>-6</small></td>
+      <td class="title">
+        <div class="t-head">Sync Linear milestones as local epics <span class="badge draft">draft</span></div>
+        <div class="t-body">## Summary - add opt-in `bd linear sync --pull --milestones` support for reconstructing Linear project milestone hierarchy - persist Linear `projectMilestone` m…</div>
+        <div class="t-factors"><span class="f zero">0 large (538 lines)</span> <span class="f minus">-3 merge conflicts</span> <span class="f minus">-3 draft</span></div>
+      </td>
+      <td>jozefizso</td>
+      <td class="num">513/25<br><small>11 files</small></td>
+      <td class="">—</td>
+      <td class="bad">Conflicting</td>
+      <td><small>2026-04-26<br>upd 2026-04-26</small></td>
+    </tr>
+</tbody>
+</table>
+
+<script>
+document.querySelectorAll('.filters button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.filters button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    const tier = b.dataset.tier;
+    document.querySelectorAll('#pr-table tbody tr').forEach(tr => {
+      tr.style.display = (tier === 'all' || tr.dataset.tier === tier) ? '' : 'none';
+    });
+  });
+});
+</script>
+
+</body></html>
