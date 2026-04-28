@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# tri-close — close a bd triage stub AND apply 'triaged' label upstream.
+#
+# Reads the bd issue's external_ref (gh-pr-NNNN / gh-iss-NNNN) to determine
+# which upstream item to label. Aborts if the bd issue lacks a recognized ref.
+#
+# Usage:
+#   tri-close <bd-id>                   # close + label upstream
+#   tri-close <bd-id> --reason="..."    # close with reason + label
+#   tri-close <bd-id> --skip-label      # close without touching upstream
+#   tri-close --dry-run <bd-id>         # show plan, no writes
+#
+# Idempotent: if the upstream item already has 'triaged', the gh edit is a no-op.
+
+set -euo pipefail
+
+UPSTREAM="${TRI_UPSTREAM:-gastownhall/beads}"
+BD_ID=""
+REASON=""
+SKIP_LABEL=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reason=*) REASON="${1#--reason=}"; shift;;
+    --reason) REASON="$2"; shift 2;;
+    --skip-label) SKIP_LABEL=1; shift;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -*) echo "tri-close: unknown flag: $1" >&2; exit 2;;
+    *)
+      if [[ -n "$BD_ID" ]]; then
+        echo "tri-close: only one bd-id allowed (got '$BD_ID' and '$1')" >&2
+        exit 2
+      fi
+      BD_ID="$1"; shift;;
+  esac
+done
+
+if [[ -z "$BD_ID" ]]; then
+  echo "Usage: tri-close <bd-id> [--reason=\"...\"] [--skip-label] [--dry-run]" >&2
+  exit 2
+fi
+
+command -v bd >/dev/null || { echo "tri-close: bd not on PATH" >&2; exit 127; }
+command -v gh >/dev/null || { echo "tri-close: gh not on PATH" >&2; exit 127; }
+command -v jq >/dev/null || { echo "tri-close: jq not on PATH" >&2; exit 127; }
+
+# Fetch external_ref from bd
+ref="$(bd show "$BD_ID" --json 2>/dev/null | jq -r '.[0].external_ref // empty')"
+if [[ -z "$ref" ]]; then
+  echo "tri-close: $BD_ID has no external_ref — refusing (use 'bd close' directly for non-triage stubs)" >&2
+  exit 1
+fi
+
+if [[ ! "$ref" =~ ^gh-(pr|iss)-([0-9]+)$ ]]; then
+  echo "tri-close: $BD_ID external_ref '$ref' is not gh-pr-NNNN / gh-iss-NNNN — refusing" >&2
+  exit 1
+fi
+kind="${BASH_REMATCH[1]}"
+num="${BASH_REMATCH[2]}"
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  echo "DRY-RUN plan:"
+  echo "  bd close $BD_ID${REASON:+ --reason=\"$REASON\"}"
+  if [[ "$SKIP_LABEL" == 0 ]]; then
+    if [[ "$kind" == "pr" ]]; then
+      echo "  gh pr edit $num --repo $UPSTREAM --add-label triaged"
+    else
+      echo "  gh issue edit $num --repo $UPSTREAM --add-label triaged"
+    fi
+  fi
+  exit 0
+fi
+
+# Close bd
+if [[ -n "$REASON" ]]; then
+  bd close "$BD_ID" --reason="$REASON"
+else
+  bd close "$BD_ID"
+fi
+
+# Label upstream
+if [[ "$SKIP_LABEL" == 1 ]]; then
+  echo "skipped upstream label (--skip-label)"
+  exit 0
+fi
+
+echo "Applying 'triaged' label to $UPSTREAM #$num..."
+if [[ "$kind" == "pr" ]]; then
+  gh pr edit "$num" --repo "$UPSTREAM" --add-label triaged
+else
+  gh issue edit "$num" --repo "$UPSTREAM" --add-label triaged
+fi
+echo "Done."

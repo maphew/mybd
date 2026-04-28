@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# tri-pull — pull untriaged open items from upstream gastownhall/beads into
+# bd as triage stubs. Idempotent: skips items already mirrored.
+#
+# Usage:
+#   tri-pull               # pull issues + PRs (default limit 100 each)
+#   tri-pull --limit 50    # cap per-stream
+#   tri-pull --issues-only
+#   tri-pull --prs-only
+#   tri-pull --dry-run     # show what would be created, no writes
+#
+# Each stub:
+#   external-ref: gh-pr-NNNN / gh-iss-NNNN  (machine-readable upstream link)
+#   title:        "<upstream title>"        (kind+number visible via show)
+#   description:  URL, author, dates, labels, status
+#   priority:     P3 default, P4 for dependabot/drafts
+#   type:         bug/feature/task heuristic from conventional-commit prefix
+
+set -euo pipefail
+
+UPSTREAM="${TRI_UPSTREAM:-gastownhall/beads}"
+LIMIT=100
+DO_ISSUES=1
+DO_PRS=1
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --limit) LIMIT="$2"; shift 2;;
+    --limit=*) LIMIT="${1#--limit=}"; shift;;
+    --issues-only) DO_PRS=0; shift;;
+    --prs-only) DO_ISSUES=0; shift;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "tri-pull: unknown flag: $1" >&2; exit 2;;
+  esac
+done
+
+command -v bd >/dev/null || { echo "tri-pull: bd not on PATH" >&2; exit 127; }
+command -v gh >/dev/null || { echo "tri-pull: gh not on PATH" >&2; exit 127; }
+command -v jq >/dev/null || { echo "tri-pull: jq not on PATH" >&2; exit 127; }
+
+# Build the set of already-mirrored upstream refs from bd's external_ref field.
+# Look across all statuses so closed stubs are not re-created.
+existing_refs="$(
+  bd list --status=open --status=in_progress --status=closed --status=blocked --limit 0 --json 2>/dev/null \
+    | jq -r '.[] | .external_ref // empty' \
+    | grep -E '^gh-(pr|iss)-[0-9]+$' || true
+)"
+
+is_mirrored() {
+  local ref="$1"
+  printf '%s\n' "$existing_refs" | grep -qx "$ref"
+}
+
+infer_type() {
+  local title="${1,,}"   # lowercase for case-insensitive prefix match
+  case "$title" in
+    fix\(*|fix:*|bug\(*|bug:*) echo "bug" ;;
+    feat\(*|feat:*) echo "feature" ;;
+    *) echo "task" ;;
+  esac
+}
+
+mirror_one() {
+  local kind="$1" num="$2" title="$3" url="$4" author="$5" created="$6" labels="$7" extra="$8"
+  local ref="gh-${kind}-${num}"
+
+  if is_mirrored "$ref"; then
+    return
+  fi
+
+  local prio=3
+  if [[ "$author" == "app/dependabot" ]] || [[ "$extra" == *"DRAFT"* ]]; then
+    prio=4
+  fi
+
+  local type
+  type="$(infer_type "$title")"
+
+  local kind_label
+  case "$kind" in pr) kind_label="PR" ;; iss) kind_label="Issue" ;; esac
+
+  local desc
+  printf -v desc 'Upstream %s: %s\nAuthor: %s\nCreated: %s\nLabels: %s%s\n\nTriage decision: close (won'\''t engage / dupe / out of scope), defer (revisit), claim (real work + flesh out), or human (need maintainer call).\nUse: scripts/tri-close <bd-id> [--reason=...]   (closes bd + applies '\''triaged'\'' label upstream)' \
+    "$kind_label" "$url" "$author" "$created" "${labels:-(none)}" "${extra:+
+Status: $extra}"
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    printf '  WOULD create %s P%d type=%s: %s\n' "$ref" "$prio" "$type" "$title"
+    return
+  fi
+
+  bd create \
+    --title="$title" \
+    --description="$desc" \
+    --external-ref="$ref" \
+    --type="$type" \
+    --priority="$prio" >/dev/null
+
+  printf '  created %s P%d type=%s: %s\n' "$ref" "$prio" "$type" "$title"
+}
+
+count_created=0
+count_skipped=0
+
+if [[ "$DO_ISSUES" == 1 ]]; then
+  echo "Pulling open issues from $UPSTREAM (no 'triaged' label, limit $LIMIT)..."
+  while IFS=$'\t' read -r num title url author created labels; do
+    [[ -z "${num:-}" ]] && continue
+    ref="gh-iss-${num}"
+    if is_mirrored "$ref"; then
+      count_skipped=$((count_skipped + 1))
+      continue
+    fi
+    mirror_one "iss" "$num" "$title" "$url" "$author" "$created" "$labels" ""
+    count_created=$((count_created + 1))
+  done < <(
+    gh issue list --repo "$UPSTREAM" --state open --limit "$LIMIT" \
+      --json number,title,url,author,createdAt,labels \
+    | jq -r '.[]
+        | select(([.labels[].name] | index("triaged")) | not)
+        | [.number, .title, .url, .author.login, .createdAt, ([.labels[].name] | join(","))]
+        | @tsv'
+  )
+fi
+
+if [[ "$DO_PRS" == 1 ]]; then
+  echo "Pulling open PRs from $UPSTREAM (no 'triaged' label, limit $LIMIT)..."
+  while IFS=$'\t' read -r num title url author created labels is_draft; do
+    [[ -z "${num:-}" ]] && continue
+    ref="gh-pr-${num}"
+    if is_mirrored "$ref"; then
+      count_skipped=$((count_skipped + 1))
+      continue
+    fi
+    extra=""
+    [[ "$is_draft" == "true" ]] && extra="DRAFT"
+    mirror_one "pr" "$num" "$title" "$url" "$author" "$created" "$labels" "$extra"
+    count_created=$((count_created + 1))
+  done < <(
+    gh pr list --repo "$UPSTREAM" --state open --limit "$LIMIT" \
+      --json number,title,url,author,createdAt,labels,isDraft \
+    | jq -r '.[]
+        | select(([.labels[].name] | index("triaged")) | not)
+        | [.number, .title, .url, .author.login, .createdAt, ([.labels[].name] | join(",")), (.isDraft | tostring)]
+        | @tsv'
+  )
+fi
+
+echo
+echo "Done. Created: $count_created, skipped (already mirrored): $count_skipped"
+echo "Next: bd list --status=open --type=bug,feature,task | grep -E 'gh-(pr|iss)-' or run 'bd ready'"
