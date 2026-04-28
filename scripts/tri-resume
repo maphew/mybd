@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# tri-resume — list in-flight PR reviews so you can pick one up across machines.
+#
+# Shows all bd issues with status=in_progress and a gh-pr-NNNN external_ref,
+# along with: review-note path/mtime, last bd note (with machine tag), worktree
+# presence on this machine.
+#
+# Usage:
+#   tri-resume               # listing
+#   tri-resume --json        # machine-readable
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd jq
+
+JSON=0
+case "${1:-}" in
+  --json) JSON=1;;
+  -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+  "") :;;
+  *) tri_die "unknown flag: ${1}";;
+esac
+
+# Pull all in_progress issues with gh-pr-* refs
+rows="$(
+  bd list --status=in_progress --limit 0 --json 2>/dev/null \
+    | jq -c '.[] | select(.external_ref // "" | startswith("gh-pr-")) | {id, title, external_ref, notes: (.notes // ""), updated_at}'
+)"
+
+if [[ -z "$rows" ]]; then
+  if [[ "$JSON" == 1 ]]; then echo "[]"; else echo "No in-flight PR reviews."; fi
+  exit 0
+fi
+
+if [[ "$JSON" == 1 ]]; then
+  echo "$rows" | jq -s '.'
+  exit 0
+fi
+
+printf "%-12s %-7s %-9s %-10s %s\n" "BD-ID" "PR#" "WORKTREE" "NOTE-AGE" "LAST CHECKPOINT / TITLE"
+printf '%s\n' "──────────────────────────────────────────────────────────────────────────────"
+while IFS= read -r row; do
+  id=$(jq -r '.id' <<<"$row")
+  title=$(jq -r '.title' <<<"$row")
+  ref=$(jq -r '.external_ref' <<<"$row")
+  notes=$(jq -r '.notes' <<<"$row")
+  num="${ref#gh-pr-}"
+
+  wt="$(tri_worktree_path "$num")"
+  note="$(tri_review_note_path "$num")"
+
+  if [[ -d "$wt" ]]; then wt_present="here"; else wt_present="—"; fi
+
+  if [[ -e "$note" ]]; then
+    note_age_s=$(( $(date +%s) - $(stat -c %Y "$note" 2>/dev/null || stat -f %m "$note") ))
+    if   (( note_age_s < 3600 ));    then note_age="${note_age_s}s ago"
+    elif (( note_age_s < 86400 ));   then note_age="$((note_age_s / 3600))h ago"
+    else                                  note_age="$((note_age_s / 86400))d ago"
+    fi
+  else
+    note_age="(none)"
+  fi
+
+  # Last note (final non-empty line)
+  last_note=$(printf '%s' "$notes" | awk 'NF{last=$0} END{print last}')
+  display="${last_note:-$title}"
+  # Truncate display
+  if (( ${#display} > 60 )); then display="${display:0:57}..."; fi
+
+  printf "%-12s %-7s %-9s %-10s %s\n" "$id" "#$num" "$wt_present" "$note_age" "$display"
+done <<<"$rows"
+
+echo
+echo "Pick one up: tri-review <bd-id> --reuse-worktree (or --reuse if worktree absent on this machine)"

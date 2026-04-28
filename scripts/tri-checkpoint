@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# tri-checkpoint — graceful "I'm leaving this machine" on an in-flight review.
+#
+# Logs a checkpoint note to bd (timestamp + hostname + msg), commits any
+# pending changes in the project repo (review notes), pushes maphew/mybd so
+# bd state + review-note propagate. Worktree branches are local-only by
+# design; if you've made commits in the worktree you want to keep, push
+# manually first.
+#
+# Usage:
+#   tri-checkpoint <bd-id-or-pr-num> ["msg"]
+#   tri-checkpoint mybd-abc "stopped at concerns section, reviewing test coverage"
+#   tri-checkpoint #3482
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd git
+
+[[ $# -ge 1 ]] || tri_die "Usage: tri-checkpoint <bd-id-or-pr-num> [\"msg\"]"
+INPUT="$1"; shift
+MSG="${1:-checkpoint}"
+
+BD_ID="$(tri_resolve_bd_id "$INPUT")"
+ref="$(tri_external_ref "$BD_ID")"
+[[ -n "$ref" ]] || tri_die "$BD_ID has no external_ref"
+
+echo "Checkpointing $BD_ID ($ref)..."
+
+# Log to bd
+tri_log_note "$BD_ID" "checkpoint: $MSG"
+echo "  bd note appended"
+
+# Commit + push project repo if there are review-note changes
+cd "$TRI_PROJECT_ROOT"
+if ! git diff --quiet -- "$TRI_REVIEWS_DIR" .beads/ 2>/dev/null \
+   || ! git diff --cached --quiet -- "$TRI_REVIEWS_DIR" .beads/ 2>/dev/null; then
+  echo "  staging review-note + bd state changes..."
+  git add "$TRI_REVIEWS_DIR" .beads/issues.jsonl .beads/export-state.json .beads/interactions.jsonl 2>/dev/null || true
+  if ! git diff --cached --quiet 2>/dev/null; then
+    git commit -q -m "tri-checkpoint: $BD_ID — $MSG" || true
+    echo "  committed"
+  fi
+fi
+
+echo "  pulling --rebase from origin..."
+git pull --rebase 2>&1 | tail -2
+
+echo "  pushing to origin..."
+git push 2>&1 | tail -2
+
+echo "Done. Review-note + bd state synced. On another machine: tri-resume"

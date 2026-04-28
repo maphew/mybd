@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# tri-review — start a PR review: claim bd, fetch the PR into a worktree,
+# run fast checks (build + lint), scaffold the review note from auto-computed
+# signals, and log the review-start in bd notes.
+#
+# Usage:
+#   tri-review <bd-id-or-pr-num>           # fast checks (build + lint)
+#   tri-review <id> --tests                # also run go test ./...
+#   tri-review <id> --no-checks            # skip checks (faster, just scaffold)
+#   tri-review <id> --reuse-worktree       # don't fetch/recreate (resuming)
+#
+# Examples:
+#   tri-review mybd-abc
+#   tri-review #3482
+#   tri-review 3482
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd gh jq git
+
+INPUT=""
+RUN_TESTS=0
+NO_CHECKS=0
+REUSE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tests) RUN_TESTS=1; shift;;
+    --no-checks) NO_CHECKS=1; shift;;
+    --reuse-worktree) REUSE=1; shift;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -*) tri_die "unknown flag: $1";;
+    *) [[ -n "$INPUT" ]] && tri_die "only one id allowed"; INPUT="$1"; shift;;
+  esac
+done
+[[ -n "$INPUT" ]] || tri_die "Usage: tri-review <bd-id-or-pr-num> [--tests|--no-checks|--reuse-worktree]"
+
+BD_ID="$(tri_resolve_bd_id "$INPUT")"
+ref="$(tri_external_ref "$BD_ID")"
+[[ -n "$ref" ]] || tri_die "$BD_ID has no external_ref"
+read -r kind num <<<"$(tri_parse_ref "$ref")" || tri_die "$BD_ID ref '$ref' is not gh-(pr|iss)-N"
+[[ "$kind" == "pr" ]] || tri_die "$BD_ID is for an issue ($ref), not a PR — use bd directly"
+
+WT="$(tri_worktree_path "$num")"
+NOTE="$(tri_review_note_path "$num")"
+BRANCH="$(tri_branch_name "$num")"
+
+mkdir -p "$TRI_WORKTREE_BASE" "$TRI_REVIEWS_DIR"
+
+echo "── PR #$num review setup ────────────────────────────────"
+tri_kv "bd id" "$BD_ID"
+tri_kv "worktree" "$WT"
+tri_kv "review note" "${NOTE/#$HOME/~}"
+tri_kv "branch" "$BRANCH"
+
+# Fetch PR data once (reused for both worktree fetch decision and scaffold)
+echo "Fetching PR metadata from $TRI_UPSTREAM..."
+PR_JSON="$(gh pr view "$num" --repo "$TRI_UPSTREAM" \
+  --json number,title,author,createdAt,updatedAt,additions,deletions,changedFiles,labels,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,body,closingIssuesReferences,headRefName \
+  2>&1)" || tri_die "gh pr view failed: $PR_JSON"
+
+# Extract fields
+title=$(jq -r '.title' <<<"$PR_JSON")
+author=$(jq -r '.author.login' <<<"$PR_JSON")
+created=$(jq -r '.createdAt' <<<"$PR_JSON")
+updated=$(jq -r '.updatedAt' <<<"$PR_JSON")
+additions=$(jq -r '.additions' <<<"$PR_JSON")
+deletions=$(jq -r '.deletions' <<<"$PR_JSON")
+changed_files=$(jq -r '.changedFiles' <<<"$PR_JSON")
+labels=$(jq -r '[.labels[].name] | join(", ") // "(none)"' <<<"$PR_JSON")
+is_draft=$(jq -r '.isDraft' <<<"$PR_JSON")
+mergeable=$(jq -r '.mergeable' <<<"$PR_JSON")
+merge_state=$(jq -r '.mergeStateStatus' <<<"$PR_JSON")
+review_decision=$(jq -r '.reviewDecision // "none"' <<<"$PR_JSON")
+head_ref=$(jq -r '.headRefName' <<<"$PR_JSON")
+closes=$(jq -r '[.closingIssuesReferences[]?.number] | map("#" + tostring) | join(", ") // "(none)"' <<<"$PR_JSON")
+
+# Status check rollup summary
+checks_summary=$(jq -r '
+  [.statusCheckRollup[]? | .conclusion // .state // empty] as $all
+  | {
+      total: ($all | length),
+      success: ($all | map(select(. == "SUCCESS")) | length),
+      failure: ($all | map(select(. == "FAILURE" or . == "ERROR")) | length),
+      pending: ($all | map(select(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED")) | length),
+      cancelled: ($all | map(select(. == "CANCELLED")) | length),
+    }
+  | "\(.success)/\(.total) green, \(.failure) failed, \(.pending) pending, \(.cancelled) cancelled"
+' <<<"$PR_JSON")
+
+# Size bucket
+total_diff=$((additions + deletions))
+if   (( total_diff <= 50 ));   then size_bucket="small (≤50)"
+elif (( total_diff <= 300 ));  then size_bucket="medium (≤300)"
+elif (( total_diff <= 1000 )); then size_bucket="large (≤1000)"
+else                                size_bucket="very large (>1000)"
+fi
+
+# Type from title prefix
+title_lc="${title,,}"
+case "$title_lc" in
+  fix\(*|fix:*) type_label="fix";;
+  feat\(*|feat:*) type_label="feat";;
+  perf\(*|perf:*) type_label="perf";;
+  test\(*|test:*) type_label="test";;
+  docs\(*|docs:*) type_label="docs";;
+  chore\(*|chore:*) type_label="chore";;
+  refactor\(*|refactor:*) type_label="refactor";;
+  *) type_label="other";;
+esac
+
+# Age in days
+age_days=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+since_update=$(( ( $(date -u +%s) - $(date -u -d "$updated" +%s) ) / 86400 ))
+
+echo
+echo "── PR signals ───────────────────────────────────────────"
+tri_kv "title" "$title"
+tri_kv "author" "$author"
+tri_kv "type" "$type_label"
+tri_kv "size" "$size_bucket ($additions+/$deletions- across $changed_files files)"
+tri_kv "age" "${age_days}d created, ${since_update}d since update"
+tri_kv "draft" "$is_draft"
+tri_kv "mergeable" "$mergeable ($merge_state)"
+tri_kv "review" "$review_decision"
+tri_kv "checks" "$checks_summary"
+tri_kv "labels" "$labels"
+tri_kv "closes" "$closes"
+echo
+
+# Worktree setup
+if [[ "$REUSE" == 0 ]]; then
+  if [[ -d "$WT" ]]; then
+    echo "Worktree $WT already exists. Use --reuse-worktree to keep it, or:"
+    echo "  git -C $TRI_BD_MAIN worktree remove $WT --force"
+    tri_die "refusing to overwrite existing worktree"
+  fi
+  echo "Fetching PR branch into $TRI_BD_MAIN..."
+  git -C "$TRI_BD_MAIN" fetch origin "+pull/${num}/head:${BRANCH}" 2>&1 \
+    | grep -E "^(From|->|\\* )" || true
+  echo "Creating worktree at $WT..."
+  git -C "$TRI_BD_MAIN" worktree add "$WT" "$BRANCH" 2>&1 | tail -3
+fi
+
+# Run fast checks unless skipped
+if [[ "$NO_CHECKS" == 0 ]]; then
+  echo
+  echo "── Build / lint (fast) ──────────────────────────────────"
+  build_ok="?"; lint_ok="?"; tests_ok="?"
+  if (cd "$WT" && go build ./... >/tmp/tri-build-$$.log 2>&1); then
+    build_ok="✓"
+    echo "  go build:    ✓"
+  else
+    build_ok="✗"
+    echo "  go build:    ✗ (see /tmp/tri-build-$$.log)"
+  fi
+  if command -v golangci-lint >/dev/null; then
+    if (cd "$WT" && golangci-lint run --fast ./... >/tmp/tri-lint-$$.log 2>&1); then
+      lint_ok="✓"; echo "  golangci-lint --fast: ✓"
+    else
+      lint_ok="✗"; echo "  golangci-lint --fast: ✗ (see /tmp/tri-lint-$$.log)"
+    fi
+  else
+    lint_ok="—"; echo "  golangci-lint:    not installed (skipped)"
+  fi
+  if [[ "$RUN_TESTS" == 1 ]]; then
+    echo "  go test ./... (slow)..."
+    if (cd "$WT" && go test ./... >/tmp/tri-test-$$.log 2>&1); then
+      tests_ok="✓"; echo "  go test:     ✓"
+    else
+      tests_ok="✗"; echo "  go test:     ✗ (see /tmp/tri-test-$$.log)"
+    fi
+  fi
+fi
+
+# Scaffold review note
+if [[ -e "$NOTE" && "$REUSE" == 0 ]]; then
+  echo
+  echo "Review note already exists at $NOTE — leaving untouched."
+  echo "Edit it, then run: tri-checkpoint $BD_ID  /  tri-submit $BD_ID --<verdict>"
+else
+  cat > "$NOTE" <<EOF
+# PR Review: #$num — $title
+
+**Author:** $author
+**Verdict:** TBD <!-- approve | approve-with-nits | request-changes | comment-only -->
+
+---
+
+## Auto-computed signals (verify before submit)
+
+- **Type**: \`$type_label\` (from title prefix)
+- **Size**: $size_bucket — $additions+/$deletions− across $changed_files files
+- **Age**: created ${age_days}d ago, last updated ${since_update}d ago
+- **Draft**: $is_draft
+- **Mergeable**: $mergeable ($merge_state)
+- **Existing review**: $review_decision
+- **CI checks**: $checks_summary
+- **Labels**: $labels
+- **Closes**: $closes
+- **Build (local)**: ${build_ok:-not run}
+- **Lint (local)**: ${lint_ok:-not run}
+- **Tests (local)**: ${tests_ok:-not run}
+
+## Summary
+
+_TBD: 1-2 sentences on what the PR does and why._
+
+---
+
+## Strengths
+
+-
+
+---
+
+## Concerns
+
+1.
+
+---
+
+## Verdict reasoning
+
+_TBD: 2-3 sentences on the verdict._
+
+---
+
+## Worktree
+
+\`$WT\`
+
+EOF
+  echo "Scaffold written to $NOTE"
+fi
+
+# Log to bd
+tri_log_note "$BD_ID" "review-started: worktree=$WT note=${NOTE/#$HOME/~}"
+
+# Set bd status to in_progress (claim is idempotent)
+bd update "$BD_ID" --status=in_progress >/dev/null 2>&1 || true
+
+echo
+echo "Next: cd $WT && \$EDITOR $NOTE"
+echo "When ready: tri-submit $BD_ID --approve|--request-changes|--comment"

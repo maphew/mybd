@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# tri-submit — finalize a PR review: post the review-note to upstream as a
+# gh pr review with the chosen verdict, then close the bd issue and apply
+# the upstream 'triaged' label (via tri-close).
+#
+# Usage:
+#   tri-submit <bd-id-or-pr-num> --approve
+#   tri-submit <id> --request-changes
+#   tri-submit <id> --comment
+#   tri-submit <id> --approve --dry-run     # show what would be posted
+#
+# Requires the review note (_working_on/pr-reviews/NNNN.md) to exist and have
+# its 'Verdict' line filled in. Refuses to submit if Verdict is 'TBD'.
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd gh jq git
+
+INPUT=""
+VERDICT=""
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --approve) VERDICT="approve"; shift;;
+    --request-changes) VERDICT="request-changes"; shift;;
+    --comment) VERDICT="comment"; shift;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -*) tri_die "unknown flag: $1";;
+    *) [[ -n "$INPUT" ]] && tri_die "only one id allowed"; INPUT="$1"; shift;;
+  esac
+done
+
+[[ -n "$INPUT" ]] || tri_die "Usage: tri-submit <id> --approve|--request-changes|--comment [--dry-run]"
+[[ -n "$VERDICT" ]] || tri_die "must specify --approve, --request-changes, or --comment"
+
+BD_ID="$(tri_resolve_bd_id "$INPUT")"
+ref="$(tri_external_ref "$BD_ID")"
+[[ -n "$ref" ]] || tri_die "$BD_ID has no external_ref"
+read -r kind num <<<"$(tri_parse_ref "$ref")" || tri_die "$BD_ID ref '$ref' invalid"
+[[ "$kind" == "pr" ]] || tri_die "$BD_ID is for an issue, not a PR"
+
+NOTE="$(tri_review_note_path "$num")"
+[[ -e "$NOTE" ]] || tri_die "review note not found: $NOTE (run tri-review first)"
+
+# Refuse if Verdict still TBD
+if grep -q '^\*\*Verdict:\*\* TBD' "$NOTE"; then
+  tri_die "Verdict line in $NOTE is still 'TBD' — fill it in first"
+fi
+
+echo "── Submit review for PR #$num ───────────────────────────"
+tri_kv "bd id" "$BD_ID"
+tri_kv "verdict flag" "--$VERDICT"
+tri_kv "note" "${NOTE/#$HOME/~}"
+tri_kv "upstream" "$TRI_UPSTREAM"
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  echo
+  echo "DRY-RUN — would run:"
+  echo "  gh pr review $num --repo $TRI_UPSTREAM --$VERDICT --body-file $NOTE"
+  echo "  scripts/tri-close $BD_ID --reason=\"review submitted: $VERDICT\""
+  exit 0
+fi
+
+echo
+echo "Posting review to upstream..."
+if ! gh pr review "$num" --repo "$TRI_UPSTREAM" --"$VERDICT" --body-file "$NOTE"; then
+  tri_die "gh pr review failed — bd issue NOT closed"
+fi
+echo "  ✓ review posted"
+
+# Log to bd before close
+tri_log_note "$BD_ID" "review submitted: $VERDICT"
+
+# Close bd + apply upstream triaged label via tri-close
+echo "Closing bd issue + applying upstream 'triaged' label..."
+"$(dirname "$0")/tri-close" "$BD_ID" --reason="review submitted: $VERDICT"
+
+echo
+echo "Done. PR #$num review posted, bd $BD_ID closed, upstream 'triaged' applied."
+echo "Worktree at $(tri_worktree_path "$num") is still around — remove with:"
+echo "  git -C $TRI_BD_MAIN worktree remove $(tri_worktree_path "$num")"
