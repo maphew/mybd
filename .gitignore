@@ -16,3 +16,7 @@ scratch/cleanroom/
 
 # Temporary files
 tmp/
+
+# Local environment variables
+.env
+
