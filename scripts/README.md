@@ -158,6 +158,38 @@ Reads `pr-reviews/<NNNN>.md`, posts as a `gh pr review --<verdict>`, then
 calls `tri-close` to close bd + apply upstream `triaged`. Refuses if the
 note's `Verdict:` line is still `TBD`.
 
+## tri-report (observability digest)
+
+```bash
+scripts/tri-report                    # last 7 days, opens in browser
+scripts/tri-report --today            # last 24h
+scripts/tri-report --days 14          # custom window
+scripts/tri-report --since 2026-04-01 # explicit start date
+scripts/tri-report --no-open          # write file, don't launch browser
+scripts/tri-report --out report.html  # custom output path
+```
+
+Generates a self-contained HTML digest (no JS, plain CSS) of triage workflow
+activity over a period. Sections:
+
+- **What landed** — closed issues with their *why* (description excerpt),
+  the *delivered* (close reason), and any linked commits matched by id mention
+- **In flight** — `status=in_progress` items with description + latest checkpoint note
+- **Came in** — newly created stubs in the window
+- **Backlog snapshot** — open issues by priority
+- **Activity timeline** — collapsible chronological event log from
+  `.beads/interactions.jsonl`
+
+Sources: `bd list`, `bd show --json` (description + notes + external_ref),
+`.beads/interactions.jsonl` (timestamped reasons), `git log` (commit subjects).
+
+Browser launch chain: `xdg-open` → `wslview` → `open` (macOS) → on WSL,
+`cmd.exe /c start` → `msedge.exe` direct → Python `webbrowser` module.
+Falls back to printing the `file://` URI if all fail.
+
+Why Python (vs the bash tri-* scripts): this one templates rather than
+orchestrates — date math, HTML escaping, multi-source synthesis. Stdlib only.
+
 ## Existing artifacts
 
 - `_working_on/upstream_pr_triage.md` — manual T1–T5 ranking with scoring rubric

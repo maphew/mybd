@@ -1,0 +1,504 @@
+#!/usr/bin/env python3
+"""tri-report — end-of-shift/week observability digest for the triage workflow.
+
+Renders a self-contained HTML report covering a time window (default 7 days):
+- What landed (closed issues with why + close reason + linked commits)
+- In flight (in_progress with latest checkpoint)
+- Came in (newly created stubs)
+- Backlog snapshot (open by priority, blocked, deferred)
+- Activity timeline (chronological bd events)
+
+Data sources:
+- bd list --json / bd show --json   (state + description + notes)
+- .beads/interactions.jsonl         (timestamped events with reasons)
+- git log                            (commit subjects, paired by id mention)
+
+Usage:
+  tri-report                         # last 7 days
+  tri-report --days 1                # last 24h ("today")
+  tri-report --since 2026-04-01      # explicit start date
+  tri-report --no-open               # write the file but don't launch browser
+  tri-report --out /tmp/foo.html     # custom output path
+
+Why Python (vs the other bash tri-* scripts): this one templates rather than
+orchestrates — date math, HTML escaping, multi-source synthesis. Stdlib only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import html
+import json
+import os
+import shutil
+import subprocess
+import sys
+import webbrowser
+from pathlib import Path
+from typing import Any
+
+
+def run(cmd: list[str], check: bool = True) -> str:
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)} failed: {r.stderr.strip()}")
+    return r.stdout
+
+
+def parse_iso(s: str) -> dt.datetime:
+    s = s.replace("Z", "+00:00")
+    return dt.datetime.fromisoformat(s)
+
+
+def humanize(when: dt.datetime, now: dt.datetime) -> str:
+    delta = now - when
+    secs = int(delta.total_seconds())
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    days = secs // 86400
+    if days < 14:
+        return f"{days}d ago"
+    return when.strftime("%Y-%m-%d")
+
+
+def load_issues_full(ids: list[str]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for i in ids:
+        try:
+            raw = run(["bd", "show", i, "--json"])
+            arr = json.loads(raw)
+            if arr:
+                out[i] = arr[0]
+        except (RuntimeError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def load_all_issues() -> list[dict[str, Any]]:
+    raw = run(["bd", "list", "--limit", "0", "--json"])
+    return json.loads(raw)
+
+
+def load_interactions(project_root: Path) -> list[dict[str, Any]]:
+    p = project_root / ".beads" / "interactions.jsonl"
+    if not p.exists():
+        return []
+    events = []
+    with p.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return events
+
+
+def load_commits(since: dt.datetime, project_root: Path) -> list[dict[str, str]]:
+    since_iso = since.strftime("%Y-%m-%d")
+    fmt = "%H%x09%aI%x09%s"
+    out = run(
+        ["git", "-C", str(project_root), "log", f"--since={since_iso}", f"--pretty=format:{fmt}"],
+        check=False,
+    )
+    rows = []
+    for line in out.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) == 3:
+            rows.append({"sha": parts[0], "date": parts[1], "subject": parts[2]})
+    return rows
+
+
+def commits_for_id(commits: list[dict[str, str]], bd_id: str) -> list[dict[str, str]]:
+    short = bd_id.split("-", 1)[1] if "-" in bd_id else bd_id
+    return [c for c in commits if bd_id in c["subject"] or short in c["subject"]]
+
+
+def first_para(text: str | None, limit: int = 400) -> str:
+    if not text:
+        return ""
+    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not paras:
+        return ""
+    p = paras[0]
+    if len(p) > limit:
+        p = p[: limit - 1].rstrip() + "…"
+    return p
+
+
+def latest_note(notes: str | None) -> str:
+    if not notes:
+        return ""
+    lines = [ln for ln in notes.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+PRIORITY_LABEL = {0: "P0", 1: "P1", 2: "P2", 3: "P3", 4: "P4"}
+
+
+def render(
+    period_start: dt.datetime,
+    period_end: dt.datetime,
+    closed: list[dict[str, Any]],
+    in_flight: list[dict[str, Any]],
+    came_in: list[dict[str, Any]],
+    backlog: dict[str, list[dict[str, Any]]],
+    timeline: list[dict[str, Any]],
+    full: dict[str, dict[str, Any]],
+    commits: list[dict[str, str]],
+    repo_name: str,
+) -> str:
+    e = html.escape
+    now = dt.datetime.now(dt.timezone.utc)
+    period_str = f"{period_start.strftime('%Y-%m-%d')} → {period_end.strftime('%Y-%m-%d')}"
+
+    parts: list[str] = []
+    parts.append(f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tri-report · {e(repo_name)} · {e(period_str)}</title>
+<style>
+  :root {{
+    --fg: #1a1a1a; --muted: #666; --bg: #fdfdfd; --panel: #f5f5f5;
+    --border: #ddd; --accent: #0066cc; --good: #2a8a3e; --warn: #b07a00; --bad: #b03030;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         font-size: 14.5px; line-height: 1.5; color: var(--fg); background: var(--bg);
+         max-width: 980px; margin: 2rem auto; padding: 0 1.5rem; }}
+  h1 {{ font-size: 1.6rem; margin: 0 0 0.2rem; }}
+  h2 {{ font-size: 1.2rem; margin: 2.5rem 0 0.8rem; padding-bottom: 0.3rem; border-bottom: 2px solid var(--accent); }}
+  .period {{ color: var(--muted); margin-bottom: 1.5rem; }}
+  .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }}
+  .stat {{ background: var(--panel); padding: 0.6rem 0.9rem; border-radius: 6px; border: 1px solid var(--border); }}
+  .stat .n {{ font-size: 1.4rem; font-weight: 600; display: block; }}
+  .stat .label {{ font-size: 0.85rem; color: var(--muted); }}
+  .card {{ background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+          padding: 0.8rem 1rem; margin: 0.8rem 0; border-radius: 4px; }}
+  .card h3 {{ font-size: 1rem; margin: 0 0 0.3rem; font-weight: 600; }}
+  .card h3 a {{ color: var(--fg); text-decoration: none; }}
+  .card h3 a:hover {{ color: var(--accent); }}
+  .card .meta {{ font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }}
+  .card .why {{ margin: 0.4rem 0; font-size: 0.92rem; }}
+  .card .why-label {{ font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; }}
+  .card .reason {{ background: #fff; border-left: 2px solid var(--good); padding: 0.4rem 0.7rem; margin: 0.5rem 0;
+                  font-size: 0.9rem; }}
+  .card.in-flight {{ border-left-color: var(--warn); }}
+  .card.in-flight .reason {{ border-left-color: var(--warn); }}
+  .card.came-in {{ border-left-color: var(--muted); }}
+  .commits {{ font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }}
+  .commits code {{ background: #fff; padding: 1px 4px; border-radius: 2px; }}
+  .priority {{ display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 1px 6px;
+              border-radius: 3px; background: #e0e0e0; color: #333; }}
+  .priority.P0, .priority.P1 {{ background: #ffe0e0; color: var(--bad); }}
+  .priority.P2 {{ background: #fff0d0; color: var(--warn); }}
+  .priority.P3, .priority.P4 {{ background: #e0e8f0; color: var(--accent); }}
+  .empty {{ color: var(--muted); font-style: italic; padding: 0.5rem 0; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+  th, td {{ text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  th {{ font-weight: 600; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }}
+  details summary {{ cursor: pointer; padding: 0.3rem 0; font-weight: 600; }}
+  .timeline-day {{ font-weight: 600; margin: 1rem 0 0.3rem; color: var(--accent); }}
+  .timeline-event {{ font-size: 0.88rem; padding: 0.2rem 0; color: var(--muted); }}
+  .timeline-event .id {{ font-family: ui-monospace, monospace; color: var(--fg); }}
+  .footer {{ margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+            font-size: 0.8rem; color: var(--muted); }}
+  code {{ font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }}
+</style>
+</head>
+<body>
+<h1>tri-report · {e(repo_name)}</h1>
+<div class="period">{e(period_str)} · generated {e(now.strftime('%Y-%m-%d %H:%M UTC'))}</div>
+
+<div class="stats">
+  <div class="stat"><span class="n">{len(closed)}</span><span class="label">closed</span></div>
+  <div class="stat"><span class="n">{len(in_flight)}</span><span class="label">in flight</span></div>
+  <div class="stat"><span class="n">{len(came_in)}</span><span class="label">came in</span></div>
+  <div class="stat"><span class="n">{sum(len(v) for v in backlog.values())}</span><span class="label">open backlog</span></div>
+  <div class="stat"><span class="n">{len(commits)}</span><span class="label">commits</span></div>
+</div>
+""")
+
+    parts.append("<h2>What landed</h2>")
+    if not closed:
+        parts.append('<div class="empty">Nothing closed in this window.</div>')
+    else:
+        for ev in closed:
+            issue_id = ev["issue_id"]
+            full_data = full.get(issue_id, {})
+            title = full_data.get("title", "(unknown)")
+            prio = PRIORITY_LABEL.get(full_data.get("priority", 99), "")
+            why = first_para(full_data.get("description"))
+            reason = ev.get("extra", {}).get("reason", "") or full_data.get("close_reason", "")
+            when = parse_iso(ev["created_at"])
+            ext = full_data.get("external_ref", "")
+            related = commits_for_id(commits, issue_id)
+            parts.append(f'<div class="card"><h3>')
+            parts.append(f'<span class="priority {e(prio)}">{e(prio)}</span> ')
+            parts.append(f'<a href="#{e(issue_id)}" id="{e(issue_id)}">{e(issue_id)}</a> · {e(title)}</h3>')
+            parts.append(f'<div class="meta">closed {e(humanize(when, now))} · {e(when.strftime("%Y-%m-%d %H:%M UTC"))}')
+            if ext:
+                parts.append(f' · <code>{e(ext)}</code>')
+            parts.append("</div>")
+            if why:
+                parts.append(f'<div class="why"><span class="why-label">why</span><br>{e(why)}</div>')
+            if reason:
+                parts.append(f'<div class="reason"><strong>delivered:</strong> {e(reason)}</div>')
+            if related:
+                parts.append('<div class="commits">commits: ')
+                parts.append(", ".join(f'<code>{e(c["sha"][:7])}</code> {e(c["subject"])}' for c in related))
+                parts.append("</div>")
+            parts.append("</div>")
+
+    parts.append("<h2>In flight</h2>")
+    if not in_flight:
+        parts.append('<div class="empty">Nothing in progress right now.</div>')
+    else:
+        for issue in in_flight:
+            issue_id = issue["id"]
+            full_data = full.get(issue_id, issue)
+            title = full_data.get("title", "(unknown)")
+            prio = PRIORITY_LABEL.get(full_data.get("priority", 99), "")
+            why = first_para(full_data.get("description"))
+            note = latest_note(full_data.get("notes"))
+            started = full_data.get("started_at")
+            ext = full_data.get("external_ref", "")
+            parts.append(f'<div class="card in-flight"><h3>')
+            parts.append(f'<span class="priority {e(prio)}">{e(prio)}</span> ')
+            parts.append(f'{e(issue_id)} · {e(title)}</h3>')
+            meta_bits = []
+            if started:
+                meta_bits.append(f"started {humanize(parse_iso(started), now)}")
+            if ext:
+                meta_bits.append(ext)
+            if meta_bits:
+                parts.append(f'<div class="meta">{e(" · ".join(meta_bits))}</div>')
+            if why:
+                parts.append(f'<div class="why"><span class="why-label">why</span><br>{e(why)}</div>')
+            if note:
+                parts.append(f'<div class="reason"><strong>latest:</strong> {e(note)}</div>')
+            parts.append("</div>")
+
+    parts.append("<h2>Came in</h2>")
+    if not came_in:
+        parts.append('<div class="empty">No new items in this window.</div>')
+    else:
+        parts.append("<table><thead><tr><th>id</th><th>P</th><th>title</th><th>created</th><th>ref</th></tr></thead><tbody>")
+        for issue in came_in:
+            iid = issue["id"]
+            prio = PRIORITY_LABEL.get(issue.get("priority", 99), "")
+            title = issue.get("title", "")
+            created = issue.get("created_at", "")
+            ext = full.get(iid, {}).get("external_ref", "")
+            try:
+                age = humanize(parse_iso(created), now) if created else ""
+            except Exception:
+                age = ""
+            parts.append(
+                f'<tr><td><code>{e(iid)}</code></td><td><span class="priority {e(prio)}">{e(prio)}</span></td>'
+                f'<td>{e(title)}</td><td>{e(age)}</td><td><code>{e(ext)}</code></td></tr>'
+            )
+        parts.append("</tbody></table>")
+
+    parts.append("<h2>Backlog snapshot</h2>")
+    total_open = sum(len(v) for v in backlog.values())
+    if total_open == 0:
+        parts.append('<div class="empty">Backlog is empty.</div>')
+    else:
+        parts.append("<table><thead><tr><th>P</th><th>id</th><th>title</th><th>status</th></tr></thead><tbody>")
+        for prio_key in sorted(backlog.keys()):
+            for issue in backlog[prio_key]:
+                iid = issue["id"]
+                title = issue.get("title", "")
+                status = issue.get("status", "")
+                parts.append(
+                    f'<tr><td><span class="priority {e(prio_key)}">{e(prio_key)}</span></td>'
+                    f'<td><code>{e(iid)}</code></td><td>{e(title)}</td><td>{e(status)}</td></tr>'
+                )
+        parts.append("</tbody></table>")
+
+    parts.append("<h2>Activity timeline</h2>")
+    parts.append('<details><summary>Show all events in window</summary>')
+    if not timeline:
+        parts.append('<div class="empty">No bd activity in window.</div>')
+    else:
+        by_day: dict[str, list[dict[str, Any]]] = {}
+        for ev in timeline:
+            day = ev["created_at"][:10]
+            by_day.setdefault(day, []).append(ev)
+        for day in sorted(by_day.keys(), reverse=True):
+            parts.append(f'<div class="timeline-day">{e(day)}</div>')
+            for ev in by_day[day]:
+                t = ev["created_at"][11:16]
+                iid = ev.get("issue_id", "")
+                extra = ev.get("extra", {})
+                field = extra.get("field", "")
+                old_v = extra.get("old_value", "")
+                new_v = extra.get("new_value", "")
+                reason = extra.get("reason", "")
+                summary_text = f"{field}: {old_v} → {new_v}" if field else ev.get("kind", "")
+                line = f'<div class="timeline-event">{e(t)} · <span class="id">{e(iid)}</span> · {e(summary_text)}'
+                if reason:
+                    line += f' · <em>{e(reason[:160])}{"…" if len(reason) > 160 else ""}</em>'
+                line += "</div>"
+                parts.append(line)
+    parts.append("</details>")
+
+    parts.append('<div class="footer">Generated by <code>scripts/tri-report</code> · sources: bd, interactions.jsonl, git log</div>')
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def open_in_browser(path: Path) -> str:
+    """Try a chain of browser launchers. Returns the launcher used or empty if none."""
+    url = path.as_uri()
+    for name in ("xdg-open", "wslview", "open"):
+        if shutil.which(name):
+            try:
+                subprocess.Popen([name, str(path)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return name
+            except Exception:
+                continue
+
+    # WSL: try Windows browsers via cmd.exe or explicit Edge path
+    is_wsl = "microsoft" in (os.uname().release.lower() if hasattr(os, "uname") else "")
+    if is_wsl:
+        # Convert /home/... → \\wsl$\... or use file:// URI via cmd.exe
+        try:
+            win_path = run(["wslpath", "-w", str(path)], check=False).strip()
+            if win_path:
+                if shutil.which("cmd.exe"):
+                    subprocess.Popen(["cmd.exe", "/c", "start", "", win_path],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return "cmd.exe start"
+                edge = "/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+                if Path(edge).exists():
+                    subprocess.Popen([edge, win_path],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return "msedge.exe"
+        except Exception:
+            pass
+
+    # Last resort: Python's webbrowser module
+    try:
+        if webbrowser.open(url):
+            return "webbrowser"
+    except Exception:
+        pass
+    return ""
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate triage workflow HTML digest.")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--days", type=int, default=7, help="Look back N days (default: 7)")
+    g.add_argument("--since", type=str, help="ISO date YYYY-MM-DD")
+    g.add_argument("--today", action="store_true", help="Last 24h")
+    ap.add_argument("--out", type=str, help="Output HTML path (default: /tmp/tri-report-<date>.html)")
+    ap.add_argument("--no-open", action="store_true", help="Don't launch browser")
+    args = ap.parse_args()
+
+    now = dt.datetime.now(dt.timezone.utc)
+    if args.since:
+        period_start = dt.datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc)
+    elif args.today:
+        period_start = now - dt.timedelta(days=1)
+    else:
+        period_start = now - dt.timedelta(days=args.days)
+
+    project_root = Path(run(["git", "rev-parse", "--show-toplevel"]).strip())
+    repo_name = project_root.name
+
+    # Load sources
+    all_issues = load_all_issues()
+    interactions = load_interactions(project_root)
+    commits = load_commits(period_start, project_root)
+
+    # Filter events to window
+    in_window = [
+        ev for ev in interactions
+        if ev.get("created_at") and parse_iso(ev["created_at"]) >= period_start
+    ]
+
+    # Closed-in-window: field_change events where status → closed
+    closed_events = [
+        ev for ev in in_window
+        if ev.get("kind") == "field_change"
+        and ev.get("extra", {}).get("field") == "status"
+        and ev.get("extra", {}).get("new_value") == "closed"
+    ]
+
+    # In-flight: current snapshot
+    in_flight = [i for i in all_issues if i.get("status") == "in_progress"]
+
+    # Came in: created in window
+    came_in = []
+    for i in all_issues:
+        c = i.get("created_at")
+        if c:
+            try:
+                if parse_iso(c) >= period_start:
+                    came_in.append(i)
+            except Exception:
+                pass
+    came_in.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+    # Backlog: open + not in flight
+    backlog: dict[str, list[dict[str, Any]]] = {}
+    for i in all_issues:
+        if i.get("status") == "open":
+            p = PRIORITY_LABEL.get(i.get("priority", 99), "P?")
+            backlog.setdefault(p, []).append(i)
+    for k in backlog:
+        backlog[k].sort(key=lambda x: x.get("created_at", ""))
+
+    # Hydrate full records for closed + in_flight + came_in (so we get description/notes/external_ref)
+    needed_ids = set()
+    needed_ids.update(ev["issue_id"] for ev in closed_events)
+    needed_ids.update(i["id"] for i in in_flight)
+    needed_ids.update(i["id"] for i in came_in)
+    full = load_issues_full(sorted(needed_ids))
+
+    html_text = render(
+        period_start=period_start,
+        period_end=now,
+        closed=closed_events,
+        in_flight=in_flight,
+        came_in=came_in,
+        backlog=backlog,
+        timeline=in_window,
+        full=full,
+        commits=commits,
+        repo_name=repo_name,
+    )
+
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        stamp = now.strftime("%Y%m%d-%H%M")
+        out_path = Path("/tmp") / f"tri-report-{repo_name}-{stamp}.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html_text)
+    print(f"wrote {out_path} ({len(html_text):,} bytes)")
+
+    if not args.no_open:
+        used = open_in_browser(out_path)
+        if used:
+            print(f"opened with: {used}")
+        else:
+            print(f"could not auto-open; visit: {out_path.as_uri()}", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
