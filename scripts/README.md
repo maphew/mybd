@@ -20,6 +20,9 @@ For non-PR triage stubs: tri-close <id> [--reason=...]
 Re-running `tri-pull` daily is idempotent. It only mirrors items lacking the
 `triaged` label upstream and skips any already in bd (matched by `external_ref`).
 
+Pair with `tri-sync` (below) to also auto-close bd stubs whose upstream item
+has since been merged or closed.
+
 ## tri-pull
 
 ```bash
@@ -39,6 +42,28 @@ Each created bd issue:
 
 The heuristic priority/type is intentionally crude — Layer 1 is *get items into
 bd*, not auto-rank them. You set the real priority during triage.
+
+## tri-sync
+
+```bash
+scripts/tri-sync                # close bd stubs whose upstream PR/issue is merged/closed
+scripts/tri-sync --dry-run      # preview
+scripts/tri-sync --prs-only
+scripts/tri-sync --issues-only
+scripts/tri-sync --limit 20
+```
+
+Walks open bd issues with `gh-(pr|iss)-NNNN` refs, queries `gh` for upstream
+state, and closes bd stubs that are terminal upstream:
+
+- PR `MERGED` → `bd close --reason="upstream merged: <sha7>"`
+- PR `CLOSED` (not merged) → `bd close --reason="upstream closed (not merged)"`
+- issue `CLOSED` → `bd close --reason="upstream closed: <stateReason>"`
+
+Does NOT apply the `triaged` label upstream — the upstream item is already
+terminal, so labeling adds noise. Each closure also gets a `tri-sync: closed
+(...)` audit note on the bd issue. Idempotent; safe to run from cron alongside
+`tri-pull`.
 
 ## tri-close
 
@@ -148,5 +173,7 @@ note's `Verdict:` line is still `TBD`.
 ## Layer 2 (filed as beads, not built yet)
 
 cron/loop daily auto-pull · smart classifier (auto-priority from rubric) ·
-close-on-merge sync · bd close hook → upstream label · epic/batch grouping
-for stacked PRs · weekly triage metrics. See `bd ready`.
+bd close hook → upstream label · epic/batch grouping for stacked PRs ·
+weekly triage metrics. See `bd ready`.
+
+(close-on-merge sync shipped as `tri-sync`.)
