@@ -1,0 +1,23 @@
+# Starter local-environment manifest for the A:\dev\mybd workspace.
+#
+# The scripts it references are real and can be reused even if the app expects
+# this manifest to be renamed later.
+
+name = "mybd"
+
+[setup.windows]
+script = ".\\.codex\\scripts\\setup-windows.ps1"
+
+[[actions]]
+name = "Prime"
+icon = "book-open"
+
+[actions.windows]
+script = ".\\.codex\\scripts\\prime.ps1"
+
+[[actions]]
+name = "Test Main"
+icon = "vial"
+
+[actions.windows]
+script = ".\\.codex\\scripts\\test-main.ps1"

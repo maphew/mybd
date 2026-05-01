@@ -4,14 +4,14 @@ This directory uses git worktrees to manage multiple branches efficiently.
 
 ## Structure
 
-- `.git/` - Main git repository data (shared across all worktrees)
-- `bd-main/` - Main branch worktree
+- `.git/` - This metadata repository (`maphew/mybd`)
+- `main/` - Main `maphew/beads` worktree
 - Other branches can be added as additional worktrees at this level
 
 ## Creating a New Worktree
 
 ```powershell
-git -C bd-main worktree add ../feature-name -b feature-name
+git -C main worktree add ../feature-name -b feature-name
 cd ../feature-name
 # start hacking
 ```
@@ -33,7 +33,7 @@ cd feature-name
 ## Listing Worktrees
 
 ```powershell
-git -C bd-main worktree list
+git -C main worktree list
 ```
 
 ## Removing a Worktree
@@ -45,7 +45,7 @@ git -C bd-main worktree remove feature-name
 Or remove the directory and prune:
 ```powershell
 Remove-Item -Recurse feature-name
-git -C bd-main worktree prune
+git -C main worktree prune
 ```
 
 ## Notes

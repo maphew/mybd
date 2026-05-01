@@ -13,10 +13,10 @@ scratch/cleanroom/
 
 # Git worktrees managed outside the repo
 .worktrees/
+main/
 
 # Temporary files
 tmp/
 
 # Local environment variables
 .env
-

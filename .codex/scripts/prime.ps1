@@ -1,0 +1,2 @@
+$ErrorActionPreference = "Stop"
+bd prime

@@ -3,10 +3,17 @@ dolt/
 dolt-access.lock
 
 # Runtime files
+.env
 bd.sock
 bd.sock.startlock
 sync-state.json
+export-state.json
+push-state.json
+interactions.jsonl
 last-touched
+*.lock
+*.corrupt.backup/
+.beads-credential-key
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -28,8 +35,11 @@ ephemeral.sqlite3-shm
 
 # Dolt server management (auto-started by bd)
 dolt-server.pid
+dolt-server.port
+dolt-server.activity
 dolt-server.log
 dolt-server.lock
+dolt-monitor.pid
 
 # Legacy files (from pre-Dolt versions)
 *.db
