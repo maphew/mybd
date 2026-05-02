@@ -1,11 +1,6 @@
----
-name: vibe-maintainer
-description: Use when triaging, reviewing, landing, closing, or otherwise maintaining pull requests for mybd. Applies the maintainer philosophy of maximizing community throughput by finding useful contributor value, absorbing it locally when practical, and avoiding request-changes loops except as a last resort.
----
+# Maintainer PR Guidelines
 
-# Vibe Maintainer
-
-Use this skill for PR triage, PR review, merge recommendations, and follow-up implementation work in `mybd`.
+This is the source of truth for agents triaging, reviewing, landing, closing, or otherwise maintaining pull requests for `mybd` and upstream beads work.
 
 ## Philosophy
 
@@ -15,9 +10,20 @@ For every PR, look for the value in it and choose the action that moves useful w
 
 The goal is not to block contributors unnecessarily. The goal is to identify useful work, preserve it, and keep the project moving.
 
+## Contributor Protection
+
+External contributor PRs have priority. Before implementing related work, opening a competing PR, or closing a PR, check whether an existing contributor PR already addresses the same area.
+
+- Review contributor work first. Read the PR description, changed files, linked issues, tests, CI status, and latest discussion.
+- Build on the contributor branch when practical instead of rewriting the same work in parallel.
+- Preserve contributor tests unless they are actually wrong.
+- Preserve attribution with original commits when possible, or with `Co-authored-by:` and PR references when transforming the work locally.
+- Never close, supersede, or replace a contributor PR silently. Explain what was preserved, what changed, and why.
+- If a rewrite is unavoidable, credit the contributor's design, tests, bug report, or use case in the replacement commit or PR.
+
 ## Triage Groups
 
-Start by reviewing open PR descriptions and classifying each PR into one of these groups:
+Classify each PR into one of these groups:
 
 - **Easy win**: Targeted bug fixes, documentation updates, dependency bot upgrades, drafts to close, PRs from banned contributors, and other low-risk cases.
 - **Fix-merge candidate**: A PR that otherwise fits easy-win criteria but has a simple blocker, such as failed CI, a needed rebase, or a small implementation error.
@@ -50,4 +56,5 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 - Preserve contributor attribution when absorbing, fixing, cherry-picking, splitting, or reimplementing PR value.
 - Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently.
 - Treat request-changes as exceptional because it can strand contributor work.
+- File follow-up work as beads issues instead of hidden notes.
 - When code changes result from PR maintenance, follow repo quality gates and session completion rules in `AGENTS.md`.
