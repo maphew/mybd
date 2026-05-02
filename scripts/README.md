@@ -23,6 +23,31 @@ Re-running `tri-pull` daily is idempotent. It only mirrors items lacking the
 Pair with `tri-sync` (below) to also auto-close bd stubs whose upstream item
 has since been merged or closed.
 
+## tri-daily (unattended Layer 2 wrapper)
+
+```bash
+scripts/tri-daily                         # run tri-pull + tri-sync once
+scripts/tri-daily --pull-only             # only mirror new items in
+scripts/tri-daily --sync-only             # only close upstream-terminal stubs
+scripts/tri-daily --verbose               # print the same summary it logs
+scripts/tri-install-cron                  # install a daily cron entry (06:17 local time)
+scripts/tri-install-cron --schedule "45 5 * * *"
+```
+
+`tri-daily` is the practical machine-bound unattended path for Layer 2. It is
+designed for cron:
+
+- silent on success when nothing changed
+- appends a one-line summary to `${XDG_STATE_HOME:-~/.local/state}/mybd/tri-daily.log`
+  when `tri-pull` creates new stubs or `tri-sync` auto-closes stale ones
+- appends full diagnostics and exits non-zero on failures (`gh` auth/rate
+  limit, network, command errors)
+
+`tri-install-cron` installs or replaces a single tagged crontab entry that
+`cd`s into this checkout and runs `scripts/tri-daily` once per day. This is
+intentionally local-machine only; if you rotate between machines, install it on
+the one that has working `gh auth`.
+
 ## tri-pull
 
 ```bash
@@ -37,11 +62,16 @@ Each created bd issue:
 - `external_ref`: `gh-pr-NNNN` / `gh-iss-NNNN` — the structured upstream link
 - `title`: the upstream title verbatim
 - `description`: URL, author, created date, labels, draft flag, decision options
-- `priority`: P3 default; **P4** for dependabot bots and drafts
+- `priority`: heuristic from title/body/size/age/review state
 - `type`: `bug` if title starts `fix(`/`fix:`, `feature` if `feat(`/`feat:`, else `task`
 
-The heuristic priority/type is intentionally crude — Layer 1 is *get items into
-bd*, not auto-rank them. You set the real priority during triage.
+Additional Layer 2 behavior now shipped in `tri-pull`:
+- smarter default priority (`P0`..`P4`) for fresh bugs/perf work vs drafts, stale conflicts, and very large changes
+- dependency linking for stacked PRs (`stacks on #NNNN`, `depends on #NNNN`) and PRs that close issues
+- warning pass for recently closed stubs whose upstream item still lacks the `triaged` label
+
+The classifier is still heuristic. It should get `bd ready` closer to manual
+triage order, not replace human judgment.
 
 ## tri-sync
 
@@ -77,6 +107,9 @@ scripts/tri-close mybd-XXX --dry-run            # preview
 Reads `external_ref` to know which upstream PR/issue to label. Refuses to act
 on bd issues without a `gh-(pr|iss)-NNNN` ref — use `bd close` directly for
 non-triage stubs.
+
+Plain `bd close <id>` is also covered in this repo via `.beads/hooks/on_close`,
+which calls `scripts/tri-label-upstream` as a best-effort async hook.
 
 ## Triage decision tree (per item in `bd ready`)
 
@@ -165,6 +198,7 @@ scripts/tri-report                    # last 7 days, opens in browser
 scripts/tri-report --today            # last 24h
 scripts/tri-report --days 14          # custom window
 scripts/tri-report --since 2026-04-01 # explicit start date
+scripts/tri-report --weekly-metrics   # markdown weekly metrics report
 scripts/tri-report --no-open          # write file, don't launch browser
 scripts/tri-report --out report.html  # custom output path
 ```
@@ -190,6 +224,20 @@ Falls back to printing the `file://` URI if all fail.
 Why Python (vs the bash tri-* scripts): this one templates rather than
 orchestrates — date math, HTML escaping, multi-source synthesis. Stdlib only.
 
+`--weekly-metrics` switches from HTML digest to a Markdown report focused on:
+
+- new triage stubs created in the window
+- triage stubs closed in the window (excluding `tri-sync` auto-closures whose
+  close reason starts with `upstream `)
+- median age of remaining open stubs
+- P0/P1 leakage: open high-priority stubs older than 48 hours
+
+The default window is still 7 days, so a plain weekly run is:
+
+```bash
+scripts/tri-report --weekly-metrics --out /tmp/tri-weekly.md
+```
+
 ## Existing artifacts
 
 - `_working_on/upstream_pr_triage.md` — manual T1–T5 ranking with scoring rubric
@@ -202,10 +250,18 @@ orchestrates — date math, HTML escaping, multi-source synthesis. Stdlib only.
 - `TRI_BD_MAIN` — canonical upstream checkout (default `<project>/bd-main`)
 - `TRI_REVIEWS_DIR` — review notes dir (default `<project>/_working_on/pr-reviews`)
 
-## Layer 2 (filed as beads, not built yet)
+## Layer 2
 
-cron/loop daily auto-pull · smart classifier (auto-priority from rubric) ·
-bd close hook → upstream label · epic/batch grouping for stacked PRs ·
-weekly triage metrics. See `bd ready`.
+Shipped:
+- daily unattended wrapper + cron installer (`tri-daily`, `tri-install-cron`)
+- weekly triage metrics (`tri-report --weekly-metrics`)
+- smart classifier (auto-priority from rubric)
+- `bd close` hook → upstream label
+- epic/batch grouping for stacked PRs
+
+Still open:
+- JSONL normalization churn follow-up (likely upstream exporter work, not local workflow)
+
+See `bd ready`.
 
 (close-on-merge sync shipped as `tri-sync`.)

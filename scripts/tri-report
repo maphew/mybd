@@ -31,6 +31,7 @@ import datetime as dt
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -141,6 +142,170 @@ def latest_note(notes: str | None) -> str:
 
 
 PRIORITY_LABEL = {0: "P0", 1: "P1", 2: "P2", 3: "P3", 4: "P4"}
+TRIAGE_REF_RE = re.compile(r"^gh-(pr|iss)-[0-9]+$")
+
+
+def is_triage_stub(issue: dict[str, Any]) -> bool:
+    ref = issue.get("external_ref")
+    return isinstance(ref, str) and bool(TRIAGE_REF_RE.match(ref))
+
+
+def format_duration_hours(hours: float) -> str:
+    if hours < 1:
+        return f"{int(hours * 60)}m"
+    if hours < 48:
+        return f"{hours:.1f}h"
+    days = hours / 24
+    if days < 14:
+        return f"{days:.1f}d"
+    return f"{days:.0f}d"
+
+
+def age_hours(created_at: str, now: dt.datetime) -> float | None:
+    try:
+        created = parse_iso(created_at)
+    except Exception:
+        return None
+    return max((now - created).total_seconds() / 3600, 0.0)
+
+
+def render_weekly_metrics(
+    period_start: dt.datetime,
+    period_end: dt.datetime,
+    all_issues: list[dict[str, Any]],
+    repo_name: str,
+) -> str:
+    triage_issues = [issue for issue in all_issues if is_triage_stub(issue)]
+    new_items = []
+    triaged = []
+    open_stubs = []
+    leakage = []
+    now = period_end
+
+    for issue in triage_issues:
+        created_at = issue.get("created_at")
+        if created_at:
+            try:
+                if parse_iso(created_at) >= period_start:
+                    new_items.append(issue)
+            except Exception:
+                pass
+
+        if issue.get("status") == "closed":
+            closed_at = issue.get("closed_at")
+            close_reason = (issue.get("close_reason") or "").strip().lower()
+            if closed_at:
+                try:
+                    closed_in_window = parse_iso(closed_at) >= period_start
+                except Exception:
+                    closed_in_window = False
+                if closed_in_window and not close_reason.startswith("upstream "):
+                    triaged.append(issue)
+
+        if issue.get("status") == "open":
+            open_stubs.append(issue)
+            created_at = issue.get("created_at")
+            if created_at and issue.get("priority") in (0, 1):
+                hours = age_hours(created_at, now)
+                if hours is not None and hours > 48:
+                    leakage.append((issue, hours))
+
+    open_stub_ages = []
+    for issue in open_stubs:
+        created_at = issue.get("created_at")
+        if not created_at:
+            continue
+        hours = age_hours(created_at, now)
+        if hours is not None:
+            open_stub_ages.append(hours)
+    open_stub_ages.sort()
+
+    median_age = None
+    if open_stub_ages:
+        mid = len(open_stub_ages) // 2
+        if len(open_stub_ages) % 2 == 1:
+            median_age = open_stub_ages[mid]
+        else:
+            median_age = (open_stub_ages[mid - 1] + open_stub_ages[mid]) / 2
+
+    new_items.sort(key=lambda issue: issue.get("created_at", ""), reverse=True)
+    triaged.sort(key=lambda issue: issue.get("closed_at", ""), reverse=True)
+    leakage.sort(key=lambda pair: pair[1], reverse=True)
+
+    lines = [
+        f"# tri-weekly metrics · {repo_name}",
+        "",
+        f"Window: {period_start.strftime('%Y-%m-%d %H:%M UTC')} to {period_end.strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        "## Summary",
+        "",
+        f"- New items this week: {len(new_items)}",
+        f"- Items triaged this week: {len(triaged)}",
+        f"- Remaining open stubs: {len(open_stubs)}",
+        f"- Median age of remaining open stubs: {format_duration_hours(median_age) if median_age is not None else 'n/a'}",
+        f"- P0/P1 leakage >48h: {len(leakage)}",
+        "",
+        "Assumption: \"items triaged\" counts closed triage stubs and excludes auto-closures whose close reason starts with `upstream ` (the `tri-sync` path).",
+        "",
+    ]
+
+    if triaged:
+        lines.extend(
+            [
+                "## Closed This Week",
+                "",
+                "| ID | P | Closed | Title | Reason |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for issue in triaged:
+            prio = PRIORITY_LABEL.get(issue.get("priority", 99), "P?")
+            closed_at = issue.get("closed_at", "")
+            closed_day = closed_at[:10] if closed_at else ""
+            title = issue.get("title", "").replace("\n", " ").strip()
+            reason = (issue.get("close_reason") or "").replace("\n", " ").strip()
+            lines.append(f"| {issue['id']} | {prio} | {closed_day} | {title} | {reason or '(none)'} |")
+        lines.append("")
+
+    if leakage:
+        lines.extend(
+            [
+                "## P0/P1 Leakage",
+                "",
+                "| ID | P | Age | Title | Ref |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for issue, hours in leakage:
+            prio = PRIORITY_LABEL.get(issue.get("priority", 99), "P?")
+            title = issue.get("title", "").replace("\n", " ").strip()
+            lines.append(
+                f"| {issue['id']} | {prio} | {format_duration_hours(hours)} | {title} | {issue.get('external_ref', '')} |"
+            )
+        lines.append("")
+    else:
+        lines.extend(["## P0/P1 Leakage", "", "None.", ""])
+
+    if new_items:
+        lines.extend(
+            [
+                "## New This Week",
+                "",
+                "| ID | P | Created | Title | Ref |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for issue in new_items:
+            prio = PRIORITY_LABEL.get(issue.get("priority", 99), "P?")
+            created_at = issue.get("created_at", "")
+            created_day = created_at[:10] if created_at else ""
+            title = issue.get("title", "").replace("\n", " ").strip()
+            lines.append(
+                f"| {issue['id']} | {prio} | {created_day} | {title} | {issue.get('external_ref', '')} |"
+            )
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def render(
@@ -403,6 +568,7 @@ def main() -> int:
     g.add_argument("--days", type=int, default=7, help="Look back N days (default: 7)")
     g.add_argument("--since", type=str, help="ISO date YYYY-MM-DD")
     g.add_argument("--today", action="store_true", help="Last 24h")
+    ap.add_argument("--weekly-metrics", action="store_true", help="Write weekly triage metrics markdown instead of HTML")
     ap.add_argument("--out", type=str, help="Output HTML path (default: /tmp/tri-report-<date>.html)")
     ap.add_argument("--no-open", action="store_true", help="Don't launch browser")
     args = ap.parse_args()
@@ -468,27 +634,42 @@ def main() -> int:
     needed_ids.update(i["id"] for i in came_in)
     full = load_issues_full(sorted(needed_ids))
 
-    html_text = render(
-        period_start=period_start,
-        period_end=now,
-        closed=closed_events,
-        in_flight=in_flight,
-        came_in=came_in,
-        backlog=backlog,
-        timeline=in_window,
-        full=full,
-        commits=commits,
-        repo_name=repo_name,
-    )
+    if args.weekly_metrics:
+        report_text = render_weekly_metrics(
+            period_start=period_start,
+            period_end=now,
+            all_issues=all_issues,
+            repo_name=repo_name,
+        )
+        suffix = "md"
+        default_prefix = "tri-metrics"
+    else:
+        report_text = render(
+            period_start=period_start,
+            period_end=now,
+            closed=closed_events,
+            in_flight=in_flight,
+            came_in=came_in,
+            backlog=backlog,
+            timeline=in_window,
+            full=full,
+            commits=commits,
+            repo_name=repo_name,
+        )
+        suffix = "html"
+        default_prefix = "tri-report"
 
     if args.out:
         out_path = Path(args.out)
     else:
         stamp = now.strftime("%Y%m%d-%H%M")
-        out_path = Path("/tmp") / f"tri-report-{repo_name}-{stamp}.html"
+        out_path = Path("/tmp") / f"{default_prefix}-{repo_name}-{stamp}.{suffix}"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(html_text)
-    print(f"wrote {out_path} ({len(html_text):,} bytes)")
+    out_path.write_text(report_text)
+    print(f"wrote {out_path} ({len(report_text):,} bytes)")
+
+    if args.weekly_metrics:
+        return 0
 
     if not args.no_open:
         used = open_in_browser(out_path)

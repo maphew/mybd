@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# tri-daily — cron-safe unattended wrapper around tri-pull + tri-sync.
+#
+# Intended for machine-bound daily scheduling. Behavior:
+# - silent on no-op runs (no stdout/stderr on success with zero changes)
+# - append a one-line summary when items are pulled or auto-closed
+# - append full diagnostics on failures and exit non-zero
+#
+# Usage:
+#   tri-daily
+#   tri-daily --pull-only
+#   tri-daily --sync-only
+#   tri-daily --log /path/to/log
+#   tri-daily --verbose
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PULL_CMD=("${TRI_PULL_CMD:-$SCRIPT_DIR/tri-pull}")
+SYNC_CMD=("${TRI_SYNC_CMD:-$SCRIPT_DIR/tri-sync}")
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+LOG_PATH="${TRI_DAILY_LOG:-$STATE_HOME/mybd/tri-daily.log}"
+DO_PULL=1
+DO_SYNC=1
+VERBOSE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pull-only) DO_SYNC=0; shift;;
+    --sync-only) DO_PULL=0; shift;;
+    --log) LOG_PATH="$2"; shift 2;;
+    --log=*) LOG_PATH="${1#--log=}"; shift;;
+    --verbose) VERBOSE=1; shift;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "tri-daily: unknown arg: $1" >&2; exit 2;;
+  esac
+done
+
+mkdir -p "$(dirname "$LOG_PATH")"
+
+log_line() {
+  local level="$1"
+  shift
+  printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$level" "$*" >>"$LOG_PATH"
+}
+
+run_step() {
+  local label="$1"
+  shift
+  local tmp
+  tmp="$(mktemp)"
+  if "$@" >"$tmp" 2>&1; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+
+  log_line "ERROR" "$label failed"
+  while IFS= read -r line; do
+    log_line "ERROR" "$label: $line"
+  done <"$tmp"
+  rm -f "$tmp"
+  return 1
+}
+
+extract_created_count() {
+  sed -n 's/^Done\. Created: \([0-9][0-9]*\), skipped.*/\1/p'
+}
+
+extract_closed_count() {
+  sed -n 's/^Closed \([0-9][0-9]*\) item(s);.*/\1/p'
+}
+
+pull_created=0
+sync_closed=0
+
+if [[ "$DO_PULL" == 1 ]]; then
+  pull_output="$(run_step tri-pull "${PULL_CMD[@]}")" || exit 1
+  pull_created="$(printf '%s\n' "$pull_output" | extract_created_count | tail -n1)"
+  pull_created="${pull_created:-0}"
+fi
+
+if [[ "$DO_SYNC" == 1 ]]; then
+  sync_output="$(run_step tri-sync "${SYNC_CMD[@]}")" || exit 1
+  sync_closed="$(printf '%s\n' "$sync_output" | extract_closed_count | tail -n1)"
+  sync_closed="${sync_closed:-0}"
+fi
+
+if [[ "$pull_created" -gt 0 || "$sync_closed" -gt 0 ]]; then
+  summary="pull_created=$pull_created sync_closed=$sync_closed"
+  log_line "INFO" "$summary"
+  if [[ "$VERBOSE" == 1 ]]; then
+    printf '%s\n' "$summary"
+  fi
+fi
+

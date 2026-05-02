@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# tri-install-cron — install/update a daily cron entry for tri-daily.
+#
+# Usage:
+#   tri-install-cron
+#   tri-install-cron --schedule "17 6 * * *"
+#   tri-install-cron --log /tmp/tri-daily.log
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCHEDULE="${TRI_DAILY_SCHEDULE:-17 6 * * *}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+LOG_PATH="${TRI_DAILY_LOG:-$STATE_HOME/mybd/tri-daily.log}"
+MARKER="# mybd tri-daily"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --schedule) SCHEDULE="$2"; shift 2;;
+    --schedule=*) SCHEDULE="${1#--schedule=}"; shift;;
+    --log) LOG_PATH="$2"; shift 2;;
+    --log=*) LOG_PATH="${1#--log=}"; shift;;
+    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "tri-install-cron: unknown arg: $1" >&2; exit 2;;
+  esac
+done
+
+command -v crontab >/dev/null || { echo "tri-install-cron: crontab not found" >&2; exit 127; }
+
+mkdir -p "$(dirname "$LOG_PATH")"
+
+entry="$SCHEDULE cd '$PROJECT_ROOT' && TRI_DAILY_LOG='$LOG_PATH' '$SCRIPT_DIR/tri-daily' $MARKER"
+current="$(crontab -l 2>/dev/null || true)"
+filtered="$(printf '%s\n' "$current" | grep -Fv "$MARKER" || true)"
+
+{
+  printf '%s\n' "$filtered" | sed '/^[[:space:]]*$/d'
+  printf '%s\n' "$entry"
+} | crontab -
+
+printf 'installed cron entry:\n%s\n' "$entry"
