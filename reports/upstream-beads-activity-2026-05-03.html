@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upstream Beads Activity Report - 48h ending May 3, 2026</title>
+<style>
+:root {
+  --ink:#18211b; --muted:#5d6a61; --paper:#f7f4ea; --panel:#fffdf6; --line:#d9d0bf;
+  --accent:#22614b; --accent2:#b65f32; --warn:#9f3f2f; --cool:#315f8f;
+}
+* { box-sizing:border-box; }
+body { margin:0; font:15px/1.5 Georgia, 'Iowan Old Style', serif; color:var(--ink); background:radial-gradient(circle at 10% 0%, #efe3ca 0, transparent 34%), linear-gradient(135deg, #f7f4ea, #ece7d8); }
+header { padding:44px 7vw 28px; border-bottom:1px solid var(--line); background:linear-gradient(100deg, rgba(34,97,75,.11), rgba(182,95,50,.08)); }
+h1 { margin:0; font-size:clamp(32px,5vw,58px); line-height:1; letter-spacing:-.04em; }
+.sub { max-width:980px; color:var(--muted); font-size:17px; margin-top:14px; }
+main { padding:26px 7vw 60px; }
+section { margin:28px 0; }
+h2 { font-size:24px; margin:0 0 12px; letter-spacing:-.02em; }
+h3 { font-size:18px; margin:18px 0 8px; }
+a { color:var(--accent); }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(175px,1fr)); gap:14px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:16px; box-shadow:0 8px 24px rgba(49,43,30,.06); }
+.metric { font-size:34px; font-weight:700; letter-spacing:-.04em; }
+.label { font-weight:700; }
+.hint { color:var(--muted); font-size:13px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+.callout { background:var(--panel); border:1px solid var(--line); border-left:6px solid var(--accent2); border-radius:14px; padding:16px 18px; }
+.callout.warn { border-left-color:var(--warn); }
+.callout.cool { border-left-color:var(--cool); }
+table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+th,td { padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left; }
+th { background:#ebe2cf; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#4f564e; }
+tr:last-child td { border-bottom:0; }
+td.title { min-width:280px; }
+.bar { display:inline-block; width:120px; height:9px; background:#e2d8c4; border-radius:999px; margin-right:8px; overflow:hidden; vertical-align:middle; }
+.bar span { display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+details { background:rgba(255,253,246,.58); border:1px solid var(--line); border-radius:16px; padding:10px 12px; margin:14px 0; }
+summary { cursor:pointer; font-weight:700; }
+ul { margin:8px 0 0 20px; padding:0; }
+li { margin:6px 0; }
+.small { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+<h1>Upstream Beads Activity</h1>
+<div class="sub">Repository: <a href="https://github.com/gastownhall/beads">gastownhall/beads</a>. Window: May 1, 4:18 PM to May 3, 4:18 PM America/Whitehorse, generated from GitHub PR/issue APIs and <code>git log</code> on upstream <code>main</code>.</div>
+</header>
+<main>
+<section class="cards"><div class="card"><div class="metric">68</div><div class="label">Commits on main</div><div class="hint">Commit-date filtered from upstream main</div></div>
+<div class="card"><div class="metric">28</div><div class="label">Merged PRs</div><div class="hint">Merged during window</div></div>
+<div class="card"><div class="metric">47</div><div class="label">New PRs</div><div class="hint">23 still open, 1 closed unmerged</div></div>
+<div class="card"><div class="metric">12</div><div class="label">Issues opened</div><div class="hint">9 still open</div></div>
+<div class="card"><div class="metric">11</div><div class="label">Issues closed</div><div class="hint">Closed during window</div></div>
+<div class="card"><div class="metric">49%</div><div class="label">New-PR merge rate</div><div class="hint">Merged among PRs opened in window</div></div></section>
+
+<section>
+<h2>Executive Read</h2>
+<div class="grid">
+<div class="callout"><strong>Throughput was high.</strong> Maintainers merged 28 PRs and upstream main received 68 commits in 48 hours. A large share was cleanup and integration work rather than isolated feature work.</div>
+<div class="callout warn"><strong>Dolt/storage is the active pain center.</strong> Fresh issues cluster around shared-server behavior, SQL/CLI remote divergence, auto-import regressions, and init remote semantics.</div>
+<div class="callout cool"><strong>Linear integration moved fast.</strong> OAuth, idempotency, per-workspace locks, Retry-After handling, and staleness signals landed, while batch/audit-log follow-ups remain open.</div>
+</div>
+</section>
+
+<section>
+<h2>Category Mix</h2>
+<table><thead><tr><th>Category</th><th>Issues opened</th><th>Issues closed</th><th>New PRs</th><th>Merged PRs</th><th>Total signal</th></tr></thead><tbody><tr>
+<td>CLI behavior</td><td>4</td><td>3</td><td>13</td><td>6</td>
+<td><div class="bar"><span style="width:100.0%"></span></div>26</td>
+</tr>
+<tr>
+<td>Dolt/storage/sync</td><td>4</td><td>2</td><td>8</td><td>4</td>
+<td><div class="bar"><span style="width:69.2%"></span></div>18</td>
+</tr>
+<tr>
+<td>Export/privacy/data boundaries</td><td>3</td><td>2</td><td>5</td><td>4</td>
+<td><div class="bar"><span style="width:53.8%"></span></div>14</td>
+</tr>
+<tr>
+<td>Linear integration</td><td>0</td><td>0</td><td>8</td><td>6</td>
+<td><div class="bar"><span style="width:53.8%"></span></div>14</td>
+</tr>
+<tr>
+<td>Docs/agent/plugin/release</td><td>1</td><td>0</td><td>4</td><td>2</td>
+<td><div class="bar"><span style="width:26.9%"></span></div>7</td>
+</tr>
+<tr>
+<td>GitHub sync</td><td>0</td><td>2</td><td>2</td><td>2</td>
+<td><div class="bar"><span style="width:23.1%"></span></div>6</td>
+</tr>
+<tr>
+<td>Other</td><td>0</td><td>1</td><td>3</td><td>2</td>
+<td><div class="bar"><span style="width:23.1%"></span></div>6</td>
+</tr>
+<tr>
+<td>Graph/UI output</td><td>0</td><td>1</td><td>3</td><td>2</td>
+<td><div class="bar"><span style="width:23.1%"></span></div>6</td>
+</tr>
+<tr>
+<td>Jira integration</td><td>0</td><td>0</td><td>1</td><td>0</td>
+<td><div class="bar"><span style="width:3.8%"></span></div>1</td>
+</tr></tbody></table>
+</section>
+
+<section>
+<h2>Hotspots</h2>
+<div class="grid">
+<div class="callout"><h3>Files and subsystems</h3><ul><li><strong>plugins</strong>: 53 distinct commit-file touches</li>
+<li><strong>cmd/bd</strong>: 49 distinct commit-file touches</li>
+<li><strong>internal/linear</strong>: 35 distinct commit-file touches</li>
+<li><strong>internal/storage</strong>: 24 distinct commit-file touches</li>
+<li><strong>internal</strong>: 21 distinct commit-file touches</li>
+<li><strong>docs/process</strong>: 12 distinct commit-file touches</li>
+<li><strong>internal/github</strong>: 6 distinct commit-file touches</li>
+<li><strong>scripts</strong>: 5 distinct commit-file touches</li></ul><p class="small">Counts are commit-file touches, so broad plugin/doc drops inflate by changed-file fanout rather than line volume.</p></div>
+<div class="callout"><h3>Review pressure</h3><ul>
+<li>23 of 47 newly opened PRs are still open.</li>
+<li>29 new PRs had Codecov patch-coverage warnings in fetched PR comments.</li>
+<li>Several fixes are follow-ups to recent fixes: graph HTML #3648 followed by #3671, CLI contrast #3643 followed by #3672, and auto-import #3630 followed by #3690/#3691.</li>
+</ul></div>
+</div>
+</section>
+
+<section>
+<h2>Pain Points</h2>
+<div class="grid">
+<div class="callout warn"><strong>Dolt/shared-server correctness:</strong> issues <a href="https://github.com/gastownhall/beads/issues/3685">#3685</a>, <a href="https://github.com/gastownhall/beads/issues/3687">#3687</a>, <a href="https://github.com/gastownhall/beads/issues/3688">#3688</a>, and <a href="https://github.com/gastownhall/beads/issues/3689">#3689</a> describe misleading shared-server status, remote synthesis gaps, and SQL/CLI state divergence.</div>
+<div class="callout warn"><strong>Auto-import regression loop:</strong> new PRs <a href="https://github.com/gastownhall/beads/pull/3690">#3690</a> and <a href="https://github.com/gastownhall/beads/pull/3691">#3691</a> target fallout from the recently merged auto-import/concurrency work.</div>
+<div class="callout"><strong>Privacy boundary hardening:</strong> #3649/#3650 closed after export defaults were changed to exclude wisps and memories; related federation filtering landed in #3653.</div>
+<div class="callout"><strong>Agent/docs discoverability:</strong> #3677 and #3683 indicate user-facing friction around <code>bd prime</code>, memory visibility, and command documentation despite the new plugin/agent work.</div>
+</div>
+<h3>Coverage Warnings On New PRs</h3>
+<table><thead><tr><th>PR</th><th>Title</th><th>Patch coverage</th><th>Missing/partial lines</th></tr></thead><tbody><tr><td><a href="https://github.com/gastownhall/beads/pull/3676">#3676</a></td><td class="title">perf(graph): replace N+1 dependency queries with bulk fetch (GH#3520)</td><td>0%</td><td>42 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3674">#3674</a></td><td class="title">fix(dolt): suppress DOLT_COMMIT no-op warnings on read-only commands (GH#3529)</td><td>0%</td><td>17 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3673">#3673</a></td><td class="title">fix(list): deduplicate issues with multiple blocks dependencies (GH#3567)</td><td>0%</td><td>4 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3672">#3672</a></td><td class="title">fix(cli): swap CommandStyle colors for correct light/dark contrast (GH#3611)</td><td>0%</td><td>1 line</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3666">#3666</a></td><td class="title">fix(dolt): batch wisp-ID partition in bulk hydrators (GH#3414)</td><td>0%</td><td>141 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3663">#3663</a></td><td class="title">fix(dolt): PURGE dropped databases after DROP (bench leak fix)</td><td>0%</td><td>7 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3659">#3659</a></td><td class="title">fix(export): exclude ephemeral wisps from bd export by default</td><td>0%</td><td>6 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3643">#3643</a></td><td class="title">fix(cli): swap CommandStyle LightDark arguments for light terminals (GH#3611)</td><td>0%</td><td>1 line</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3653">#3653</a></td><td class="title">fix(federation): respect ephemeral/wisp type filters during sync</td><td>7.84314%</td><td>47 lines</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3641">#3641</a></td><td class="title">fix(comments): reject bd comments list with helpful hint (GH#3542)</td><td>11.11111%</td><td>8 lines</td></tr></tbody></table>
+</section>
+
+<section>
+<h2>Merged PRs</h2>
+<table><thead><tr><th>PR</th><th>Merged</th><th>Category</th><th>State</th><th>Author</th><th>Title</th><th>Files</th><th>Delta</th></tr></thead><tbody><tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3242">#3242</a></td><td>May 3, 2:42 PM</td><td>Dolt/storage/sync</td><td>MERGED</td><td>Bella-Giraffety</td><td class="title">fix: repair shared-server bootstrap and doctor metadata drift</td><td>6</td><td>+542/-40</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3671">#3671</a></td><td>May 3, 10:52 AM</td><td>Graph/UI output</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(graph): emit [] not null for empty links in HTML output (GH#3592)</td><td>2</td><td>+39/-2</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3672">#3672</a></td><td>May 3, 10:50 AM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(cli): swap CommandStyle colors for correct light/dark contrast (GH#3611)</td><td>1</td><td>+2/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3661">#3661</a></td><td>May 2, 7:31 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): OAuth client-credentials support for service identity</td><td>9</td><td>+883/-42</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3669">#3669</a></td><td>May 2, 7:24 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): ambient staleness signal — bd prime auto-pull + --pull-if-stale</td><td>7</td><td>+578/-4</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3657">#3657</a></td><td>May 2, 7:05 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add per-workspace concurrency lock on sync</td><td>7</td><td>+444/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3655">#3655</a></td><td>May 2, 7:05 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): parse Retry-After headers and add rate-limit circuit breaker</td><td>6</td><td>+488/-24</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3653">#3653</a></td><td>May 2, 7:05 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(federation): respect ephemeral/wisp type filters during sync</td><td>4</td><td>+352/-12</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3646">#3646</a></td><td>May 2, 7:04 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(list): --deferred returns complete deferred set (GH#3571)</td><td>4</td><td>+27/-3</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3559">#3559</a></td><td>May 2, 7:04 PM</td><td>Dolt/storage/sync</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(setup): omit bd dolt push from template when no remote configured</td><td>9</td><td>+233/-25</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3667">#3667</a></td><td>May 2, 6:25 PM</td><td>CLI behavior</td><td>MERGED</td><td>maphew</td><td class="title">fix(create): handle dependency aliases in --deps</td><td>3</td><td>+92/-20</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3666">#3666</a></td><td>May 2, 6:25 PM</td><td>Dolt/storage/sync</td><td>MERGED</td><td>harry-miller-trimble</td><td class="title">fix(dolt): batch wisp-ID partition in bulk hydrators (GH#3414)</td><td>10</td><td>+668/-130</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3660">#3660</a></td><td>May 2, 5:46 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(export): exclude memories from bd export by default</td><td>4</td><td>+174/-22</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3659">#3659</a></td><td>May 2, 5:41 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(export): exclude ephemeral wisps from bd export by default</td><td>4</td><td>+142/-9</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3656">#3656</a></td><td>May 2, 5:41 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add idempotency markers to prevent duplicate issue creation</td><td>5</td><td>+746/-17</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3647">#3647</a></td><td>May 2, 2:25 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(dep): show dependency type in bd dep tree output (GH#3565)</td><td>4</td><td>+141/-14</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3624">#3624</a></td><td>May 2, 2:24 PM</td><td>GitHub sync</td><td>MERGED</td><td>seanb4t</td><td class="title">github: classify rate-limit 403s and stop the push loop when one hits</td><td>7</td><td>+673/-55</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3651">#3651</a></td><td>May 2, 2:24 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add type mappings for decision, spike, story, milestone</td><td>2</td><td>+77/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3631">#3631</a></td><td>May 2, 2:02 PM</td><td>Docs/agent/plugin/release</td><td>MERGED</td><td>maphew</td><td class="title">fix(release): ship beads-release formula</td><td>4</td><td>+936/-7</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3648">#3648</a></td><td>May 2, 2:02 PM</td><td>Graph/UI output</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(graph): merge components for bd graph --all --html (GH#3592)</td><td>3</td><td>+106/-5</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3643">#3643</a></td><td>May 2, 2:02 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(cli): swap CommandStyle LightDark arguments for light terminals (GH#3611)</td><td>1</td><td>+1/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3641">#3641</a></td><td>May 2, 2:02 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(comments): reject bd comments list with helpful hint (GH#3542)</td><td>2</td><td>+35/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3639">#3639</a></td><td>May 2, 2:02 PM</td><td>GitHub sync</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(github): map decision, spike, story, milestone type labels (GH#3604)</td><td>2</td><td>+24/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3664">#3664</a></td><td>May 2, 1:48 PM</td><td>Docs/agent/plugin/release</td><td>MERGED</td><td>ebrevdo</td><td class="title">Add shared Beads plugin package</td><td>63</td><td>+185/-40</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3652">#3652</a></td><td>May 2, 1:45 PM</td><td>Other</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(config): refuse to write secret keys to git-tracked config.yaml</td><td>6</td><td>+304/-20</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3665">#3665</a></td><td>May 2, 1:21 PM</td><td>Other</td><td>MERGED</td><td>maphew</td><td class="title">Add maintainer PR guidelines</td><td>5</td><td>+78/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3614">#3614</a></td><td>May 1, 6:13 PM</td><td>Dolt/storage/sync</td><td>MERGED</td><td>coffeegoddd</td><td class="title">Remove file-system locking in embedded mode</td><td>14</td><td>+51/-319</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3634">#3634</a></td><td>May 1, 5:42 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>coffeegoddd</td><td class="title">atomicfile: fix JSONL export concurrency safety</td><td>4</td><td>+423/-18</td>
+</tr></tbody></table>
+</section>
+
+<section>
+<h2>Issues</h2>
+<h3>Opened</h3>
+<table><thead><tr><th>Issue</th><th>Opened</th><th>Category</th><th>State</th><th>Author</th><th>Title</th></tr></thead><tbody><tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3689">#3689</a></td><td>May 3, 2:36 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>mieubrisse</td><td class="title">bd dolt remote: SQL/CLI state diverges; display and JSON output misrepresent both</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3688">#3688</a></td><td>May 3, 1:46 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>mieubrisse</td><td class="title">feat(init): synthesize Dolt remote pointing at git origin (refs/dolt/data) instead of DoltHub</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3687">#3687</a></td><td>May 3, 1:43 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>mieubrisse</td><td class="title">bd dolt stop falsely reports &#x27;server not running&#x27; in shared-server mode</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3686">#3686</a></td><td>May 3, 1:43 PM</td><td>CLI behavior</td><td>OPEN</td><td>mieubrisse</td><td class="title">--repo flag on create fails when cwd has no .beads/ workspace, despite claiming to override routing</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3685">#3685</a></td><td>May 3, 1:39 PM</td><td>Dolt/storage/sync</td><td>CLOSED</td><td>mieubrisse</td><td class="title">bd dolt stop reports &quot;not running&quot; against externally-hosted/shared Dolt servers</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3684">#3684</a></td><td>May 3, 12:20 PM</td><td>CLI behavior</td><td>OPEN</td><td>dawidmachon</td><td class="title">one command suggesting depracated command</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3683">#3683</a></td><td>May 3, 12:11 PM</td><td>Docs/agent/plugin/release</td><td>OPEN</td><td>dawidmachon</td><td class="title">Lacking docs (bd prime, remember, dream, edit)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3681">#3681</a></td><td>May 3, 11:15 AM</td><td>CLI behavior</td><td>OPEN</td><td>rileywhite</td><td class="title">bd close --force bypasses dep-check on parent beads with open children</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3680">#3680</a></td><td>May 3, 7:18 AM</td><td>CLI behavior</td><td>OPEN</td><td>scruffymongrel</td><td class="title">CLI: expose Checkout, Merge, and DeleteBranch (mirror existing Branch surface)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3677">#3677</a></td><td>May 3, 1:56 AM</td><td>Export/privacy/data boundaries</td><td>OPEN</td><td>alexmensch</td><td class="title">bd prime memories silently lost at Claude Code session start when output exceeds the inline preview cap</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3650">#3650</a></td><td>May 1, 9:30 PM</td><td>Export/privacy/data boundaries</td><td>CLOSED</td><td>kevglynn</td><td class="title">bug: bd export includes memories in JSONL — private agent context leaks to git</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3649">#3649</a></td><td>May 1, 9:30 PM</td><td>Export/privacy/data boundaries</td><td>CLOSED</td><td>kevglynn</td><td class="title">bug: bd export includes wisps in JSONL by default — privacy boundary violation</td>
+</tr></tbody></table>
+<h3>Closed</h3>
+<table><thead><tr><th>Issue</th><th>Closed</th><th>Category</th><th>State</th><th>Author</th><th>Title</th></tr></thead><tbody><tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3685">#3685</a></td><td>May 3, 1:48 PM</td><td>Dolt/storage/sync</td><td>CLOSED</td><td>mieubrisse</td><td class="title">bd dolt stop reports &quot;not running&quot; against externally-hosted/shared Dolt servers</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3571">#3571</a></td><td>May 2, 7:04 PM</td><td>CLI behavior</td><td>CLOSED</td><td>deg</td><td class="title">bd list --deferred misses most</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3414">#3414</a></td><td>May 2, 6:25 PM</td><td>Dolt/storage/sync</td><td>CLOSED</td><td>harry-miller-trimble</td><td class="title">auto-export hydrate-labels query times out (~10-15s, context canceled) on Dolt remote backend</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3650">#3650</a></td><td>May 2, 5:46 PM</td><td>Export/privacy/data boundaries</td><td>CLOSED</td><td>kevglynn</td><td class="title">bug: bd export includes memories in JSONL — private agent context leaks to git</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3649">#3649</a></td><td>May 2, 5:41 PM</td><td>Export/privacy/data boundaries</td><td>CLOSED</td><td>kevglynn</td><td class="title">bug: bd export includes wisps in JSONL by default — privacy boundary violation</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3565">#3565</a></td><td>May 2, 2:25 PM</td><td>CLI behavior</td><td>CLOSED</td><td>Wermeling</td><td class="title">bd dep tree: parent-child and blocks dependencies render identically, causing false [BLOCKED] display</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3623">#3623</a></td><td>May 2, 2:24 PM</td><td>GitHub sync</td><td>CLOSED</td><td>seanb4t</td><td class="title">bd github sync: secondary-rate-limit 403s burn through retries in ~7s, then warn for every remaining issue</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3592">#3592</a></td><td>May 2, 2:02 PM</td><td>Graph/UI output</td><td>CLOSED</td><td>nafg</td><td class="title">`bd graph --all --html` produces invalid HTML that renders blank</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3611">#3611</a></td><td>May 2, 2:02 PM</td><td>Other</td><td>CLOSED</td><td>DannyBen</td><td class="title">Avoid white or black colors in the usage text</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3542">#3542</a></td><td>May 2, 2:02 PM</td><td>CLI behavior</td><td>CLOSED</td><td>marcdhansen</td><td class="title">bd comments list — &#x27;list&#x27; parsed as issue ID instead of subcommand</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/issues/3604">#3604</a></td><td>May 2, 2:02 PM</td><td>GitHub sync</td><td>CLOSED</td><td>bdelanghe</td><td class="title">bd github sync: typeMapping is incomplete (missing decision, spike, story, milestone) — type:: labels silently default to task</td>
+</tr></tbody></table>
+</section>
+
+<section>
+<h2>New PRs</h2>
+<table><thead><tr><th>PR</th><th>Opened</th><th>Category</th><th>State</th><th>Author</th><th>Title</th><th>Files</th><th>Delta</th></tr></thead><tbody><tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3691">#3691</a></td><td>May 3, 3:03 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>scotthamilton77</td><td class="title">fix(auto-import): restore empty-DB guard regressed by #3630, plus a test repair</td><td>3</td><td>+153/-14</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3690">#3690</a></td><td>May 3, 2:57 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>realies</td><td class="title">fix: auto-import: skip non-embedded fallback when store is populated</td><td>1</td><td>+18/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3682">#3682</a></td><td>May 3, 11:44 AM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>quad341</td><td class="title">fix(schema): widen events/wisp_events value columns to LONGTEXT</td><td>15</td><td>+950/-16</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3679">#3679</a></td><td>May 3, 4:46 AM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>jdelic</td><td class="title">honor BEADS_DOLT_SERVER_TLS during init</td><td>1</td><td>+1/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3678">#3678</a></td><td>May 3, 3:30 AM</td><td>Jira integration</td><td>OPEN</td><td>medhatgalal</td><td class="title">Add Jira custom field support for push</td><td>5</td><td>+332/-13</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3676">#3676</a></td><td>May 2, 11:09 PM</td><td>Graph/UI output</td><td>OPEN</td><td>kevglynn</td><td class="title">perf(graph): replace N+1 dependency queries with bulk fetch (GH#3520)</td><td>1</td><td>+65/-49</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3675">#3675</a></td><td>May 2, 10:58 PM</td><td>CLI behavior</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(dep): distinguish blocks vs parent-child in dep tree output (GH#3565)</td><td>2</td><td>+15/-5</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3674">#3674</a></td><td>May 2, 10:55 PM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(dolt): suppress DOLT_COMMIT no-op warnings on read-only commands (GH#3529)</td><td>4</td><td>+40/-20</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3673">#3673</a></td><td>May 2, 10:53 PM</td><td>CLI behavior</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(list): deduplicate issues with multiple blocks dependencies (GH#3567)</td><td>2</td><td>+84/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3672">#3672</a></td><td>May 2, 10:46 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(cli): swap CommandStyle colors for correct light/dark contrast (GH#3611)</td><td>1</td><td>+2/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3671">#3671</a></td><td>May 2, 10:46 PM</td><td>Graph/UI output</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(graph): emit [] not null for empty links in HTML output (GH#3592)</td><td>2</td><td>+39/-2</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3670">#3670</a></td><td>May 2, 8:14 PM</td><td>Docs/agent/plugin/release</td><td>OPEN</td><td>ebrevdo</td><td class="title">Add explicit Codex skill setup</td><td>14</td><td>+827/-55</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3669">#3669</a></td><td>May 2, 5:09 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): ambient staleness signal — bd prime auto-pull + --pull-if-stale</td><td>7</td><td>+578/-4</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3668">#3668</a></td><td>May 2, 2:57 PM</td><td>Docs/agent/plugin/release</td><td>OPEN</td><td>julianknutsen</td><td class="title">fix(release): harden shipped release formula adoption</td><td>8</td><td>+309/-32</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3667">#3667</a></td><td>May 2, 2:08 PM</td><td>CLI behavior</td><td>MERGED</td><td>maphew</td><td class="title">fix(create): handle dependency aliases in --deps</td><td>3</td><td>+92/-20</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3666">#3666</a></td><td>May 2, 1:28 PM</td><td>Dolt/storage/sync</td><td>MERGED</td><td>harry-miller-trimble</td><td class="title">fix(dolt): batch wisp-ID partition in bulk hydrators (GH#3414)</td><td>10</td><td>+668/-130</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3665">#3665</a></td><td>May 2, 11:44 AM</td><td>Other</td><td>MERGED</td><td>maphew</td><td class="title">Add maintainer PR guidelines</td><td>5</td><td>+78/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3664">#3664</a></td><td>May 2, 11:00 AM</td><td>Docs/agent/plugin/release</td><td>MERGED</td><td>ebrevdo</td><td class="title">Add shared Beads plugin package</td><td>63</td><td>+185/-40</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3663">#3663</a></td><td>May 2, 10:53 AM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>quad341</td><td class="title">fix(dolt): PURGE dropped databases after DROP (bench leak fix)</td><td>12</td><td>+838/-14</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3662">#3662</a></td><td>May 2, 10:49 AM</td><td>Dolt/storage/sync</td><td>OPEN</td><td>quad341</td><td class="title">perf(schema): D4v2 composite (status, updated_at) + defer_until indexes</td><td>10</td><td>+702/-8</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3661">#3661</a></td><td>May 2, 6:35 AM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): OAuth client-credentials support for service identity</td><td>9</td><td>+883/-42</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3660">#3660</a></td><td>May 1, 10:28 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(export): exclude memories from bd export by default</td><td>4</td><td>+174/-22</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3659">#3659</a></td><td>May 1, 10:25 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(export): exclude ephemeral wisps from bd export by default</td><td>4</td><td>+142/-9</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3658">#3658</a></td><td>May 1, 10:06 PM</td><td>Linear integration</td><td>OPEN</td><td>kevglynn</td><td class="title">feat(linear): add persistent sync audit log</td><td>5</td><td>+816/-2</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3657">#3657</a></td><td>May 1, 10:03 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add per-workspace concurrency lock on sync</td><td>7</td><td>+444/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3656">#3656</a></td><td>May 1, 10:01 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add idempotency markers to prevent duplicate issue creation</td><td>5</td><td>+746/-17</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3655">#3655</a></td><td>May 1, 9:55 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): parse Retry-After headers and add rate-limit circuit breaker</td><td>6</td><td>+488/-24</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3654">#3654</a></td><td>May 1, 9:55 PM</td><td>Linear integration</td><td>OPEN</td><td>kevglynn</td><td class="title">feat(linear): adopt issueBatchCreate/issueBatchUpdate for 50x efficiency</td><td>5</td><td>+1386/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3653">#3653</a></td><td>May 1, 9:54 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(federation): respect ephemeral/wisp type filters during sync</td><td>4</td><td>+352/-12</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3652">#3652</a></td><td>May 1, 9:37 PM</td><td>Other</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(config): refuse to write secret keys to git-tracked config.yaml</td><td>6</td><td>+304/-20</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3651">#3651</a></td><td>May 1, 9:37 PM</td><td>Linear integration</td><td>MERGED</td><td>kevglynn</td><td class="title">feat(linear): add type mappings for decision, spike, story, milestone</td><td>2</td><td>+77/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3648">#3648</a></td><td>May 1, 9:25 PM</td><td>Graph/UI output</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(graph): merge components for bd graph --all --html (GH#3592)</td><td>3</td><td>+106/-5</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3647">#3647</a></td><td>May 1, 9:22 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(dep): show dependency type in bd dep tree output (GH#3565)</td><td>4</td><td>+141/-14</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3646">#3646</a></td><td>May 1, 9:19 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(list): --deferred returns complete deferred set (GH#3571)</td><td>4</td><td>+27/-3</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3645">#3645</a></td><td>May 1, 9:17 PM</td><td>Export/privacy/data boundaries</td><td>OPEN</td><td>kevglynn</td><td class="title">docs(doctor): align interactions.jsonl policy with bd audit (GH#3622)</td><td>2</td><td>+3/-5</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3644">#3644</a></td><td>May 1, 9:14 PM</td><td>CLI behavior</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(list): emphasize tree truncation warning with WarnStyle (GH#3580)</td><td>2</td><td>+3/-5</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3643">#3643</a></td><td>May 1, 9:12 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(cli): swap CommandStyle LightDark arguments for light terminals (GH#3611)</td><td>1</td><td>+1/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3642">#3642</a></td><td>May 1, 8:43 PM</td><td>Docs/agent/plugin/release</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(setup): remove stale bd sync from Mux hook; warn in claude check (GH#3546)</td><td>3</td><td>+81/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3641">#3641</a></td><td>May 1, 8:42 PM</td><td>CLI behavior</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(comments): reject bd comments list with helpful hint (GH#3542)</td><td>2</td><td>+35/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3640">#3640</a></td><td>May 1, 8:37 PM</td><td>CLI behavior</td><td>OPEN</td><td>kevglynn</td><td class="title">fix(worktree): repair permissive .beads/ after worktree create (GH#3593)</td><td>2</td><td>+55/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3639">#3639</a></td><td>May 1, 8:34 PM</td><td>GitHub sync</td><td>MERGED</td><td>kevglynn</td><td class="title">fix(github): map decision, spike, story, milestone type labels (GH#3604)</td><td>2</td><td>+24/-0</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3638">#3638</a></td><td>May 1, 5:16 PM</td><td>GitHub sync</td><td>OPEN</td><td>app/dependabot</td><td class="title">chore(deps): bump github.com/go-sql-driver/mysql from 1.9.3 to 1.10.0</td><td>2</td><td>+6/-6</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3637">#3637</a></td><td>May 1, 5:16 PM</td><td>CLI behavior</td><td>OPEN</td><td>app/dependabot</td><td class="title">chore(deps): bump DeterminateSystems/update-flake-lock from 3d82c7e1a46ddcc239881a2ac62b0d9d970dc96b to 203e2eb079eca40abff70ea3189192e9adeca500</td><td>1</td><td>+1/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3636">#3636</a></td><td>May 1, 5:15 PM</td><td>CLI behavior</td><td>OPEN</td><td>app/dependabot</td><td class="title">chore(deps): bump actions/setup-go from 5.6.0 to 6.4.0</td><td>1</td><td>+1/-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3635">#3635</a></td><td>May 1, 5:15 PM</td><td>CLI behavior</td><td>OPEN</td><td>app/dependabot</td><td class="title">chore(deps): bump DeterminateSystems/determinate-nix-action from 3.18.1 to 3.19.0</td><td>3</td><td>+3/-3</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3634">#3634</a></td><td>May 1, 5:06 PM</td><td>Export/privacy/data boundaries</td><td>MERGED</td><td>coffeegoddd</td><td class="title">atomicfile: fix JSONL export concurrency safety</td><td>4</td><td>+423/-18</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3633">#3633</a></td><td>May 1, 4:43 PM</td><td>Other</td><td>CLOSED</td><td>coffeegoddd</td><td class="title">Db/test merge</td><td>17</td><td>+469/-337</td>
+</tr></tbody></table>
+</section>
+
+<section>
+<h2>Commits</h2>
+<details open><summary>All 68 commits on upstream main in the window</summary>
+<table><thead><tr><th>Commit</th><th>Committed</th><th>Author</th><th>Subject</th><th>Files</th><th>Top touched paths</th></tr></thead><tbody><tr>
+<td><a href="https://github.com/gastownhall/beads/commit/5a2fc61f7a0d49994d97aebfdf6729c9e19ae3ad">5a2fc61f7</a></td><td>May 3, 2:42 PM</td><td>Bella-Giraffety</td><td class="title">fix: repair shared-server bootstrap and doctor metadata drift (#3242)</td><td>6</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/772a656888d35aedab5a8c070fc042205db17a97">772a65688</a></td><td>May 3, 10:52 AM</td><td>Harry Miller</td><td class="title">Merge pull request #3671 from kevglynn/fix/3592-graph-html-single-document</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/59686ce1a90e5b7f48be3ccb4a3a3e6556db9707">59686ce1a</a></td><td>May 3, 10:50 AM</td><td>Harry Miller</td><td class="title">Merge pull request #3672 from kevglynn/fix/3611-usage-text-colors</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/1ebee7fd48dfa53c24b5cb1f8c26830b14c732eb">1ebee7fd4</a></td><td>May 2, 10:46 PM</td><td>kev</td><td class="title">fix(cli): swap CommandStyle colors for correct light/dark contrast (GH#3611)</td><td>1</td><td>internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/dccfa2082938739445a99b006d4ff61e66f01d6a">dccfa2082</a></td><td>May 2, 10:46 PM</td><td>kev</td><td class="title">fix(graph): emit [] not null for empty links in HTML output (GH#3592)</td><td>2</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/890950f388dd425e285d55b88c84713f8991fc18">890950f38</a></td><td>May 2, 7:31 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3661 from kevglynn/pr3-oauth-client-credentials</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/b42646f10333109e6ba8166f5b2697fe8e7a271b">b42646f10</a></td><td>May 2, 7:24 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3669 from kevglynn/feat/ambient-staleness-signal</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/425ae2068308852adb470db529cd3df6db7700e2">425ae2068</a></td><td>May 2, 7:14 PM</td><td>maphew</td><td class="title">Merge main into OAuth client credentials branch</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/f4a1a211dfc4d3bfec7dcfb4a8ad03e4788ffb74">f4a1a211d</a></td><td>May 2, 7:09 PM</td><td>maphew</td><td class="title">Merge main into staleness signal branch</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/9c41669cf425cc71ef52946b20454b3b1fa557e9">9c41669cf</a></td><td>May 2, 7:05 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3657 from kevglynn/feat/linear-sync-concurrency-lock</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/a9e437a0a8a15e19b1928fd70d4dc4efe8b8b280">a9e437a0a</a></td><td>May 2, 7:05 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3655 from kevglynn/feat/linear-retry-after-adaptive-backoff</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/d9d0d1ddb788ae154f777eb496e31c0c9dc92ca1">d9d0d1ddb</a></td><td>May 2, 7:05 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3653 from kevglynn/fix/federation-wisp-privacy</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/7d5e9650ab5834face013302d4724b5c19c51aba">7d5e9650a</a></td><td>May 2, 7:04 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3646 from kevglynn/fix/list-deferred-complete</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/acd2b7d97d97fdaf1acfc843ef11d5e7b3678a55">acd2b7d97</a></td><td>May 2, 7:04 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3559 from kevglynn/feat/conditional-dolt-push-template</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/f11830374181c8ff4ccfa869579f9b4c139352ed">f11830374</a></td><td>May 2, 6:40 PM</td><td>maphew</td><td class="title">Merge main into OAuth client credentials branch</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/d33687481e54c65583a3da6e87d31ce74b8cb93e">d33687481</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(linear): clean staleness lint</td><td>2</td><td>cmd/bd, internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/cb1a0700b0caa41b3e13b67fb4d4c169eaa1d61a">cb1a0700b</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(linear): clean sync lock lint</td><td>3</td><td>cmd/bd, internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/dc4cd8b6490065246dd1fbb65997685587eca45d">dc4cd8b64</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(linear): clean rate-limit lint</td><td>1</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/860ddb20651e0eb75832fa2128b92fd9329feb54">860ddb206</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(config): format wisp privacy changes</td><td>1</td><td>internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/22e9ca37dd301a69fd7fabb6c943a957d5b26d54">22e9ca37d</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(list): format deferred filter tests</td><td>1</td><td>internal/storage</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/261fdbb996d24b30aaa1d0799b490a8b686287a5">261fdbb99</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(setup): format conditional push template</td><td>1</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/10bf490252bf84c8e2cd114d370ca3d487a10254">10bf49025</a></td><td>May 2, 6:38 PM</td><td>maphew</td><td class="title">fix(config): format OAuth config changes</td><td>1</td><td>internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/6fa7549c8cfb701b121ca89870cf1b510a8ff623">6fa7549c8</a></td><td>May 2, 6:25 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3667 from maphew/fix/3560-cli-deps-only</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/886c67e5843aa4d4a731a4ea37ddd1f908fcc027">886c67e58</a></td><td>May 2, 6:25 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3666 from harry-miller-trimble/fix/3414-bulk-wisp-partition-v2</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/e1f4c048a7ef64914d683f3856d633650acb63b9">e1f4c048a</a></td><td>May 2, 5:46 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3660 from kevglynn/fix/export-exclude-memories</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/ea9fa3efca8c0b3a63ce4878313ac54aa68af1bb">ea9fa3efc</a></td><td>May 2, 5:44 PM</td><td>maphew</td><td class="title">Merge remote-tracking branch &#x27;origin/main&#x27; into fix/export-exclude-memories</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/32b4430e394a3b28a9989900daf037c059d32e51">32b4430e3</a></td><td>May 2, 5:41 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3659 from kevglynn/fix/export-exclude-wisps</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/8cc3fea9a3b1b16a1e2c028fb666a12f6371b7e4">8cc3fea9a</a></td><td>May 2, 5:41 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3656 from kevglynn/feat/linear-idempotency-markers</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/6584ff8f8f9ffd77a019fab60e74f7180aa7251b">6584ff8f8</a></td><td>May 2, 5:08 PM</td><td>kev</td><td class="title">feat(linear): add ambient staleness signal for auto-fresh data</td><td>7</td><td>cmd/bd, internal/linear, docs/process</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/226e7f2554b886da6fc9354d6743a47bc95b1625">226e7f255</a></td><td>May 2, 4:07 PM</td><td>kev</td><td class="title">fix(export): include NoHistory beads when Ephemeral=&amp;false filter is active</td><td>1</td><td>internal/storage</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/46584d8222e6e029c298a84754c2984c05aaec14">46584d822</a></td><td>May 2, 4:04 PM</td><td>kev</td><td class="title">fix(linear): address maintainer feedback on OAuth client-credentials PR</td><td>5</td><td>internal/linear, .golangci.yml, cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/609dce0ad98abab8872a7e3c3643d865c1b85841">609dce0ad</a></td><td>May 2, 4:00 PM</td><td>kev</td><td class="title">test(export): add export globals to saveAndRestoreGlobals for isolation</td><td>1</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/3e804cd39f276a3fd7d0128e0d5ddb3df921c7b8">3e804cd39</a></td><td>May 2, 4:00 PM</td><td>kev</td><td class="title">fix(linear): address maintainer feedback on PR #3655</td><td>6</td><td>internal/linear, cmd/bd, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/b8e7562f0f30576e60dae3ce4edba42866743b42">b8e7562f0</a></td><td>May 2, 3:59 PM</td><td>kev</td><td class="title">fix(linear): address maintainer blockers on idempotency PR</td><td>4</td><td>internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/175bc23d1feced20ef156136971a4a2cd0d54de0">175bc23d1</a></td><td>May 2, 3:55 PM</td><td>kev</td><td class="title">fix(linear): keep lock file stable across Release cycles</td><td>2</td><td>internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/2f854001b075c0798971916ae3ef60aad324b574">2f854001b</a></td><td>May 2, 2:25 PM</td><td>matt wilkie</td><td class="title">Merge branch &#x27;main&#x27; into fix/3560-cli-deps-only</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/f0b6d4973f3be45a28a33b33b2bb2d486839c021">f0b6d4973</a></td><td>May 2, 2:25 PM</td><td>Kevin Glynn</td><td class="title">fix(dep): show dependency type in bd dep tree output (GH#3565) (#3647)</td><td>4</td><td>cmd/bd, internal/storage, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/45324cead22cbae677fdcb3339a8c9db9c0b8312">45324cead</a></td><td>May 2, 2:25 PM</td><td>matt wilkie</td><td class="title">Merge branch &#x27;main&#x27; into fix/3560-cli-deps-only</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/b78a62cf10343bfad09dc755e754178d88080772">b78a62cf1</a></td><td>May 2, 2:24 PM</td><td>Sean Brandt</td><td class="title">github: classify rate-limit 403s and stop the push loop when one hits (#3624)</td><td>7</td><td>internal/github, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/cffb4e80d0ec97bc2686d7b077ebbd87df73df19">cffb4e80d</a></td><td>May 2, 2:24 PM</td><td>matt wilkie</td><td class="title">Merge branch &#x27;main&#x27; into fix/3560-cli-deps-only</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/06d385edf9edc5e1008a84f69243a48646d8cf34">06d385edf</a></td><td>May 2, 2:24 PM</td><td>Kevin Glynn</td><td class="title">feat(linear): add type mappings for decision, spike, story, milestone (#3651)</td><td>2</td><td>internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/21c55f489fe96008e3d6872389b7e7da81d598a3">21c55f489</a></td><td>May 2, 2:08 PM</td><td>maphew</td><td class="title">fix(create): handle dependency aliases in --deps</td><td>3</td><td>cmd/bd, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/f3d57da63ac0698287ec84c11ce6d78a98b0bea6">f3d57da63</a></td><td>May 2, 2:02 PM</td><td>matt wilkie</td><td class="title">fix(release): ship beads-release formula (#3631)</td><td>4</td><td>internal, .beads, scripts</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/a028506ec64802badaee8a5180a3b30cb58d02e6">a028506ec</a></td><td>May 2, 2:02 PM</td><td>Kevin Glynn</td><td class="title">fix(graph): merge components for bd graph --all --html (GH#3592) (#3648)</td><td>3</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/60cbf83a5fcdacf318eda005319e344595a3ac80">60cbf83a5</a></td><td>May 2, 2:02 PM</td><td>Kevin Glynn</td><td class="title">fix(cli): swap CommandStyle LightDark arguments for light terminals (GH#3611) (#3643)</td><td>1</td><td>internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/0c51997203e76061d5d81198745e6e535e5851d0">0c5199720</a></td><td>May 2, 2:02 PM</td><td>Kevin Glynn</td><td class="title">fix(comments): helpful error for misplaced bd comments list (GH#3542) (#3641)</td><td>2</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/b3241665f373dd9fb6e868361a41b26322c038a4">b3241665f</a></td><td>May 2, 2:02 PM</td><td>Kevin Glynn</td><td class="title">fix(github): map decision, spike, story, milestone GitHub type labels (GH#3604) (#3639)</td><td>2</td><td>internal/github</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/58ac2dee7218411b4ccd482bf4b8a9df59036ed8">58ac2dee7</a></td><td>May 2, 1:48 PM</td><td>matt wilkie</td><td class="title">Merge pull request #3664 from ebrevdo/codex-plugin-slice1</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/918eb8e4c549e8fb5142548537b2f4dee8ad9c92">918eb8e4c</a></td><td>May 2, 1:45 PM</td><td>Kevin Glynn</td><td class="title">fix(config): refuse to write secret keys to git-tracked config.yaml (#3652)</td><td>6</td><td>cmd/bd, internal, docs/process</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/fbcdb908b4694fc23fd7718be9843c943e0fb4bd">fbcdb908b</a></td><td>May 2, 1:35 PM</td><td>maphew</td><td class="title">fix(dolt): preserve label hydration wisp-set callers</td><td>1</td><td>internal/storage</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/be65f59cd0b840a2eb40b84d87284b9284d99648">be65f59cd</a></td><td>May 2, 1:27 PM</td><td>Harry</td><td class="title">fix(dolt): batch wisp-ID partition in bulk hydrators (GH#3414)</td><td>10</td><td>internal/storage</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/46be5594d64f6e3d14b6268db878a327fe16639f">46be5594d</a></td><td>May 2, 1:21 PM</td><td>matt wilkie</td><td class="title">Add maintainer PR guidelines (bd-k0j) (#3665)</td><td>5</td><td>docs/process</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/43715adde7eef947a2b1e86280e1efe3194a0a5d">43715adde</a></td><td>May 2, 10:59 AM</td><td>Eugene Brevdo</td><td class="title">Add shared Beads plugin package</td><td>63</td><td>plugins, docs/process, scripts</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/097ed1cf168b2f28f2a7cd715363a823813de8a0">097ed1cf1</a></td><td>May 2, 6:35 AM</td><td>kev</td><td class="title">feat(linear): add OAuth client-credentials support</td><td>6</td><td>internal/linear, cmd/bd, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/61e85bc31979f1bc1c3a1394aa8068c305d10d0e">61e85bc31</a></td><td>May 1, 10:28 PM</td><td>kev</td><td class="title">fix(export): exclude memories from bd export by default (GH#3650)</td><td>3</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/7978fae1adf333e0f246274210edd81686ac5961">7978fae1a</a></td><td>May 1, 10:25 PM</td><td>kev</td><td class="title">fix(export): exclude ephemeral wisps from bd export by default (GH#3649)</td><td>3</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/989d0f94960dfa8e9b3abf75273adeaf7e9a5a84">989d0f949</a></td><td>May 1, 10:02 PM</td><td>kev</td><td class="title">feat(linear): add per-workspace concurrency lock on sync</td><td>7</td><td>internal/linear, cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/0ec4a99ea08aba9de7ad0e7efa6d74c0b3af9103">0ec4a99ea</a></td><td>May 1, 10:00 PM</td><td>kev</td><td class="title">feat(linear): add idempotency markers to prevent duplicate issue creation</td><td>4</td><td>internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/c67e41e355d15d373deb558c0e652b89d5c8f44a">c67e41e35</a></td><td>May 1, 9:53 PM</td><td>kev</td><td class="title">fix(federation): respect ephemeral/wisp type filters during sync</td><td>4</td><td>internal, internal/storage</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/a845bc4ebacb6f3784410285b8dde6dec968ee61">a845bc4eb</a></td><td>May 1, 9:42 PM</td><td>kev</td><td class="title">feat(linear): parse Retry-After headers and add rate-limit circuit breaker</td><td>3</td><td>internal/linear</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/3d9a01220ccff21c82e89847a7b0f4fc641934ac">3d9a01220</a></td><td>May 1, 9:19 PM</td><td>kev</td><td class="title">fix(list): --deferred returns complete deferred set (GH#3571)</td><td>4</td><td>internal/storage, internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/0fa5f210f41af9f03b1888480ce5c7ec97c03eb4">0fa5f210f</a></td><td>May 1, 6:13 PM</td><td>Dustin Brown</td><td class="title">Merge pull request #3614 from coffeegoddd/db/fs-locking</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/6c938415cb04a3d78c39a0d9c7009e2bb1ee8797">6c938415c</a></td><td>May 1, 5:50 PM</td><td>coffeegoddd☕️✨</td><td class="title">changelog: document OpenBestAvailable breaking change and flock removal</td><td>1</td><td>docs/process</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/a58228d7d23a04f0214ee67a17256e122723708c">a58228d7d</a></td><td>May 1, 5:46 PM</td><td>coffeegoddd☕️✨</td><td class="title">/cmd/bd/main.go: remove promote gate</td><td>1</td><td>cmd/bd</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/e97532ab5e297ee2c6f0de718d7742af00bb0fc7">e97532ab5</a></td><td>May 1, 5:46 PM</td><td>coffeegoddd☕️✨</td><td class="title">:remove uneccessary locking</td><td>14</td><td>cmd/bd, internal/storage, beads_cgo.go</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/1781ed422efc39d3b6152fb7781fc11bb8338d89">1781ed422</a></td><td>May 1, 5:42 PM</td><td>Dustin Brown</td><td class="title">Merge pull request #3634 from coffeegoddd/db/atomic-export</td><td>0</td><td>merge/no files listed</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/916c1631fdc252b2d231c22dbb2b7d7545b76090">916c1631f</a></td><td>May 1, 5:03 PM</td><td>coffeegoddd☕️✨</td><td class="title">/internal/atomicfile/atomicfile.go: use io.Copy</td><td>1</td><td>internal</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/commit/2f1cd4f81863109877996a57fe55742eefbecade">2f1cd4f81</a></td><td>May 1, 4:42 PM</td><td>coffeegoddd☕️✨</td><td class="title">/cmd/{cmd, internal}: make exports atomic writes</td><td>4</td><td>cmd/bd, internal</td>
+</tr></tbody></table>
+</details>
+</section>
+</main>
+</body>
+</html>
