@@ -17,6 +17,16 @@ This working directory (`~/dev/mybd/`) is **not** the beads source tree. It is a
 - In `bd-main/`, `main` tracks `upstream/main` (canonical) — `git pull` keeps you in sync with gastownhall. Topic branches push to `origin` (your fork) for PRs.
 - Do not add a `gastownhall` remote to the cwd `mybd` repo — it is not a fork of beads; it is its own repo.
 
+## Cross-Machine Beads Sync
+
+`.beads/issues.jsonl` is committed to git as the sync channel between machines (3 machines + cloud). On a fresh clone or new machine, install the post-pull import hook **once**:
+
+```bash
+./scripts/install-sync-hook
+```
+
+Without it, `bd export` on this machine writes the local Dolt's view over the JSONL — erasing issues created on other machines from the committed file. The hook runs `bd import .beads/issues.jsonl` after every `git pull`/`git checkout`, keeping local Dolt in sync with what other machines have published. See `scripts/bd-import-on-pull` and bead `mybd-w16` for the incident that motivated this.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

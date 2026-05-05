@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# bd-import-on-pull — auto-import .beads/issues.jsonl into local Dolt
+# after a git pull/merge, so issues created on other machines don't get
+# clobbered by the next `bd export` here.
+#
+# Background: mybd-w16 / commit 5d45d12. `bd export` writes the local
+# Dolt's state over .beads/issues.jsonl. If a pull just delivered issues
+# from another machine but they aren't imported into local Dolt, the
+# next export erases them from the committed jsonl. Importing on pull
+# closes that loop.
+#
+# Idempotent: bd import is upsert; running it on an unchanged jsonl is
+# a no-op. Skips silently when bd is unavailable or the jsonl didn't
+# change in the merge.
+
+set -euo pipefail
+
+# Skip if bd isn't on PATH.
+command -v bd >/dev/null 2>&1 || exit 0
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+JSONL="$ROOT/.beads/issues.jsonl"
+[ -f "$JSONL" ] || exit 0
+
+# Only import when the merge actually touched issues.jsonl.
+if git -C "$ROOT" rev-parse --verify ORIG_HEAD >/dev/null 2>&1; then
+  if ! git -C "$ROOT" diff --name-only ORIG_HEAD HEAD -- .beads/issues.jsonl 2>/dev/null | grep -q .; then
+    exit 0
+  fi
+fi
+
+# Run import. --quiet keeps post-merge output clean; bd treats import
+# as upsert, so re-running on no-op input is harmless.
+#
+# bd import currently exits non-zero with "Error 1105: nothing to commit"
+# when the jsonl matches Dolt exactly (no rows to upsert). That's a
+# successful no-op for our purposes — capture stderr and downgrade.
+import_err=$(bd import --quiet "$JSONL" 2>&1 >/dev/null) || {
+  if echo "$import_err" | grep -q 'nothing to commit'; then
+    exit 0
+  fi
+  echo >&2 "bd-import-on-pull: bd import failed — local Dolt may be out of sync with .beads/issues.jsonl"
+  echo >&2 "$import_err"
+  exit 0
+}

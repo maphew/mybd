@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# install-sync-hook — wire scripts/bd-import-on-pull into local git
+# hooks (post-merge, post-checkout) so the import runs automatically
+# after `git pull`. Idempotent — re-running is safe.
+#
+# Adds a guarded block AFTER the bd-managed BEGIN/END section so
+# `bd hooks install` re-runs preserve it.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "install-sync-hook: not in a git repo" >&2
+  exit 1
+}
+
+SCRIPT="$ROOT/scripts/bd-import-on-pull"
+[ -x "$SCRIPT" ] || chmod +x "$SCRIPT"
+
+BEGIN_MARK="# --- BEGIN MYBD SYNC IMPORT ---"
+END_MARK="# --- END MYBD SYNC IMPORT ---"
+
+block() {
+  cat <<EOF
+
+$BEGIN_MARK
+# Auto-import .beads/issues.jsonl into local Dolt after pull/checkout.
+# See scripts/bd-import-on-pull for rationale (mybd-w16).
+if [ -x "\$(git rev-parse --show-toplevel 2>/dev/null)/scripts/bd-import-on-pull" ]; then
+  "\$(git rev-parse --show-toplevel)/scripts/bd-import-on-pull" "\$@" || true
+fi
+$END_MARK
+EOF
+}
+
+install_into() {
+  local hook="$1"
+  local path="$ROOT/.git/hooks/$hook"
+
+  if [ ! -f "$path" ]; then
+    echo "install-sync-hook: $hook hook missing — run 'bd hooks install' first" >&2
+    return 1
+  fi
+
+  if grep -qF "$BEGIN_MARK" "$path"; then
+    echo "$hook: sync-import block already present"
+    return 0
+  fi
+
+  block >> "$path"
+  echo "$hook: appended sync-import block"
+}
+
+install_into post-merge
+install_into post-checkout
