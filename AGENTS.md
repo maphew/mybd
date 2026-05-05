@@ -2,6 +2,17 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+## Repository Layout
+
+The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. The beads working clone is nested at `bd-main/` (gitignored):
+
+| Path | `origin` | `upstream` | Purpose |
+|------|----------|------------|---------|
+| `~/dev/mybd/` | `maphew/mybd` | — | Coordination: beads issues, notes, agent config |
+| `~/dev/mybd/bd-main/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads source — code edits, builds, PRs happen here |
+
+In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo. See [CLAUDE.md](CLAUDE.md) for the full layout and PR hygiene rules.
+
 ## Quick Reference
 
 ```bash

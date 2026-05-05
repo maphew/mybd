@@ -2,6 +2,21 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## Repository Layout
+
+This working directory (`~/dev/mybd/`) is **not** the beads source tree. It is a personal coordination repo for working on beads without polluting upstream with workshop noise. The beads source clone lives nested inside it at `bd-main/` (gitignored).
+
+| Path | Repo | `origin` | `upstream` | Purpose |
+|------|------|----------|------------|---------|
+| `~/dev/mybd/` (cwd) | `maphew/mybd` | `maphew/mybd` | — | Personal scratch/coordination: beads issues (`.beads/issues.jsonl`), notes, agent config, this CLAUDE.md |
+| `~/dev/mybd/bd-main/` | beads source | `maphew/beads` (fork) | `gastownhall/beads` (canonical) | Working clone for actual beads code edits and PRs |
+
+**Implication for agents:**
+- Beads code changes, builds (`go build`), and PRs to gastownhall happen in `bd-main/`, not in the cwd.
+- The "Branch base for upstream PRs" and "Build & Test" sections below apply when working **inside `bd-main/`**.
+- In `bd-main/`, `main` tracks `upstream/main` (canonical) — `git pull` keeps you in sync with gastownhall. Topic branches push to `origin` (your fork) for PRs.
+- Do not add a `gastownhall` remote to the cwd `mybd` repo — it is not a fork of beads; it is its own repo.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
@@ -59,8 +74,7 @@ When triaging, reviewing, landing, closing, or otherwise maintaining pull reques
 
 ### Branch base for upstream PRs
 
-This is a fork. `origin/main` diverges from `upstream/main`. When creating
-branches for PRs that target **upstream** (gastownhall/beads):
+(Applies inside `bd-main/`, not the cwd `mybd` repo.) `origin` is `maphew/beads` (fork) and `upstream` is `gastownhall/beads`. `origin/main` may diverge from `upstream/main`. When creating branches for PRs that target **upstream** (gastownhall/beads):
 
 ```bash
 git fetch upstream
@@ -85,6 +99,8 @@ git rebase --onto upstream/main origin/main <branch>
 ```
 
 ## Build & Test
+
+(Run inside `bd-main/`.)
 
 ```bash
 go build -o bd ./cmd/bd          # build
