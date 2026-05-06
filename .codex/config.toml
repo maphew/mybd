@@ -3,7 +3,7 @@
 # The local-environment manifest and helper scripts in this folder are
 # intended to give the Environments UI something concrete to work from.
 
-model = "gpt-5.4"
+model = "gpt-5.5"
 model_reasoning_effort = "medium"
 
 [windows]
