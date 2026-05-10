@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beads PR 3833 Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --paper: #ffffff;
+      --ink: #17202a;
+      --muted: #5c6773;
+      --border: #d9dee7;
+      --accent: #0f6c81;
+      --danger: #b42318;
+      --warn: #9a5b00;
+      --ok: #0f7a45;
+      --code: #f1f4f8;
+    }
+    body {
+      margin: 0;
+      font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 36px 22px 56px;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 19px;
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    p {
+      margin: 8px 0;
+    }
+    .meta {
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      margin: 18px 0 8px;
+    }
+    .tile, .finding, .note {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .tile strong {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .tile span {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .finding {
+      margin: 12px 0;
+      border-left: 4px solid var(--danger);
+    }
+    .finding.medium {
+      border-left-color: var(--warn);
+    }
+    .severity {
+      display: inline-block;
+      margin-right: 8px;
+      color: #fff;
+      background: var(--danger);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .medium .severity {
+      background: var(--warn);
+    }
+    code {
+      background: var(--code);
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      background: #101820;
+      color: #edf3f7;
+      overflow-x: auto;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul {
+      margin: 8px 0 8px 22px;
+      padding: 0;
+    }
+    .verdict {
+      font-weight: 700;
+      color: var(--danger);
+    }
+    .pass {
+      color: var(--ok);
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Beads PR 3833 Review</h1>
+      <div class="meta">
+        <div><strong>PR:</strong> <a href="https://github.com/gastownhall/beads/pull/3833">gastownhall/beads#3833</a> &mdash; <code>Db/proxy</code></div>
+        <div><strong>Author:</strong> Dustin Brown (<code>coffeegoddd</code>)</div>
+        <div><strong>Base / head:</strong> <code>main</code> &larr; <code>db/proxy</code></div>
+        <div><strong>Reviewed locally from:</strong> <code>A:\dev\mybd\bd-main</code>, branch <code>review/pr-3833</code></div>
+      </div>
+      <div class="summary">
+        <div class="tile"><strong>Recommendation</strong><span>Do not merge yet</span></div>
+        <div class="tile"><strong>Maintainer outcome</strong><span>Fix-merge candidate</span></div>
+        <div class="tile"><strong>Risk area</strong><span>proxied-server init/config</span></div>
+        <div class="tile"><strong>CI signal</strong><span>1 failing check on GitHub</span></div>
+      </div>
+    </header>
+
+    <section class="note">
+      <p class="verdict">Verdict: request fixes locally before landing.</p>
+      <p>The proxy package refactor itself looks directionally sound, and targeted proxy tests passed locally. The PR is not merge-ready because the advertised <code>bd init --proxied-server</code> path is explicitly disabled, custom proxied paths are not persisted in a usable way, and the new tests are not portable to Windows path semantics.</p>
+    </section>
+
+    <h2>Findings</h2>
+
+    <article class="finding">
+      <h3><span class="severity">P1</span><code>bd init --proxied-server</code> always exits before doing any proxied setup</h3>
+      <p><strong>Where:</strong> <code>cmd/bd/init.go:111</code></p>
+      <p>The new mode is exposed via <code>--proxied-server</code>, <code>BEADS_DOLT_PROXIED_SERVER=1</code>, no-CGO guidance, metadata support, and store creation code, but the init command immediately calls <code>FatalError("--proxied-server is not yet implemented")</code> whenever the flag or env var is set. That makes the primary user-facing entry point impossible to use and leaves the rest of the proxied-server implementation effectively unreachable for normal workspaces.</p>
+      <p><strong>Impact:</strong> users following the new no-CGO error message or the new init flag cannot create a proxied-server workspace at all.</p>
+      <p><strong>Suggested fix:</strong> remove the unconditional fatal guard once the path is ready, or keep the whole feature hidden from CLI/help/no-CGO messaging until it can initialize successfully. Add an integration or CLI test that runs <code>bd init --proxied-server --non-interactive</code> and proves metadata plus first open succeeds.</p>
+    </article>
+
+    <article class="finding">
+      <h3><span class="severity">P1</span>Custom proxied config/log/root flags are lost or resolved to the wrong place after restart</h3>
+      <p><strong>Where:</strong> <code>cmd/bd/init.go:996-1005</code>, <code>internal/configfile/configfile.go:123-130</code>, <code>internal/configfile/configfile.go:419-442</code></p>
+      <p><code>init</code> stores the raw flag values into metadata. On save, absolute values for <code>dolt_proxied_server_config</code>, <code>dolt_proxied_server_log</code>, and <code>dolt_proxied_server_root_path</code> are stripped. Relative values survive, but later resolution joins them under <code>beadsDir</code>, not the directory where the user supplied the flag. For example, <code>bd init --proxied-server-config configs/server.yaml</code> validates <code>configs/server.yaml</code> in the current working directory, but the next process looks for <code>.beads/configs/server.yaml</code>.</p>
+      <p><strong>Impact:</strong> a workspace initialized with custom proxied paths silently falls back to defaults for absolute paths, or fails to reopen for relative paths that were valid during init.</p>
+      <p><strong>Suggested fix:</strong> canonicalize custom path flags at init time into a stable representation before saving. Either copy generated/user config under <code>.beads</code> and persist a relative path there, or persist absolute paths only in a local, non-shared config layer. The resolver and save policy need to agree on the contract.</p>
+    </article>
+
+    <article class="finding medium">
+      <h3><span class="severity">P2</span>New proxied-server tests fail on Windows because Unix absolute paths are used as test fixtures</h3>
+      <p><strong>Where:</strong> <code>cmd/bd/proxied_server_test.go:113</code>, <code>cmd/bd/proxied_server_test.go:609</code>, <code>internal/configfile/configfile_test.go:523</code>, <code>internal/configfile/configfile_test.go:574</code>, <code>internal/configfile/configfile_test.go:608</code>, <code>internal/configfile/configfile_test.go:660</code>, <code>internal/configfile/configfile_test.go:694</code>, <code>internal/configfile/configfile_test.go:746</code></p>
+      <p>The tests use paths like <code>/etc/dolt/server.yaml</code> and <code>/var/log/beads/server.log</code> as if they are absolute on every platform. On Windows, <code>filepath.IsAbs("/etc/dolt/server.yaml")</code> is false, so the production code treats those fixtures as relative and joins them under the temp <code>.beads</code> directory.</p>
+      <p><strong>Impact:</strong> the new tests fail locally on Windows even under <code>CGO_ENABLED=0</code>. GitHub's Windows smoke check may not exercise these exact packages, but the repository should keep normal targeted package tests portable.</p>
+      <p><strong>Suggested fix:</strong> generate platform-native absolute paths with <code>filepath.Join(t.TempDir(), ...)</code> or gate POSIX-only path expectations behind runtime checks.</p>
+    </article>
+
+    <h2>Verification</h2>
+    <p>Commands run locally:</p>
+    <pre><code>git fetch upstream pull/3833/head:review/pr-3833 --force
+git fetch upstream main
+git switch review/pr-3833
+go test ./internal/storage/db/proxy -run 'TestProxy_(LockHeld|TraceLog|ConcurrentInstantiation)'
+$env:CGO_ENABLED='0'; go test ./cmd/bd -run 'Test(InitCommandRegistersProxiedServerFlag|ResolveProxiedServerConfigPath|EnsureProxiedServerConfig|ValidateProxiedServerConfig)'
+$env:CGO_ENABLED='0'; go test ./internal/configfile -run 'Test(DoltProxiedServer|GetDoltProxiedServer|Config)'
+git diff --check upstream/main...review/pr-3833</code></pre>
+    <ul>
+      <li><span class="pass">Passed:</span> <code>go test ./internal/storage/db/proxy -run 'TestProxy_(LockHeld|TraceLog|ConcurrentInstantiation)'</code></li>
+      <li><span class="pass">Passed:</span> <code>git diff --check upstream/main...review/pr-3833</code></li>
+      <li><strong>Failed:</strong> <code>cmd/bd</code> pure-Go targeted tests due Windows path fixture expectations in <code>proxied_server_test.go</code>.</li>
+      <li><strong>Failed:</strong> <code>internal/configfile</code> targeted tests due Windows path fixture expectations in <code>configfile_test.go</code>.</li>
+      <li><strong>Not completed:</strong> normal CGO <code>cmd/bd</code> tests on this machine, because local Dolt CGO compilation is missing ICU headers: <code>unicode/uregex.h: No such file or directory</code>.</li>
+    </ul>
+
+    <h2>CI Notes</h2>
+    <p>GitHub PR metadata showed the PR is mergeable, with most checks green. <code>Check doc flags freshness</code> is failing, so generated command docs likely need to be refreshed after adding the new init flags.</p>
+
+    <h2>Review Scope</h2>
+    <p>I did not post this review to GitHub. No code changes were made to the PR branch. This artifact is local only.</p>
+  </main>
+</body>
+</html>
