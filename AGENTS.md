@@ -8,7 +8,8 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 "gh beads ..." : use gh cli on gastownhall/beads repo
 "bd ..." : use bd cli to interact with beads
 
-Default to using git worktrees as you are almost never working alone.
+Assume you are not working alone.
+Use git worktrees by default.
 
 ## Repository Layout
 
