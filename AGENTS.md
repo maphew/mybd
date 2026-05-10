@@ -2,6 +2,14 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+## Conventions
+
+"gh ..." : use gh cli to interact with GitHub
+"gh beads ..." : use gh cli on gastownhall/beads repo
+"bd ..." : use bd cli to interact with beads
+
+Default to using git worktrees as you are almost never working alone.
+
 ## Repository Layout
 
 The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. The beads working clone is nested at `bd-main/` (gitignored):
