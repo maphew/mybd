@@ -11,6 +11,16 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 Assume you are not working alone.
 Use git worktrees by default.
 
+
+### Signing
+
+- Sign comments and commits using:
+  `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
+- `{agent_runtime}` is the current agent tool/runtime name, (for example: `amp`, `claude`,`codex`, `kilocode`)
+- `{model}` is the active model name when known, otherwise `unknown-model`
+- `{reasoning}` is the active reasoning effort when known, otherwise empty
+- `{user}` is git username if available, otherwise logged-in user
+
 ## Repository Layout
 
 The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. The beads working clone is nested at `bd-main/` (gitignored):
