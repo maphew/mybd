@@ -53,6 +53,6 @@ no-db: true
 # - github.org
 # - github.repo
 
-sync.remote: "https://github.com/maphew/beads.git"
+# sync.remote: "https://github.com/maphew/beads.git"
 
 no-git-ops: true
