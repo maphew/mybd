@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beads PR pile and the #3340 cluster — analysis and triage</title>
+<style>
+  :root {
+    --fg: #1f2328;
+    --fg-soft: #57606a;
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --rule: #d0d7de;
+    --accent: #0550ae;
+    --accent-soft: #ddf4ff;
+    --good: #1a7f37;
+    --good-soft: #dafbe1;
+    --warn: #9a6700;
+    --warn-soft: #fff8c5;
+    --muted: #6e7781;
+    --muted-soft: #eaeef2;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    color: var(--fg);
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+  }
+  main {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+  }
+  header.doc-header {
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1.5rem;
+    margin-bottom: 2rem;
+  }
+  header.doc-header .eyebrow {
+    color: var(--fg-soft);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.6rem; font-weight: 700; }
+  h2 {
+    font-size: 1.45rem;
+    margin: 3rem 0 1rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--rule);
+    font-weight: 700;
+  }
+  h3 { font-size: 1.15rem; margin: 2rem 0 0.6rem; font-weight: 600; }
+  h4 { font-size: 1rem; margin: 1.4rem 0 0.4rem; font-weight: 600; }
+  p, ul, ol { margin: 0.7rem 0; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: 0.25rem 0; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+  blockquote {
+    margin: 1.2rem 0;
+    padding: 0.6rem 1rem;
+    border-left: 4px solid var(--rule);
+    color: var(--fg-soft);
+    background: var(--bg-soft);
+    border-radius: 0 4px 4px 0;
+  }
+  blockquote p { margin: 0.3rem 0; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--bg-soft);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--bg-soft);
+    border: 1px solid var(--rule);
+    padding: 0.85rem 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1rem 1.4rem;
+    margin: 1.5rem 0 2rem;
+  }
+  .toc h2 {
+    margin: 0 0 0.6rem;
+    padding: 0;
+    border: 0;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-soft);
+    font-weight: 600;
+  }
+  .toc ol { margin: 0; padding-left: 1.4rem; font-size: 0.95rem; }
+  .toc li { margin: 0.15rem 0; }
+  .issue {
+    margin: 1.5rem 0;
+    padding: 1rem 1.2rem;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: #fcfcfd;
+  }
+  .issue h4 { margin-top: 0; }
+  .issue .meta {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.78rem;
+    color: var(--fg-soft);
+    margin: 0 0 0.6rem;
+    letter-spacing: 0.02em;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-right: 0.35rem;
+    vertical-align: 1px;
+  }
+  .badge-open { background: var(--good-soft); color: var(--good); }
+  .badge-closed { background: var(--muted-soft); color: var(--muted); }
+  .badge-stuck { background: var(--warn-soft); color: var(--warn); }
+  .badge-merged { background: var(--accent-soft); color: var(--accent); }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.9rem;
+    margin: 1rem 0 1.4rem;
+  }
+  th, td {
+    border-bottom: 1px solid var(--rule);
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+  }
+  .links a { display: block; font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace; font-size: 0.85rem; padding: 0.1rem 0; }
+  .footer-note { color: var(--fg-soft); font-size: 0.85rem; margin-top: 3rem; }
+  @media (max-width: 600px) {
+    main { padding: 1.5rem 1rem 4rem; }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.25rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="eyebrow">Working analysis · 2026-05-16</div>
+  <h1>Beads PR pile and the #3340 cluster</h1>
+  <p style="color: var(--fg-soft); margin: 0.4rem 0 0;">
+    A deep look at the #3340 cluster, plus a candid read on where maphew can plant his feet given coffeegoddd's raised quality bar, harry-miller-trimble's draft plugin architecture, julianknutsen's release prep, and 138 open PRs.
+  </p>
+  <p style="color: var(--muted); font-size: 0.85rem; margin: 0.8rem 0 0;">
+    Authored by Claude Opus 4.7 (1M context) on behalf of maphew. State snapshots reflect what GitHub returned on 2026-05-16; PRs and issues evolve.
+  </p>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#what-this-is">What this document is</a></li>
+    <li><a href="#cluster-mapped">The cluster, mapped</a></li>
+    <li><a href="#per-issue">Issue-by-issue</a></li>
+    <li><a href="#cant-reproduce">Why another agent could not reproduce #3340</a></li>
+    <li><a href="#mergeable-today">What is actually mergeable today</a></li>
+    <li><a href="#strategy">Strategic options for maphew</a></li>
+    <li><a href="#charter">Honest read on PROJECT_CHARTER.md</a></li>
+    <li><a href="#next">Suggested next moves</a></li>
+    <li><a href="#appendix">Data appendix</a></li>
+  </ol>
+</nav>
+
+<h2 id="what-this-is">What this document is</h2>
+
+<p>Two threads tangled together:</p>
+
+<ol>
+  <li>A deep look at the <strong>#3340 cluster</strong> — the issues and PRs orbiting <code>bd</code>'s embedded-Dolt flock and its git-origin / Dolt-remote policy.</li>
+  <li>A candid read on <strong>where maphew can plant his feet</strong> given the moment the project is in.</li>
+</ol>
+
+<p>Not a decision. A working document to think with.</p>
+
+<h2 id="cluster-mapped">The cluster, mapped</h2>
+
+<p>Two sub-clusters orbiting one architectural seam: git tooling (commit, push, hooks) reaching into embedded-Dolt, gated by a single per-store flock plus the beads pre-commit hook that shells back into <code>bd</code>.</p>
+
+<h3>Sub-cluster A — flock re-entry deadlocks</h3>
+
+<pre><code>#3340 (issue, open) ──fixed by── #3626 (PR, OPEN, CI green, mergeable=clean, 15 days old)
+                                 siblings:
+                                   #3740  CLOSED, merged — push-side variant (pmgledhill102)
+                                   #3598/#3599  another commit-site variant
+</code></pre>
+
+<p><code>bd dolt remote add</code> auto-commits <code>.beads/config.yaml</code> via <code>commitBeadsConfig()</code>. The <code>git commit</code> runs <strong>without</strong> <code>--no-verify</code>, which fires beads' own pre-commit hook, which shells out to <code>bd export</code>, which blocks on the flock the parent <code>bd</code> already holds. Three near-identical bugs at three different commit/push sites; #3340 is the last one outstanding.</p>
+
+<h3>Sub-cluster B — git origin / Dolt remote policy</h3>
+
+<pre><code>#3354  CLOSED — 102 GB disk fill (tmp_pack_* leak)
+   └─ root cause → #3356 CLOSED — bd init registers Dolt remote unconditionally
+        └─ fix → #3357 MERGED (kevglynn) — gates AddRemote on refs/dolt/data
+             └─ over-corrected the v1.0.2 "init-in-clone wires sync" UX
+                  └─ → #3937 issue, OPEN (maphew) — restates the policy
+                       └─ → #3940 PR, OPEN (maphew) — implements items (2),(3),(6)
+</code></pre>
+
+<p>#3357 was correct for #3356 — no more 15 GB/day of leaked <code>tmp_pack_*</code> files. It also removed the convenience users remembered from v1.0.2 — <code>bd init</code> in a freshly cloned repo no longer wires the Dolt remote. #3937 is the policy proposal (five flows: init-with-origin, init-without, push-without, bootstrap, pull, doctor). #3940 implements three of them: keep init local, lazy-adopt on push, surface the exact command in <code>bd doctor</code>.</p>
+
+<h3>Why both sub-clusters belong together</h3>
+
+<ul>
+  <li>Both are about state divergence between the <strong>Git layer</strong> and the <strong>Dolt sub-storage</strong>.</li>
+  <li>Both are gated by the same embedded flock and the same pre-commit hook.</li>
+  <li>Both are flows that <em>seem</em> like they should "just work" but cross an architectural seam that coffeegoddd's planned storage and server changes will reshape.</li>
+</ul>
+
+<p>That is why these PRs feel mootable — and why telling them apart matters.</p>
+
+<h2 id="per-issue">Issue-by-issue</h2>
+
+<h3>Sub-cluster A — flock re-entry deadlocks</h3>
+
+<div class="issue">
+  <h4>#3340 — bd dolt remote add/remove deadlocks in embedded mode</h4>
+  <div class="meta"><span class="badge badge-open">open</span> issue · author: alingenhag · created 2026-04-19 · re-confirmed 2026-05-16</div>
+  <p>Holds the exclusive embedded-Dolt flock while calling <code>git commit</code> without <code>--no-verify</code>. The beads pre-commit hook then re-enters <code>bd</code> via <code>bd export</code>, which calls <code>WaitLock()</code> and blocks forever. Two call sites (<code>dolt.go:749</code> for <code>remote add</code>, <code>dolt.go:962</code> for <code>remote remove</code>), both routed through <code>commitBeadsConfig</code>. Reporter re-confirmed today the bug is present on main at <code>6ec5244e0</code>, and that the related #3740 fix is for a different re-entry path, not this one.</p>
+  <p><a href="https://github.com/gastownhall/beads/issues/3340">github.com/gastownhall/beads/issues/3340</a></p>
+</div>
+
+<div class="issue">
+  <h4>#3626 — fix(dolt): skip git hooks in commitBeadsConfig</h4>
+  <div class="meta"><span class="badge badge-open">open</span> PR · author: alingenhag · created 2026-05-01 · mergeable=clean · CI green</div>
+  <p>One-line production change: <code>exec.Command("git", "commit", "--no-verify", "-m", msg)</code>. Mirrors the precedent already at <code>cmd/bd/init.go:1309</code>. Adds a 113-line regression test (<code>TestDoltRemoteAddRemoveDoesNotDeadlockWithBeadsHooks</code>) that installs real hooks and times out at 30 s — fails on main, passes on fix. Diff: +119 / −1 across 2 files. Requested reviewer: coffeegoddd. Zero reviews submitted in 15 days.</p>
+  <p>Notable: the existing embedded test suite uses <code>initGitRepoAt</code> which sets <code>core.hooksPath=/dev/null</code>. That is precisely why the bug went undetected; this PR is the first test in the suite to exercise the hook with realistic config.</p>
+  <p><a href="https://github.com/gastownhall/beads/pull/3626">github.com/gastownhall/beads/pull/3626</a></p>
+</div>
+
+<div class="issue">
+  <h4>#3740 — fix(dolt): skip git hooks on internal push of refs/dolt/data</h4>
+  <div class="meta"><span class="badge badge-merged">closed / merged</span> PR · author: pmgledhill102</div>
+  <p>The <strong>push-side sibling</strong> of #3340. Same root pattern (re-entry through git hooks against the embedded-Dolt cache-mirror), different commit site. PR description explicitly distinguishes itself from #3626: "#3626 is the commit-side sibling for <code>commitBeadsConfig</code>; the same root pattern, different commit site." A reader skimming this without opening #3626 might conclude #3340 is already fixed. It is not.</p>
+</div>
+
+<h3>Sub-cluster B — git origin / Dolt remote policy</h3>
+
+<div class="issue">
+  <h4>#3354 — embedded Dolt git-remote-cache leaks tmp_pack files</h4>
+  <div class="meta"><span class="badge badge-closed">closed</span> issue · author: kevglynn · created 2026-04-19</div>
+  <p>102 GB in <code>.beads/embeddeddolt/&lt;db&gt;/.dolt/git-remote-cache/&lt;hash&gt;/repo.git/objects/pack/</code> across 412 files in 7 days on a 460 GB MacBook Pro. Actual database content: 300 KB. Files accumulated because every Dolt fetch against a plain-git origin (no <code>refs/dolt/data</code>) failed and left the tmp file behind.</p>
+  <p><a href="https://github.com/gastownhall/beads/issues/3354">github.com/gastownhall/beads/issues/3354</a></p>
+</div>
+
+<div class="issue">
+  <h4>#3356 — bd init registers git origin as Dolt remote even when remote has no Dolt data</h4>
+  <div class="meta"><span class="badge badge-closed">closed</span> issue · author: kevglynn · created 2026-04-19</div>
+  <p>Direct cause of the #3354 disk fill. <code>bd init</code> set <code>syncURL</code> from git origin and called <code>AddRemote("origin", syncURL)</code> whenever <code>syncURL != ""</code>, without gating on the presence of <code>refs/dolt/data</code>. The clone path correctly gated on <code>syncFromRemote</code>; the <code>AddRemote</code> and <code>sync.remote</code> persistence paths did not.</p>
+  <p><a href="https://github.com/gastownhall/beads/issues/3356">github.com/gastownhall/beads/issues/3356</a></p>
+</div>
+
+<div class="issue">
+  <h4>#3357 — Skip Dolt remote registration for plain git source repos during init</h4>
+  <div class="meta"><span class="badge badge-merged">closed / merged</span> PR · author: kevglynn</div>
+  <p>Fixed #3356 by introducing <code>syncURLFromConfig</code> and gating <code>AddRemote</code> + <code>sync.remote</code> persistence on <code>syncFromRemote || syncURLFromConfig</code>. Correct fix for the disk-fill bug. Side effect: removed the v1.0.2 convenience where <code>bd init</code> in a freshly cloned repo silently wired the Dolt remote. That side effect motivates the rest of sub-cluster B.</p>
+</div>
+
+<div class="issue">
+  <h4>#3909 — fix(init): use git origin as default Dolt remote</h4>
+  <div class="meta"><span class="badge badge-closed">closed</span> PR · author: maphew</div>
+  <p>First attempt at restoring the v1.0.2 convenience under the #3357 safety guard. Bundled several concerns (init, bootstrap, hooks, JSONL fallback, docs, generated website docs, test harness). Closed in favor of the narrower #3937 / #3940 split.</p>
+</div>
+
+<div class="issue">
+  <h4>#3937 — bd dolt: consistently adopt git origin as the Dolt remote</h4>
+  <div class="meta"><span class="badge badge-open">open</span> issue · author: maphew · created 2026-05-13</div>
+  <p>Restates the policy in five flows: init-with-origin, init-without-origin, push-without-remote, bootstrap, pull, doctor. Coffeegoddd's only comment: "this worked correctly in bd 1.0.2 but was broken after that somewhere along the way, needs investigation into where the regression occurred."</p>
+  <p>A regression-tracing comment on #3940 identifies the exact commit (<code>ac085df8c</code>, the #3357 merge). <strong>That answer is on #3940, not #3937 where coffeegoddd actually asked it.</strong> One-line ping needed.</p>
+  <p><a href="https://github.com/gastownhall/beads/issues/3937">github.com/gastownhall/beads/issues/3937</a></p>
+</div>
+
+<div class="issue">
+  <h4>#3940 — fix(dolt): adopt git origin on first push</h4>
+  <div class="meta"><span class="badge badge-open">open</span> PR · author: maphew · created 2026-05-14 · mergeable=clean · CI green</div>
+  <p>Implements policy items (2), (3), (6) from #3937: keep init local when no git origin; lazy-adopt origin at <code>bd dolt push</code> time; show the exact <code>bd dolt remote add origin &lt;url&gt;</code> command in <code>bd doctor</code>. Diff: +367 / −58 across 9 files. Requested reviewer: <code>beads-maintainers</code> team. No human reviews submitted.</p>
+  <p>Risk of becoming partially moot under coffeegoddd's storage refactor: real but bounded. The policy itself (lazy adopt at explicit-push time) is UX, not storage. The call sites in <code>cmd/bd/sync_remote.go</code> and <code>cmd/bd/dolt.go</code> may shift under the refactor.</p>
+  <p><a href="https://github.com/gastownhall/beads/pull/3940">github.com/gastownhall/beads/pull/3940</a></p>
+</div>
+
+<h2 id="cant-reproduce">Why another agent could not reproduce #3340</h2>
+
+<p>The #3626 manual repro is solid <em>if the bd pre-commit hook actually fires</em>:</p>
+
+<pre><code>cd "$(mktemp -d)" &amp;&amp; git init -q
+bd init --prefix=repro
+timeout 10 bd dolt remote add origin http://example.com:7007/mydb \
+  &amp;&amp; echo OK || echo HUNG
+</code></pre>
+
+<p>Five things break the reproduction while leaving the bug intact:</p>
+
+<ol>
+  <li><strong><code>bd init --stealth</code></strong> skips installing the pre-commit hook. If the agent followed a "no git mutations" rule, they may have used stealth.</li>
+  <li><strong><code>core.hooksPath=/dev/null</code></strong> leaking from a parent env. Every embedded test in beads sets this via <code>initGitRepoAt</code>; if the agent ran inside a test harness or had it in shell config, the hook is silently neutralized.</li>
+  <li><strong><code>bd</code> not on <code>PATH</code></strong> inside the hook subprocess. The hook shells out to <code>bd export</code>; if it cannot find the binary, the hook errors fast and the deadlock vanishes — replaced by a misleading "hook failed" exit.</li>
+  <li><strong>Conflation with the already-merged #3740.</strong> That PR's description begins with "this is the push-side sibling of #3340; #3626 is the commit-side, still pending." An agent skimming only #3740 would mark the whole class fixed.</li>
+  <li><strong>Windows or non-POSIX flock semantics.</strong> The embedded flock is POSIX-shaped; Windows behavior differs.</li>
+</ol>
+
+<p>alingenhag's 2026-05-16 status update on #3340 is decisive: bug present on main at <code>6ec5244e0</code>, the offending line is unchanged, #3740 is a different re-entry path. The other agent likely hit (1), (2), or (4). If you have the agent transcript, the setup commands or the references list will show which.</p>
+
+<h2 id="mergeable-today">What is actually mergeable today</h2>
+
+<h3>#3626 — textbook new-bar PR</h3>
+
+<ul>
+  <li><code>mergeable=clean</code>, 30+ CI runs green (every embedded-Dolt shard + 3 upgrade-smoke channels).</li>
+  <li>Diff: +119 / −1, 2 files. Production change is <strong>one line</strong>; the rest is a regression test.</li>
+  <li>Identifies and fixes a CI blind spot (<code>core.hooksPath=/dev/null</code> everywhere in the existing test suite).</li>
+  <li>Mirrors an in-tree precedent (<code>cmd/bd/init.go:1309</code>).</li>
+  <li>15 days old. Requested reviewer: coffeegoddd. Zero reviews submitted.</li>
+  <li>Author re-pinged this morning: "rebased onto current main, ready for review/merge."</li>
+  <li>Risk of becoming moot under the storage refactor: low. <code>commitBeadsConfig</code> exists regardless of storage engine; the fix is harmless if the underlying flock is later removed.</li>
+</ul>
+
+<p>Either it should land, or it deserves a public "deferred pending storage refactor, revisit by $date" comment. Silence is the failure mode that frustrates contributors into not trying again.</p>
+
+<h3>#3940 — also clean</h3>
+
+<p>Same green status. Author is maphew. Risk of partial moot under the refactor is real but bounded — the policy is UX-shaped, the call sites are storage-shaped. Worth asking coffeegoddd directly before pushing on review.</p>
+
+<h3>Queue context</h3>
+
+<ul>
+  <li><strong>138 open PRs</strong> (gh search).</li>
+  <li><strong>Zero PRs merged by coffeegoddd or julianknutsen</strong> in the recent window returned by <code>gh search</code>. The "merging has ground to a halt" framing in the Discord message is borne out by the data.</li>
+  <li>julianknutsen has <strong>4 open PRs</strong> all created or updated this week (#3989, #3990, #3991, #3943), all release-blocker shaped, all green.</li>
+</ul>
+
+<h2 id="strategy">Strategic options for maphew</h2>
+
+<p>In order of force-multiplier:</p>
+
+<h3>1. Land #3626 or get it explicitly deferred</h3>
+
+<p>It is exactly the kind of PR coffeegoddd described as new-world. A co-maintainer review from maphew — visibly applying the new-bar checklist (minimal change, root cause, regression test, in-tree precedent) — costs ~20 minutes and either lands the PR or surfaces the reason it is parked. Either outcome unblocks alingenhag and signals to other contributors that meeting the new bar pays off.</p>
+
+<h3>2. Close the loop with coffeegoddd on #3937</h3>
+
+<p>He asked: <em>"this worked correctly in bd 1.0.2 but was broken after that somewhere along the way, needs investigation."</em> The investigation already happened — <code>ac085df8c</code> (PR #3357), captured in a comment on #3940. That answer is on the implementation PR, not on the issue he commented on. A one-line ping on #3937 referencing the SHA is free attention-debt repayment.</p>
+
+<h3>3. Lock down Julian's CLI surface</h3>
+
+<p>julianknutsen "needs support for a few new CLI arguments to take advantage of [perf improvements]" before the early-next-week release. That is a small, scopable contribution that meets the new bar trivially (flag + test + doc). Ask him directly which flags. Deliver one with the same shape as #3626. Visible to him; lands in the release; unambiguous value.</p>
+
+<h3>4. Triage, do not architect</h3>
+
+<p>138 open PRs. PR_MAINTAINER_GUIDELINES.md already gives the categories: easy-win, fix-merge, needs-review, cherry-pick, split-merge, retire, reject. As a co-maintainer, maphew has permission to actually run them. A weekly pass on 10–15 PRs moves more value than another design document. Coffeegoddd's quality bar <em>is</em> a triage spec: minimal change, root cause, regression test, in-tree precedent — any PR that fails it on first read is fix-merge or retire-with-attribution.</p>
+
+<h3>5. Battle-test the charter; do not rewrite it</h3>
+
+<p>PROJECT_CHARTER.md is well aligned with the quality bar. Three gaps:</p>
+
+<ul>
+  <li><strong>It is not on the agent default reading path.</strong> <code>bd-main/CLAUDE.md</code> and <code>bd-main/docs/CLAUDE.md</code> point to AGENTS.md and PR_MAINTAINER_GUIDELINES.md. Only PR_MAINTAINER_GUIDELINES.md references the charter, and only when a PR changes Beads' product surface area. Agents authoring features will not consult it. If maphew wants design-time consultation, the charter needs an inbound link from AGENTS.md or <code>docs/CLAUDE.md</code>'s architecture section.</li>
+  <li><strong>It says "absorb useful work when practical" but does not authorize "retire — superseded by upcoming refactor" with a date.</strong> That is the missing outcome for the current moment: coffeegoddd has said "many PRs will be unnecessary after my storage and server changes," but there is no public maintainer outcome for saying that to a contributor without it reading as ghosting.</li>
+  <li><strong>It and PR_MAINTAINER_GUIDELINES.md do not cross-reference each other.</strong> They are the two halves of one answer.</li>
+</ul>
+
+<p>Cheap battle test: hand both docs to an agent, ask it to triage 20 open PRs strictly under them, and watch where it gets stuck or makes the wrong call. The stuck points are the gaps that bind.</p>
+
+<h2 id="charter">Honest read on PROJECT_CHARTER.md</h2>
+
+<p>It is on the right track. The boundaries (core / orchestration / storage / schema / integration) match how coffeegoddd is signaling. The "review posture" section — <em>fences not bounce messages, absorb useful work, preserve attribution</em> — is consistent with PR_MAINTAINER_GUIDELINES.md.</p>
+
+<p>What it does not do is reduce the PR pile. It is a <em>what belongs where</em> doc. The pile needs a <em>what to do with it today</em> doc. PR_MAINTAINER_GUIDELINES.md is closer to that, but does not yet authorize the maintainer outcome the current moment most needs: <strong>retire — superseded by upcoming refactor, with a date marker and revisit policy.</strong></p>
+
+<p>The 130-PR pile is not a charter problem. It is a queue throughput problem with a charter-shaped boundary policy underneath. The fastest way to validate the charter is to run triage and see where the docs fail you.</p>
+
+<h2 id="next">Suggested next moves</h2>
+
+<p>In order of when they pay off:</p>
+
+<h3>Today, ~30 minutes</h3>
+<ul>
+  <li>One-line comment on #3937: regression SHA <code>ac085df8c</code> (PR #3357), pointing at the longer note on #3940.</li>
+  <li>New-bar review on #3626, applying the checklist in public: minimal change, root cause, regression test, in-tree precedent, CI green, mergeable clean. Either request merge or ask coffeegoddd for an explicit deferral decision.</li>
+  <li>Direct message to julianknutsen: which CLI flags does the release need?</li>
+</ul>
+
+<h3>This week</h3>
+<ul>
+  <li>Triage 15–20 of the oldest open PRs against PR_MAINTAINER_GUIDELINES.md.</li>
+  <li>Land any of Julian's release PRs you can credibly review.</li>
+  <li>Take one CLI-flag scope from Julian and ship it.</li>
+</ul>
+
+<h3>This month</h3>
+<ul>
+  <li>A small PR adding the "retire — superseded by upcoming refactor" outcome to PR_MAINTAINER_GUIDELINES.md, with a date marker convention.</li>
+  <li>Cross-link PROJECT_CHARTER.md and PR_MAINTAINER_GUIDELINES.md.</li>
+  <li>Add a charter pointer to AGENTS.md so design-phase agents see it.</li>
+</ul>
+
+<h2 id="appendix">Data appendix</h2>
+
+<p>State snapshots as of 2026-05-16.</p>
+
+<h3>#3626</h3>
+<pre><code>head: alingenhag:fix/3340-dolt-remote-deadlock → base: gastownhall:main
+mergeable: true | mergeable_state: clean
+draft: false | state: open
+additions: 119 | deletions: 1 | changed_files: 2
+created: 2026-05-01T18:36:48Z | updated: 2026-05-16T10:20:43Z
+requested_reviewers: coffeegoddd
+reviews submitted: 0
+checks: 30+ completed/success (all embedded-dolt shards, build, upgrade smoke)
+</code></pre>
+
+<h3>#3940</h3>
+<pre><code>head: maphew:fix/git-origin-adoption → base: gastownhall:main
+mergeable: true | mergeable_state: clean
+draft: false | state: open
+additions: 367 | deletions: 58 | changed_files: 9
+created: 2026-05-14T16:03:19Z | updated: 2026-05-15T14:40:55Z
+requested_reviewers: (none individual) | requested_teams: beads-maintainers
+reviews submitted: 0
+checks: 30+ completed/success
+</code></pre>
+
+<h3>Queue</h3>
+<pre><code>Total open PRs (gh search):           138
+Page-1 of /pulls?state=open:          100
+julianknutsen open PRs:                 4  (3989, 3990, 3991, 3943; all this week)
+julianknutsen merged in recent window:  0
+coffeegoddd  merged in recent window:   0
+</code></pre>
+
+<h3>Cluster IDs at a glance</h3>
+<table>
+  <thead>
+    <tr><th>ID</th><th>Type</th><th>State</th><th>Author</th><th>Sub</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>3340</td><td>issue</td><td><span class="badge badge-open">open</span></td><td>alingenhag</td><td>A</td><td>The deadlock</td></tr>
+    <tr><td>3626</td><td>PR</td><td><span class="badge badge-open">open / clean</span></td><td>alingenhag</td><td>A</td><td>Fix for #3340</td></tr>
+    <tr><td>3740</td><td>PR</td><td><span class="badge badge-merged">merged</span></td><td>pmgledhill102</td><td>A</td><td>Push-side sibling, already landed</td></tr>
+    <tr><td>3598</td><td>PR</td><td><span class="badge badge-closed">closed</span></td><td>—</td><td>A</td><td>Earlier commit-site variant</td></tr>
+    <tr><td>3354</td><td>issue</td><td><span class="badge badge-closed">closed</span></td><td>kevglynn</td><td>B</td><td>102 GB disk fill</td></tr>
+    <tr><td>3356</td><td>issue</td><td><span class="badge badge-closed">closed</span></td><td>kevglynn</td><td>B</td><td>Root cause of #3354</td></tr>
+    <tr><td>3357</td><td>PR</td><td><span class="badge badge-merged">merged</span></td><td>kevglynn</td><td>B</td><td>Fix; introduced the v1.0.3 regression</td></tr>
+    <tr><td>3909</td><td>PR</td><td><span class="badge badge-closed">closed</span></td><td>maphew</td><td>B</td><td>First-pass restore; superseded</td></tr>
+    <tr><td>3937</td><td>issue</td><td><span class="badge badge-open">open</span></td><td>maphew</td><td>B</td><td>Policy proposal (5 flows)</td></tr>
+    <tr><td>3940</td><td>PR</td><td><span class="badge badge-open">open / clean</span></td><td>maphew</td><td>B</td><td>Implements items (2),(3),(6) of #3937</td></tr>
+  </tbody>
+</table>
+
+<h3>Links</h3>
+<div class="links">
+  <a href="https://github.com/gastownhall/beads/issues/3340">github.com/gastownhall/beads/issues/3340</a>
+  <a href="https://github.com/gastownhall/beads/pull/3626">github.com/gastownhall/beads/pull/3626</a>
+  <a href="https://github.com/gastownhall/beads/pull/3740">github.com/gastownhall/beads/pull/3740</a>
+  <a href="https://github.com/gastownhall/beads/issues/3354">github.com/gastownhall/beads/issues/3354</a>
+  <a href="https://github.com/gastownhall/beads/issues/3356">github.com/gastownhall/beads/issues/3356</a>
+  <a href="https://github.com/gastownhall/beads/pull/3357">github.com/gastownhall/beads/pull/3357</a>
+  <a href="https://github.com/gastownhall/beads/pull/3909">github.com/gastownhall/beads/pull/3909</a>
+  <a href="https://github.com/gastownhall/beads/issues/3937">github.com/gastownhall/beads/issues/3937</a>
+  <a href="https://github.com/gastownhall/beads/pull/3940">github.com/gastownhall/beads/pull/3940</a>
+</div>
+
+<p class="footer-note">
+  Authored by Claude Opus 4.7 (1M context) on behalf of maphew, 2026-05-16.
+</p>
+
+</main>
+</body>
+</html>
