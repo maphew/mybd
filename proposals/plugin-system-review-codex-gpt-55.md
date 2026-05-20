@@ -157,4 +157,4 @@ The architecture is promising but too broad and too optimistic as written. The p
 
 I would mark this proposal "request changes" for implementation approval, while approving a narrowed experimental provider pilot.
 
-_codex-gpt-5.5-medium on behalf of maphew_
+_codex-gpt-5.5-xhigh on behalf of maphew_
