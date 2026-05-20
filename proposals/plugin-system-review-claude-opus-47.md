@@ -304,4 +304,4 @@ corrections, not a redesign. With them addressed, this is a build-worthy plan.
 
 ---
 
-*Assessed by Claude-Opus-4.7-high on behalf of maphew.*
+*Assessed by Claude-Opus-4.7-high on behalf of maphew, using claude code cli.*

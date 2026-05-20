@@ -264,4 +264,4 @@ The proposal is sound architecture and disciplined product hygiene. The above ar
 - `bd-main/examples/bd-example-extension-go/README.md` — explicitly targets SQLite-backed (prior-generation) beads; redirects to `bd --json`.
 
 ---
-_kilocode-claude-opus-4.7 on behalf of matt_
+_kilocode-claude-opus-4.7-max on behalf of matt_

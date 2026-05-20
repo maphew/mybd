@@ -6,6 +6,8 @@
 > Scope: Independent technical review. Other plugin-system-*.md files in this folder were deliberately not consulted.
 > Verification: Grounded in direct reading of `bd-main/` source.
 
+Editor's note: The chat that started this review was Opus Latest xhigh in Kilocode vscode extension, but it delegated to Sonnet 4.5 and then compiled this final report, which is why there both Sonnet and Opus signatures.
+
 ## TL;DR
 
 The proposal is **architecturally sound and security-thoughtful**, easily the most rigorous extensibility design I've seen for a CLI of this size. The two-tier split (Provider/Automation), the trust layer (lock+grants+audit), the frozen command tree, and the migration debt register are all good calls. The author has clearly done the homework and survived two rounds of council review.
