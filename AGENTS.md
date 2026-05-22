@@ -5,13 +5,16 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 ## Conventions
 
 "gh ..." : use gh cli to interact with GitHub
-"gh beads ..." : use gh cli on gastownhall/beads repo
+"gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
+
+When working on beads, spawn agents according to their metadata hints.
 
 Assume you are not working alone.
 Use git worktrees by default.
 In reports, default to both html and md.
 
+PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md)
 
 ### Signing
 
