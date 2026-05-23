@@ -13,6 +13,7 @@ scratch/cleanroom/
 
 # Git worktrees managed outside the repo
 .worktrees/
+worktrees/
 main/
 
 # Temporary files

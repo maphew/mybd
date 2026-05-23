@@ -61,6 +61,22 @@ The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **n
 
 In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo. See [CLAUDE.md](CLAUDE.md) for the full layout and PR hygiene rules.
 
+### Worktree Location
+
+Use git worktrees by default, but do not create sibling review/source worktrees at the `mybd/` repo root.
+
+For Beads source worktrees, create them under the tracked ignored directory:
+
+`/var/home/matt/dev/mybd/.worktrees/beads/<short-purpose>`
+
+Example:
+
+```bash
+git -C bd-main worktree add ../.worktrees/beads/pr-4028-review <branch>
+```
+
+The `mybd/` root should contain only the coordination repo files, the nested `bd-main/` clone, and ignored container directories such as `.worktrees/`.
+
 ## Quick Reference
 
 ```bash
