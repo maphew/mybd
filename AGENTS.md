@@ -15,6 +15,7 @@ Assume you are not working alone.
 Use git worktrees by default.
 In reports, default to both html and md.
 
+Answer 'why' when opening a PR.
 PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md)
 
 ### Signing
