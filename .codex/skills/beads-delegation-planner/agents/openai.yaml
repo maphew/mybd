@@ -1,0 +1,4 @@
+interface:
+  display_name: "Beads Delegation Planner"
+  short_description: "Plan bead delegation metadata"
+  default_prompt: "Use $beads-delegation-planner to assign delegation metadata to ready beads."
