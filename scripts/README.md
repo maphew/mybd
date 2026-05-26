@@ -173,10 +173,10 @@ scripts/tri-checkpoint <id> "stopped at concerns section, need to verify test co
 scripts/tri-checkpoint #3482
 ```
 
-Appends a checkpoint note to bd, commits review-note + bd state changes (if
-any), `git pull --rebase`, `git push`. Worktree branches are local-only by
-design; if you've made commits in the worktree you want to keep, push them
-manually first (e.g., to a `wip/` branch on your fork).
+Appends a checkpoint note to bd, pushes bead state with `bd dolt push`, commits
+review-note changes (if any), `git pull --rebase`, `git push`. Worktree
+branches are local-only by design; if you've made commits in the worktree you
+want to keep, push them manually first (e.g., to a `wip/` branch on your fork).
 
 ## tri-submit (finalize)
 
