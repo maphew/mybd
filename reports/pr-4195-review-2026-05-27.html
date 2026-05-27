@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR #4195 Review — test(mcp): make validation baseline hermetic</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 940px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55; color: #1f2328; }
+  h1 { border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
+  h2 { border-bottom: 1px solid #eaeef2; padding-bottom: .3rem; margin-top: 2rem; }
+  h3 { margin-top: 1.6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+  code { background: #f6f8fa; padding: .1rem .35rem; border-radius: 4px; font-size: 90%; }
+  pre { background: #f6f8fa; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #d0d7de; padding: .35rem .75rem; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; }
+  ol li, ul li { margin-bottom: .4rem; }
+  .verdict { background: #fff8c5; border: 1px solid #d4a72c; padding: .6rem 1rem; border-radius: 6px; }
+  .sign { color: #57606a; font-style: italic; margin-top: 2.5rem; border-top: 1px solid #eaeef2; padding-top: 1rem; }
+  blockquote { border-left: .25em solid #d0d7de; color: #57606a; padding: 0 1em; margin: 0; }
+</style>
+</head>
+<body>
+
+<h1>PR #4195 Review — <code>test(mcp): make validation baseline hermetic</code></h1>
+
+<table>
+  <tr><th>PR</th><td><a href="https://github.com/gastownhall/beads/pull/4195">gastownhall/beads#4195</a></td></tr>
+  <tr><th>Title</th><td>test(mcp): make validation baseline hermetic</td></tr>
+  <tr><th>Author</th><td>maphew (matt wilkie)</td></tr>
+  <tr><th>Base / Head</th><td><code>main</code> &lt;- <code>codex/mybd-hbyb</code></td></tr>
+  <tr><th>Files</th><td>5 changed (+137 / -86)</td></tr>
+  <tr><th>Mergeable</th><td>MERGEABLE</td></tr>
+  <tr><th>Linked issues</th><td>mybd <code>mybd-hbyb</code> (originated during gastownhall/beads#3467 / #3466 dependabot review)</td></tr>
+  <tr><th>CI</th><td>All 44 checks green; Codecov reports all modified lines covered</td></tr>
+  <tr><th>Reviewed</th><td>2026-05-27</td></tr>
+</table>
+
+<h2>Verdict</h2>
+<p class="verdict"><strong>merge</strong> (with two small follow-ups, neither blocking).</p>
+<p>The PR does exactly what its title says: it removes the three concrete obstacles to running <code>uv run pytest</code> + <code>uv run python -m build</code> cleanly inside <code>integrations/beads-mcp/</code>, and it does so without expanding the contract beyond what is achievable today. Hard-coded <code>/Users/stevey/...</code> paths are replaced with <code>PROJECT_ROOT = Path(__file__).resolve().parents[1]</code>, the <code>bd_client</code> integration fixture moves from a shared <code>/tmp/beads_test_workspace_*</code> + collision-prone <code>/tmp/embeddeddolt/test</code> layout to a per-test <code>tmp_path / "workspace"</code> with explicit <code>BEADS_DIR</code>, and <code>build&gt;=1.3.0</code> is added to the <code>dev</code> dependency group so <code>python -m build</code> is reproducibly available. The README explicitly demotes <code>mypy</code>/<code>ruff</code> from "baseline" to "source maintenance, not part of baseline validation yet" — an honest documentation move rather than a hidden capability loss. CI is unaffected because (as confirmed by reading <code>.github/workflows/</code>) no upstream workflow actually runs <code>uv run pytest</code> on this directory; the baseline is a developer/maintainer contract, not a gated check.</p>
+<p>The work matches the linked beads <code>mybd-hbyb</code> plan (worker delegation, integration-only, no source changes), and the upstream change is bounded and reversible.</p>
+
+<h2>Why it exists</h2>
+<p>While reviewing dependabot PR gastownhall/beads#3467 (a pydantic bump) on top of the merged #3466, the documented MCP validation sequence (<code>uv sync &amp;&amp; uv run pytest &amp;&amp; uv run mypy &amp;&amp; uv run ruff &amp;&amp; python -m build</code>) failed at multiple stages on a refreshed PR head — not because of the dependency bump, but because the baseline was rotten. The concrete failures, per <code>bd show mybd-hbyb</code>:</p>
+<ol>
+  <li><code>uv run pytest</code>: <code>tests/test_compaction_config.py</code> hard-coded <code>/Users/stevey/src/dave/beads/integrations/beads-mcp</code> as the subprocess <code>cwd</code> and as a file-read path, so the test silently produced empty stdout on any non-<code>stevey</code> machine. The <code>bd_client</code> integration fixture seeded <code>/tmp/beads_test_workspace_*</code> and let bd create <code>/tmp/embeddeddolt/test</code>, which collided with any prior test run.</li>
+  <li><code>uv run mypy src/beads_mcp</code>: pre-existing type errors in <code>bd_client.py</code> and <code>server.py</code>.</li>
+  <li><code>uv run ruff check src/beads_mcp</code>: pre-existing lint/format findings in source.</li>
+  <li><code>python -m build</code>: the <code>build</code> module was not in the dev group, so the command failed with <code>No module named build</code>.</li>
+</ol>
+<p>Cumulative effect: any dependabot or contributor PR review on <code>integrations/beads-mcp/</code> was forced to triage noise from the broken baseline before anything else. This PR's job is to stop that noise.</p>
+
+<h2>What it changes</h2>
+
+<p><code>integrations/beads-mcp/README.md</code> (lines 248-272 of new content):</p>
+<ul>
+  <li>Adds a top-level "Baseline validation" code block that documents the canonical sequence as <code>uv sync</code> &rarr; <code>uv run pytest</code> &rarr; <code>uv run python -m build</code>.</li>
+  <li>Re-titles the existing <code>mypy</code> and <code>ruff</code> sections with the parenthetical "source maintenance, not part of baseline validation yet". The commands are preserved verbatim — only the contract changes.</li>
+</ul>
+
+<p><code>integrations/beads-mcp/pyproject.toml</code> (one-line <code>[dependency-groups].dev</code> insertion at line 94):</p>
+<ul>
+  <li>Adds <code>"build&gt;=1.3.0"</code>. <code>uv.lock</code> is updated in lockstep with the new transitive deps (<code>pyproject-hooks</code>, conditional <code>colorama</code>, <code>tomli</code>, <code>importlib-metadata</code>).</li>
+</ul>
+
+<p><code>integrations/beads-mcp/tests/test_compaction_config.py</code> (whole-file changes, +44/-26):</p>
+<ul>
+  <li>Adds <code>PROJECT_ROOT = Path(__file__).resolve().parents[1]</code> at module load (line 12).</li>
+  <li>Adds a <code>_python_env()</code> helper (lines 14-21) that prepends <code>PROJECT_ROOT/src</code> to <code>PYTHONPATH</code> so subprocesses can <code>import beads_mcp</code> without depending on cwd. This is a real upgrade: previously the subprocess only worked because <code>cwd=/Users/stevey/...</code> happened to also be the project root that contained <code>src/</code>.</li>
+  <li>Replaces both <code>cwd="/Users/stevey/.../beads-mcp"</code> literals with <code>cwd=PROJECT_ROOT</code> (lines 53, 79).</li>
+  <li>Replaces both <code>open("/Users/stevey/.../server.py")</code> / <code>open(".../CONTEXT_ENGINEERING.md")</code> literals with <code>open(PROJECT_ROOT / "src" / "beads_mcp" / "server.py")</code> and <code>open(PROJECT_ROOT / "CONTEXT_ENGINEERING.md")</code> (lines 204, 213).</li>
+  <li>A large number of formatting/whitespace fixes (trailing whitespace on blank lines, blank line after <code>import pytest</code> inside try blocks) that bring the file into <code>ruff format</code> compliance.</li>
+</ul>
+
+<p><code>integrations/beads-mcp/tests/test_bd_client_integration.py</code> (largest single change, +56/-60):</p>
+<ul>
+  <li>Removes <code>import tempfile</code>.</li>
+  <li>Replaces the module-shared <code>temp_db</code> fixture (which used <code>tempfile.mkstemp(..., dir="/tmp")</code> and a single <code>.db</code> file) with a <code>temp_workspace(tmp_path)</code> fixture (lines 36-40) that returns a per-test <code>tmp_path / "workspace"</code> directory. <code>tmp_path</code> is the pytest built-in — it gives each test a unique directory under <code>pytest.gettempdir()/pytest-&lt;user&gt;/test-NNN/</code>, which is naturally collision-free.</li>
+  <li>Rewrites the async <code>bd_client</code> fixture (lines 49-77):
+    <ul>
+      <li>Constructs <code>BdClient(bd_path=..., beads_dir=str(beads_dir), working_dir=str(temp_workspace))</code> instead of the deprecated <code>beads_db</code> parameter.</li>
+      <li>Exports <code>BEADS_DIR=&lt;temp&gt;/workspace/.beads</code> and <code>BD_NON_INTERACTIVE=1</code>, and pops any inherited <code>BEADS_DB</code>.</li>
+      <li>Calls <code>bd init --prefix test --non-interactive --skip-agents --skip-hooks</code>. The new flags exist in <code>cmd/bd/init.go:1560-1573</code> — confirmed: <code>--skip-hooks</code>, <code>--skip-agents</code>, <code>--non-interactive</code> are all real.</li>
+      <li>Drops the nested <code>with tempfile.TemporaryDirectory(...)</code> wrapper because the <code>tmp_path</code> fixture already provides cleanup.</li>
+    </ul>
+  </li>
+  <li>Rewrites <code>test_init_creates_beads_directory</code> (lines 419-449):
+    <ul>
+      <li>Switches from <code>tempfile.TemporaryDirectory(prefix="beads_init_test_", dir="/tmp")</code> to <code>tmp_path / "init-workspace"</code>.</li>
+      <li>Uses <code>monkeypatch</code> to set/clear <code>BD_NON_INTERACTIVE</code>, <code>BEADS_DIR</code>, and <code>BEADS_DB</code> — actual env-restore guarantees.</li>
+      <li>Changes the post-init assertions from "a <code>*.db</code> file named <code>beads.db</code> exists" to the embedded-Dolt reality: <code>metadata.json</code>, <code>config.yaml</code>, and <code>embeddeddolt/test/.dolt/</code> directory. This is the correct shape for the current backend — the old assertion would have falsely passed only on the SQLite-era backend.</li>
+    </ul>
+  </li>
+  <li>Reformats one line for ruff (<code>test_claim_issue</code> line 159, single-line <code>CreateIssueParams</code> call).</li>
+</ul>
+
+<p><code>integrations/beads-mcp/uv.lock</code> (+27 lines):</p>
+<ul>
+  <li>Lockfile delta for <code>build==1.5.0</code> plus its transitive deps (<code>pyproject-hooks==1.2.0</code>, conditional <code>colorama</code>, <code>tomli</code>, <code>importlib-metadata</code>).</li>
+</ul>
+
+<p>Net gate change: <code>pytest</code> is fixed, <code>python -m build</code> is fixed, <code>mypy</code> and <code>ruff src/</code> are formally moved out of the baseline (they remain present in the dev group, just demoted in docs).</p>
+
+<h2>Strengths</h2>
+<ul>
+  <li><strong>Targeted, no scope creep.</strong> Exactly the four failure modes called out in <code>mybd-hbyb</code> are addressed; no incidental source refactors.</li>
+  <li><strong>Per-test isolation is real.</strong> <code>tmp_path</code> is the right primitive — pytest 9 creates per-test directories under a session base, so two <code>pytest -n auto</code> workers will not collide, and prior runs do not pollute. The fragile <code>/tmp/embeddeddolt/test</code> collision is gone.</li>
+  <li><strong>The init test is now more accurate, not just hermetic.</strong> Asserting <code>metadata.json</code> + <code>config.yaml</code> + <code>embeddeddolt/test/.dolt/</code> matches what <code>bd init</code> actually creates with the embedded-Dolt backend; the old <code>beads.db</code> assertion was a holdover from the SQLite backend and would have started passing under false pretenses.</li>
+  <li><strong><code>PYTHONPATH</code> prepend pattern is robust.</strong> <code>_python_env()</code> adds <code>PROJECT_ROOT/src</code> so the subprocess can import <code>beads_mcp</code> even if <code>uv run</code> is invoked from elsewhere. This is independent of <code>cwd</code> and therefore more robust than the old "hope cwd lines up" approach.</li>
+  <li><strong>Documentation honestly tracks reality.</strong> Demoting <code>mypy</code>/<code>ruff</code> from "baseline" to "source maintenance, not part of baseline validation yet" is preferable to silently dropping them. The "yet" leaves a clear hook for a follow-up to re-promote once the source side is cleaned.</li>
+  <li><strong>PR description follows project convention</strong> (Why / What / Validation / Bead / signed). Commit is single, focused, with <code>test(mcp):</code> prefix.</li>
+  <li><strong>CI green across all 44 checks</strong> including the storage-domain and Embedded-Dolt suites; Codecov reports patch coverage on all modified lines.</li>
+</ul>
+
+<h2>Concerns</h2>
+<ol>
+  <li><strong>(nit) <code>mypy</code> and <code>ruff</code> demoted in docs but never re-promoted; no tracking issue is linked.</strong> <code>integrations/beads-mcp/README.md</code> line 261 says "source maintenance, not part of baseline validation yet" but the README does not reference a follow-up beads issue or PR for the source cleanup. Future readers will not know what "yet" means. Suggested action: append <code>(tracked by &lt;bead&gt;)</code> or similar, and file a follow-up bead for the actual <code>mypy --strict</code> and <code>ruff check src/beads_mcp</code> cleanups so this demotion is a checkpoint and not an indefinite waiver. Not a blocker — the existing baseline is honest.</li>
+  <li><strong>(nit) <code>conftest.py</code> safety check still guards <code>BEADS_DB</code> and <code>BEADS_WORKING_DIR</code>, not <code>BEADS_DIR</code>.</strong> <code>integrations/beads-mcp/tests/conftest.py</code> lines 28-58 protect against accidentally pointing tests at the production <code>.beads/</code> via <code>BEADS_DB</code> or <code>BEADS_WORKING_DIR</code>. The new <code>bd_client</code> fixture exports <code>BEADS_DIR=&lt;tmp&gt;/.beads</code>, which is the new primary handle in the BdClient (<code>bd_client.py:302-303</code>). If a future contributor sets <code>BEADS_DIR=/path/to/production/.beads</code> in their shell, the conftest will not catch it. Not introduced by this PR, but this PR is the natural place to extend the guard. Suggested action (follow-up, not blocking): mirror the existing <code>production_beads</code> check for <code>BEADS_DIR</code> in <code>conftest.py:pytest_configure</code>.</li>
+  <li><strong>(nit) <code>test_compaction_config.py</code> still mutates global <code>os.environ</code> directly instead of using <code>monkeypatch</code>.</strong> The PR fixes the path hard-coding and the formatting but leaves the <code>os.environ["BEADS_MCP_COMPACTION_THRESHOLD"] = "..."</code> + try/finally pattern (e.g. lines 107-114, 124-131, 137-143, 155-159, 167-173) untouched. Compare with the new <code>test_init_creates_beads_directory</code> in <code>test_bd_client_integration.py</code> which adopts <code>monkeypatch</code> cleanly. A <code>pytest.fixture(autouse=True)</code> that snapshots/restores the relevant env vars, or just per-test <code>monkeypatch.setenv</code>, would be more robust against test-run interruption (Ctrl-C between <code>try</code> and <code>finally</code> leaves the process env dirty for any caller-driven subsequent uses). Not a regression — this was the prior style — but the file is being touched anyway, so this would have been a cheap win.</li>
+  <li><strong>(nit) The <code>bd_client</code> fixture leaks one line that ruff/lint would flag if <code>mypy --strict</code> were re-enabled.</strong> <code>test_bd_client_integration.py:55</code> builds <code>env</code> and exports <code>BEADS_DIR</code>, but the BdClient itself is constructed with the same <code>beads_dir</code> two lines earlier, so the <code>env</code> is only consumed by the init subprocess. That is correct (init needs env, follow-up calls re-derive env from BdClient). Just worth a one-line comment to that effect, because the dual mechanism (constructor arg + env var) reads as redundant on a quick scan.</li>
+  <li><strong>(nit) <code>bd init --non-interactive --skip-agents --skip-hooks</code> is a CLI surface this test now hard-binds to.</strong> Confirmed in <code>cmd/bd/init.go:1560-1573</code> that those three flags exist on <code>main</code>, so the test is correct today. But if any of those flags are renamed or removed (<code>--skip-agents</code> is comparatively young), the test will start failing with a fixture-setup error rather than a meaningful test failure. Worth a one-line <code>pytest.fail</code> guard that runs <code>bd init --help</code> once at session scope and asserts the flags are present, so the failure message points at the cause. Cosmetic; do as a follow-up.</li>
+  <li><strong>(nit) <code>Test pollution detected (bd-2c5a)</code> exit path is now unreachable from the integration test because <code>BEADS_DB</code> is popped early.</strong> This is intended — the fixture explicitly does <code>env.pop("BEADS_DB", None)</code> (line 56) — but the conftest's runtime safety check (<code>pytest_runtest_setup</code>, line 65) keys off <code>BEADS_DB</code>. With this PR, that runtime guard never fires for the <code>bd_client</code> fixture. The guard still protects accidental production-pointing on other fixtures, so this is not a regression, just a note that the guard's coverage shrank a little.</li>
+</ol>
+<p>None of the above are blockers. The PR can land as-is.</p>
+
+<h2>Storage-driver-boundary check</h2>
+<p>No violations.</p>
+<p>The PR touches Python integration tests and one Python dependency entry. It does not import or call any Go storage driver, does not assert on any storage internal beyond observing that <code>embeddeddolt/test/.dolt/</code> exists after <code>bd init</code> (which is a black-box file-existence check on the result of a public CLI command, not a reach across the driver boundary). The previous <code>/tmp/embeddeddolt/test</code> collision risk is actually <em>eliminated</em> by this PR — that earlier shared path was, in spirit, a leak of storage layout into the test fixture. The new fixture lets bd put the embedded-Dolt directory wherever it wants under <code>tmp_path / "workspace" / ".beads"</code>, with no test code depending on the layout except the one positive existence assertion in <code>test_init_creates_beads_directory</code>. That assertion is appropriate because the test's whole point is "init created the directory I asked it to".</p>
+
+<h2>Backwards compatibility &amp; migration</h2>
+<ul>
+  <li><strong>Validation command for contributors changes.</strong> The documented baseline drops <code>uv run mypy</code> and <code>uv run ruff check src/beads_mcp</code> and adds <code>uv run python -m build</code>. Any contributor checklist or PR template that says "run mypy and ruff" needs updating. The README change captures this; no external doc was found in <code>bd-main/</code> that hard-codes the old sequence.</li>
+  <li><strong>CI is unaffected.</strong> Searched <code>.github/workflows/</code> — only <code>release.yml</code> and <code>test-pypi.yml</code> touch <code>integrations/beads-mcp</code>, and they only run <code>uv build</code>. Nothing runs <code>pytest</code>, <code>mypy</code>, or <code>ruff</code> on this directory upstream, so this PR cannot break CI.</li>
+  <li><strong>Test infrastructure</strong>: the <code>bd_client</code> fixture's signature is internal; no test outside this file depends on it. The replacement of <code>temp_db</code> with <code>temp_workspace</code> is invisible to test bodies, which only reference <code>bd_client</code>.</li>
+  <li><strong>Python dependency surface grows by one direct dep.</strong> <code>build&gt;=1.3.0</code> is a well-maintained PyPA project with a small transitive footprint (<code>packaging</code>, <code>pyproject-hooks</code>, plus conditional <code>colorama</code>/<code>tomli</code>/<code>importlib-metadata</code> on older Pythons). Acceptable.</li>
+  <li><strong>No source-side migration needed.</strong> Nothing in <code>src/beads_mcp/</code> is touched.</li>
+</ul>
+
+<h2>Recommendations</h2>
+<ol>
+  <li><strong>Land this PR as-is.</strong> It does what it says, CI is green, and the documentation change is honest about the demotion of <code>mypy</code>/<code>ruff</code> from the baseline.</li>
+  <li><strong>File a follow-up bead</strong> to (a) clean up the <code>mypy --strict</code> and <code>ruff check src/beads_mcp</code> findings and (b) re-promote both to the baseline. Link from the README "(tracked by &lt;bead&gt;)" so the "yet" in the demotion is not a permanent get-out-of-jail card. (Concern 1.)</li>
+  <li><strong>File a follow-up bead</strong> to harden <code>conftest.py:pytest_configure</code> to also guard <code>BEADS_DIR</code> against pointing at the production <code>.beads/</code>. The new fixture's choice of <code>BEADS_DIR</code> over <code>BEADS_DB</code> is correct; the safety net just needs to follow. (Concern 2.)</li>
+  <li><strong>Optional polish</strong> (could be a single small commit appended to this PR or a separate one): convert the remaining <code>os.environ[...] = ...</code> + <code>try/finally</code> blocks in <code>tests/test_compaction_config.py</code> to <code>monkeypatch.setenv</code>. Mechanical change, no behavior delta. (Concern 3.)</li>
+  <li><strong>On merge</strong>: close <code>mybd-hbyb</code> via the <code>external: gh-pr-4195</code> link already recorded in the bead. The exit criterion ("future MCP dependency PRs have a reliable validation command") is satisfied.</li>
+</ol>
+
+<p class="sign"><em>claude-opus-4-7-xhigh on behalf of matt wilkie</em></p>
+
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR #4192 Review — fix: skip setup injection for symlinked agent files</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 940px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55; color: #1f2328; }
+  h1 { border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
+  h2 { border-bottom: 1px solid #eaeef2; padding-bottom: .3rem; margin-top: 2rem; }
+  h3 { margin-top: 1.6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+  code { background: #f6f8fa; padding: .1rem .35rem; border-radius: 4px; font-size: 90%; }
+  pre { background: #f6f8fa; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #d0d7de; padding: .35rem .75rem; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; }
+  ol li, ul li { margin-bottom: .4rem; }
+  .verdict { background: #fff8c5; border: 1px solid #d4a72c; padding: .6rem 1rem; border-radius: 6px; }
+  .sign { color: #57606a; font-style: italic; margin-top: 2.5rem; border-top: 1px solid #eaeef2; padding-top: 1rem; }
+  blockquote { border-left: .25em solid #d0d7de; color: #57606a; padding: 0 1em; margin: 0; }
+</style>
+</head>
+<body>
+
+<h1>PR #4192 Review — <code>fix: skip setup injection for symlinked agent files</code></h1>
+
+<table>
+  <tr><th>PR</th><td><a href="https://github.com/gastownhall/beads/pull/4192">gastownhall/beads#4192</a></td></tr>
+  <tr><th>Title</th><td>fix: skip setup injection for symlinked agent files</td></tr>
+  <tr><th>Author</th><td>maphew (matt wilkie)</td></tr>
+  <tr><th>Base / Head</th><td><code>main</code> &lt;- <code>fix/mybd-l4r-symlink</code></td></tr>
+  <tr><th>Files</th><td>2 changed (+31 / -17)</td></tr>
+  <tr><th>Mergeable</th><td>MERGEABLE</td></tr>
+  <tr><th>Linked issues</th><td>gastownhall/beads#3722, mybd <code>mybd-l4r</code></td></tr>
+  <tr><th>CI</th><td>Codecov patch coverage 75% (1 missing, 1 partial); tests passing</td></tr>
+  <tr><th>Reviewed</th><td>2026-05-27</td></tr>
+</table>
+
+<h2>Verdict</h2>
+<p class="verdict"><strong>merge-fix</strong> (lean toward <strong>merge</strong> with a follow-up beads issue).</p>
+<p>The change is a correct, narrow P0 fix that eliminates the corruption mode reported in #3722. It is safe to land for v1.0.4 triage. However, it implements <em>option 1</em> (detect + refuse) from the upstream issue, while the codebase had recently shipped <em>option 3</em> (detect + follow symlink) via <code>c7615e407 fix(setup): preserve symlinks in atomicWriteFile</code>. That difference is a behavior regression for the most common deployed configuration (<code>CLAUDE.md -&gt; AGENTS.md</code>), where <code>bd setup claude</code> will now silently no-op rather than write integration text into the real <code>AGENTS.md</code>. The corruption is fixed, but users who relied on the previous follow-through behavior must now invoke setup explicitly against the link target.</p>
+<p>Recommendation: merge as-is to unblock the P0, then file a beads follow-up to either restore option 3 safely or document the new contract clearly in <code>bd setup --help</code> and the integration READMEs.</p>
+
+<h2>Why it exists</h2>
+<p>Upstream issue #3722 (yakshaver / Corey Klaasmeyer) reports that <code>bd init</code> against a symlinked <code>CLAUDE.md -&gt; AGENTS.md</code> produces a git index entry with mode <code>120000</code> whose blob is the multi-line string <code>"AGENTS.md\n\n&lt;!-- BEGIN BEADS INTEGRATION --&gt;...\n"</code>. macOS APFS caps symlink targets at ~1023 bytes, so the resulting repo is unrecoverable on macOS: <code>git rebase</code>, <code>git merge</code>, fresh clones, and branch-switch all fail with <code>unable to create symlink CLAUDE.md: File name too long</code>. This affects v1.0.3 (Homebrew) and earlier; the linked beads <code>mybd-l4r</code> flagged it P0 for v1.0.4 triage.</p>
+<p>The reporter offered three fix strategies (refuse / flip-to-regular-file / follow-target). This PR implements strategy 1 (refuse), which is the most conservative.</p>
+
+<h2>What it changes</h2>
+<p><code>cmd/bd/setup/agents.go</code> (lines 91-114 of new content):</p>
+<ul>
+  <li>Drops the <code>utils</code> import (no longer needed after removing <code>ResolveForWrite</code>).</li>
+  <li>Replaces the <code>utils.ResolveForWrite(env.agentsPath)</code> + read-resolved-path block with an <code>os.Lstat</code> check that:
+    <ul>
+      <li>Returns nil (silent success after a warning) when <code>env.agentsPath</code> is a symlink.</li>
+      <li>Returns the lstat error (and logs it) for non-<code>IsNotExist</code> errors.</li>
+      <li>Falls through to the existing flow when the path is a regular file or does not exist.</li>
+    </ul>
+  </li>
+  <li>Reads <code>os.ReadFile(env.agentsPath)</code> directly (no longer the resolved path) for the existing-content read. The <code>atomicWriteFile</code> call further down still goes through <code>utils.ResolveForWrite</code> for its own write, but since the early symlink check returns before that, that resolve never fires.</li>
+</ul>
+<p><code>cmd/bd/setup/agents_marker_test.go::TestInstallAgentsSymlinkSafety</code> (lines 316-370):</p>
+<ul>
+  <li>Test scenario inverted. Previously it seeded a <em>full</em>-profile target and asserted that a minimal install through the symlink <em>preserved</em> full-profile content in the target. Now it seeds arbitrary non-managed content (<code>"# Existing target content\n"</code>) and asserts that:
+    <ul>
+      <li>The link remains a symlink (<code>Lstat</code>).</li>
+      <li>The target's content is byte-equal to the seed (no managed-section injection).</li>
+      <li>The "is a symlink; skipping managed section injection" warning appears in stdout.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2>Strengths</h2>
+<ul>
+  <li>Directly closes the corruption path described in #3722. Refusal-with-warning is the safest possible behavior; it cannot break a working repo.</li>
+  <li>Minimal surface area. One file plus one test; no public API changes.</li>
+  <li>Test was rewritten in lockstep with the behavior change. The new assertions match the new contract and are explicit (link mode preserved, target untouched, warning emitted).</li>
+  <li>The PR description honors the project convention ("Why" + "What changed" + drift check + validation + agent signing).</li>
+  <li><code>installAgents</code> callers (<code>claude.go</code>, <code>mux.go</code>, <code>gemini.go</code>, <code>factory.go</code>, <code>opencode.go</code>) already treat its error as non-fatal, so even an unexpected <code>lstat</code> failure no longer aborts the higher-level integration.</li>
+  <li>No storage-engine boundary concerns: the change is purely in <code>cmd/bd/setup/</code> and touches no storage drivers, locks, or engine introspection.</li>
+</ul>
+
+<h2>Concerns</h2>
+<ol>
+  <li><strong>Behavior regression vs. recently-shipped option 3.</strong> <code>cmd/bd/setup/utils.go:23</code> and <code>cmd/bd/setup/utils_test.go:91 TestAtomicWriteFile_PreservesSymlink</code> document that the codebase was deliberately set up to write <em>through</em> symlinks via <code>ResolveForWrite</code> (commit <code>c7615e407 fix(setup): preserve symlinks in atomicWriteFile</code>). For users with the canonical <code>CLAUDE.md -&gt; AGENTS.md</code> pattern, running <code>bd setup claude</code> now leaves <code>AGENTS.md</code> without the integration block, where previously it would have written it. The PR description and warning message do not mention this regression or what the user should do next. Suggest: extend the warning to name the resolved target and recommend the corrective command, for example:
+    <pre><code>Warning: CLAUDE.md is a symlink to AGENTS.md; skipping.
+Re-run with the target file (e.g. 'bd setup claude --agents-file AGENTS.md')
+to install integration there.</code></pre>
+    This costs nothing and turns a silent regression into a directive.
+  </li>
+  <li><strong>Symlink-safe <code>atomicWriteFile</code> test is now stranded.</strong> <code>cmd/bd/setup/utils_test.go:91-124 TestAtomicWriteFile_PreservesSymlink</code> still asserts symlink-preserving write semantics for <code>atomicWriteFile</code>. That utility is still used by callers other than <code>installAgents</code> (<code>claude.go:55</code>, <code>codex.go:65</code>, <code>gemini.go:55</code>, <code>aider.go:165-175</code>, <code>junie.go:128/139</code>, <code>mux.go:109</code>, <code>cursor.go:65</code>, <code>agent_skill.go:40</code>). If any of those caller paths can be reached with a symlink-as-target (e.g. a user creates <code>.claude/settings.json</code> as a symlink), they will still follow the symlink and could in principle reproduce a similar corruption mode for those artifacts. The PR only locks down <code>installAgents</code>. Suggest filing a follow-up to audit other <code>atomicWriteFile</code> call sites for symlink-as-target risk, or to apply the same Lstat guard in <code>atomicWriteFile</code> itself (with an explicit opt-in for callers that genuinely want pass-through).</li>
+  <li><strong>Lost code-coverage on the lstat error branch.</strong> Codecov flags <code>cmd/bd/setup/agents.go</code> patch coverage at 75% with 1 missing and 1 partial line. The uncovered branch is almost certainly the <code>else if err != nil &amp;&amp; !os.IsNotExist(err)</code> arm. Worth a one-line test (e.g. set <code>env.agentsPath</code> to a path whose parent directory is mode 0000, or a path that traverses a non-directory) to lock down behavior. Not a blocker.</li>
+  <li><strong>Warning is on <code>stdout</code>, not <code>stderr</code>.</strong> <code>cmd/bd/setup/agents.go</code> new line ~98 emits the symlink warning via <code>fmt.Fprintf(env.stdout, "Warning: ...")</code>. Other diagnostic messages in the same file use <code>env.stderr</code> (e.g. line 103-104 in the new code: <code>fmt.Fprintf(env.stderr, "Error: failed to inspect ...")</code>). This is a small inconsistency; the test asserts against <code>stdout</code>, so it was a deliberate choice — but a <code>Warning:</code> line on stdout will mix with success messages in piped/captured output. Worth aligning to <code>stderr</code> (and updating the test) for cleanliness. Not blocking.</li>
+  <li><strong>The early return path skips the "integration installed" tail.</strong> Lines 154-163 print final summary including <code>File:</code>, <code>readHint</code>, and <code>docsURL</code>. When the symlink branch returns early on line 96, the user gets only "Installing X integration..." plus the warning, no follow-up. That is correct for the no-op case, but <code>claude.go:212-214</code> then unconditionally prints "✓ Claude Code integration installed" and a restart hint, which is misleading when the integration text never landed. Suggest the symlink branch return a sentinel (e.g. <code>errAgentsSymlinkSkipped</code>) that <code>claude.go</code>/<code>mux.go</code> can detect and adjust their final messaging. Cosmetic; can be a follow-up.</li>
+  <li><strong>No coverage for the read-but-not-symlink path being unchanged.</strong> The diff removed the <code>ResolveForWrite</code> indirection in the read step (now reads <code>env.agentsPath</code> directly). For non-symlink paths, behavior is identical, but no test exercises this regression boundary explicitly. Existing tests (<code>TestInstallAgentsPreservesFullProfile</code>, <code>TestLegacyToNewMigrationViaInstall</code>) will catch a complete break, but a targeted assertion that read-resolved-path is no longer used (e.g. that a symlink in the <em>containing</em> directory does not affect the read) would be ideal. Not blocking.</li>
+</ol>
+
+<h2>Storage-driver-boundary check</h2>
+<p>No violations. The PR touches only <code>cmd/bd/setup/</code>. There are no storage engine calls, no <code>flock</code>-style locking, no Dolt or SQLite introspection. Per the <code>beads-storage-driver-roadmap</code> memory, this PR is in the clear.</p>
+
+<h2>Backwards compatibility &amp; migration</h2>
+<ul>
+  <li><strong>Forward</strong>: users who had no symlinks see no behavior change. Users who had symlinks but no integration installed lose the ability to install integration by pointing setup at the symlink — they must point at the target file. Worst case is a confused user who has to re-run.</li>
+  <li><strong>Backward</strong>: existing valid managed sections written through this code path are not modified. Existing <em>corrupt</em> repos (mode 120000 + multi-line blob) are not auto-repaired; the manual <code>git update-index --cacheinfo 100644,...</code> recipe in #3722 still applies. Worth mentioning in release notes.</li>
+</ul>
+
+<h2>Recommendations</h2>
+<ol>
+  <li><strong>Land this PR for v1.0.4.</strong> It correctly stops the corruption. The behavior trade-off is acceptable for a P0 fix.</li>
+  <li><strong>Before merge</strong> (cheap polish; do as in-place maintainer edits on the contributor branch per <code>PR_MAINTAINER_GUIDELINES.md</code> since the contributor is the same user):
+    <ul>
+      <li>Expand the warning to name the resolved target via <code>os.Readlink(env.agentsPath)</code> and suggest the corrective command. (Concern 1.)</li>
+      <li>Optionally move the warning to <code>env.stderr</code> for consistency, updating the test. (Concern 4.)</li>
+    </ul>
+  </li>
+  <li><strong>File follow-up beads issues</strong> (do not block):
+    <ul>
+      <li>Audit <code>atomicWriteFile</code> callers for symlink-as-target reachability and decide whether to push the Lstat guard down into the utility. (Concern 2.)</li>
+      <li>Add a test for the lstat error branch in <code>installAgents</code>. (Concern 3.)</li>
+      <li>Decide whether <code>claude.go</code>/<code>mux.go</code> final messages should detect the symlink-skip case and adjust their summary. (Concern 5.)</li>
+      <li>Add a "repair recipe" snippet to release notes / docs for users already stuck with mode-120000 multi-line <code>CLAUDE.md</code> blobs (the exact <code>git update-index --cacheinfo 100644,&lt;sha&gt;,CLAUDE.md</code> recipe from the issue).</li>
+    </ul>
+  </li>
+  <li><strong>On merge</strong>: close gastownhall/beads#3722 with a note linking this PR, and close beads <code>mybd-l4r</code> per the local triage entry's exit criterion.</li>
+</ol>
+
+<p class="sign"><em>claude-opus-4-7-xhigh on behalf of matt wilkie</em></p>
+
+</body>
+</html>

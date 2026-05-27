@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR #4194 Review — fix(close): support per-id reasons</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 940px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55; color: #1f2328; }
+  h1 { border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
+  h2 { border-bottom: 1px solid #eaeef2; padding-bottom: .3rem; margin-top: 2rem; }
+  h3 { margin-top: 1.6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+  code { background: #f6f8fa; padding: .1rem .35rem; border-radius: 4px; font-size: 90%; }
+  pre { background: #f6f8fa; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #d0d7de; padding: .35rem .75rem; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; }
+  ol li, ul li { margin-bottom: .4rem; }
+  .verdict { background: #fff8c5; border: 1px solid #d4a72c; padding: .6rem 1rem; border-radius: 6px; }
+  .sign { color: #57606a; font-style: italic; margin-top: 2.5rem; border-top: 1px solid #eaeef2; padding-top: 1rem; }
+  blockquote { border-left: .25em solid #d0d7de; color: #57606a; padding: 0 1em; margin: 0; }
+</style>
+</head>
+<body>
+
+<h1>PR #4194 Review — <code>fix(close): support per-id reasons</code></h1>
+
+<table>
+  <tr><th>PR</th><td><a href="https://github.com/gastownhall/beads/pull/4194">gastownhall/beads#4194</a></td></tr>
+  <tr><th>Title</th><td>fix(close): support per-id reasons</td></tr>
+  <tr><th>Author</th><td>maphew (matt wilkie)</td></tr>
+  <tr><th>Base / Head</th><td><code>main</code> &lt;- <code>codex/mybd-r1cb</code></td></tr>
+  <tr><th>Files</th><td>4 changed (+233 / -51)</td></tr>
+  <tr><th>Mergeable</th><td>MERGEABLE (base is <code>4e387914a</code>; upstream <code>main</code> has advanced 13 commits, none in <code>cmd/bd/close*</code> or <code>cmd/bd/ready_embedded_test.go</code>)</td></tr>
+  <tr><th>Linked issues</th><td>gastownhall/beads#3279 (fix), gastownhall/beads#3268 (regression guard); mybd <code>mybd-r1cb</code></td></tr>
+  <tr><th>CI</th><td>41 of 42 checks green. <strong>Failing: <code>Check doc flags freshness</code></strong> — <code>docs/CLI_REFERENCE.md</code> is out of sync with the new <code>Long</code> description text. Codecov: patch coverage 37.87% (36 missing + 5 partial in <code>cmd/bd/close.go</code>).</td></tr>
+  <tr><th>Reviewed</th><td>2026-05-27</td></tr>
+</table>
+
+<h2>Verdict</h2>
+<p class="verdict"><strong>merge-fix.</strong></p>
+<p>The core change is correct and well-scoped: it replaces a single <code>--reason</code> string with an order-preserving slice flag, validates count parity, and adds focused tests. The fix matches what #3279 asked for and the embedded test reproduces the user-reported invocation pattern faithfully. CI is almost entirely green, including the differential-regression and 20-shard embedded-Dolt grids.</p>
+<p>Two things gate the merge:</p>
+<ol>
+  <li><strong>CI is red on <code>Check doc flags freshness</code></strong> because the contributor edited <code>closeCmd.Long</code> (cmd/bd/close.go:24-30) but did not regenerate <code>docs/CLI_REFERENCE.md</code>. The fix is mechanical — run <code>./scripts/generate-cli-docs.sh ./bd</code> and commit — but it must happen before merge or the gate fails.</li>
+  <li><strong>A small but real backward-incompatibility for the <code>--reason X --reason Y</code> (single-ID) idiom.</strong> Previously cobra's default last-wins meant <code>bd close id1 --reason X --reason Y</code> closed <code>id1</code> with reason "Y". New code rejects that input with <code>got 2 close reasons for 1 issue IDs</code>. Probably noise (no known user relied on this), but it should be called out in the PR description or release notes — or relaxed with a "treat as override when only one ID" rule.</li>
+</ol>
+<p>Beyond those, suggest a small handful of polish items (most non-blocking). Lean toward landing once docs are regenerated.</p>
+
+<h2>Why it exists</h2>
+<p>Upstream #3279 (seanmartinsmith) reports that <code>bd close id1 --reason='A' id2 --reason='B' id3 --reason='C'</code> closes all three issues with reason "C", because cobra's default <code>StringP</code> flag is last-write-wins. The reporter explicitly notes this requires a different parsing approach (paired args or a new flag pattern). Close reasons matter for searchability and recovery context; the documented workaround was to close issues one at a time.</p>
+<p>#3268 (slagyr) is a separate, intermittent bug where <code>bd ready</code> reports "No ready work found" despite open zero-dependency issues. The mybd epic <code>mybd-r1cb</code> flagged both for P2 cleanup. The PR description notes the author could not reproduce #3268 on current <code>main</code> and adds a regression guard instead of a fix.</p>
+
+<h2>What it changes</h2>
+
+<p><strong><code>cmd/bd/close.go</code></strong> (+161 / -45 logical lines on top of <code>4e387914a</code>)</p>
+<ul>
+  <li>Description text: appends two lines to <code>closeCmd.Long</code> (lines 24-30 of new content) describing "one --reason for all IDs or repeat --reason once per ID in the same order". This is what the CI doc-freshness check is complaining about.</li>
+  <li>Removes the inline alias-cascade (<code>reason</code>, <code>resolution</code>, <code>message</code>, <code>comment</code>) and the inline <code>--reason-file</code> / <code>done</code>-positional / default-<code>Closed</code> / validation block from the <code>Run</code> body (close.go old lines 40-82). All of it moves into helpers below.</li>
+  <li>New helper layout (close.go:341-413):
+    <ul>
+      <li><code>resolveCloseReasons(cmd, args) ([]reasons, []args, error)</code> — primary entry point.</li>
+      <li><code>collectCloseReasonFlags(cmd) ([]string, error)</code> — pulls accumulated <code>--reason</code> values via a <code>Values() []string</code> interface, then falls back to <code>--resolution</code>, <code>--message</code>, <code>--comment</code> (single-valued, first non-empty wins).</li>
+      <li><code>reasonForCloseIndex(reasons, i) string</code> — returns <code>reasons[0]</code> when shared, <code>reasons[i]</code> per-ID.</li>
+      <li><code>validateCloseReasons(reasons)</code> — runs <code>validation.ValidateCloseReason</code> per reason (was previously single-shot).</li>
+    </ul>
+  </li>
+  <li>New <code>closeReasonFlagValue</code> type (close.go:311-339) implementing <code>pflag.Value</code> with <code>Set</code> appending to a slice and <code>Values()</code> returning a defensive copy. Wired in by <code>registerCloseReasonFlag(closeCmd)</code> at close.go:293.</li>
+  <li><code>resolveReasonFile</code> signature changes from <code>(cmd, existingReason string)</code> to <code>(cmd, hasExistingReason bool)</code> (close.go:547). Cosmetic — the helper only cared whether something was already set.</li>
+  <li>In the per-ID loop (close.go:97-100) a single new line wires per-ID reason: <code>reason := reasonForCloseIndex(reasons, i)</code>. The audit log (close.go:150) and the existing <code>CloseIssue</code> call (close.go:139) pick up this per-ID value transparently.</li>
+  <li>Error message format on count mismatch (close.go:364): <code>"got %d close reasons for %d issue IDs; provide exactly one shared reason or one reason per issue"</code>.</li>
+</ul>
+
+<p><strong><code>cmd/bd/close_embedded_test.go</code></strong> (+16)</p>
+<ul>
+  <li>New subtest <code>close_multiple_ids_with_per_id_reasons</code> (lines 181-196) creates two issues and invokes <code>bdClose(t, bd, dir, id1, "--reason", "fixed A", id2, "--reason", "fixed B")</code>, then asserts each issue ends up with the matching <code>CloseReason</code>. This directly reproduces the #3279 invocation pattern via spawned process (exec.Command), so it exercises real flag parsing, not in-process mocks.</li>
+</ul>
+
+<p><strong><code>cmd/bd/close_reason_file_test.go</code></strong> (+72 / -7)</p>
+<ul>
+  <li>Updates the test helper <code>newCloseLikeCmd</code> to use the new <code>registerCloseReasonFlag</code> (line 21).</li>
+  <li>Mechanically updates the six existing <code>resolveReasonFile(cmd, "...")</code> call sites to <code>resolveReasonFile(cmd, true|false)</code> matching the new boolean parameter.</li>
+  <li>Three new pure-Go tests for <code>resolveCloseReasons</code>:
+    <ul>
+      <li><code>TestCloseResolveReasons_PerIDReasons</code> (lines 173-195): <code>[id-a, --reason, A, id-b, --reason, B]</code> → <code>reasons=[A,B]</code>, <code>args=[id-a,id-b]</code>.</li>
+      <li><code>TestCloseResolveReasons_SharedReasonForMultipleIDs</code> (lines 197-219): <code>[id-a, id-b, --reason, X]</code> → <code>reasons=[X]</code>, <code>args=[id-a,id-b]</code>.</li>
+      <li><code>TestCloseResolveReasons_RejectsMismatchedPerIDReasons</code> (lines 221-237): <code>[id-a, --reason, A, id-b, --reason, B, id-c]</code> → error mentioning "2 close reasons for 3 issue IDs".</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong><code>cmd/bd/ready_embedded_test.go</code></strong> (+26)</p>
+<ul>
+  <li>New <code>ready_includes_open_issue_with_zero_dependencies</code> subtest (lines 31-55) — the #3268 regression guard. Creates a labeled zero-dep issue, runs <code>bd ready --json --label &lt;label&gt;</code>, and asserts the issue appears with <code>dependency_count == 0</code>. As the PR description acknowledges, this codifies current main's behavior; it does not reproduce or fix the original intermittent bug.</li>
+</ul>
+
+<h2>Strengths</h2>
+<ul>
+  <li><strong>Right approach for the bug.</strong> Custom <code>pflag.Value</code> with <code>Set</code> accumulation is the standard idiom in cobra for this exact problem; using it preserves the natural shell ordering and avoids inventing a new flag-pair syntax (e.g. <code>--reason-for id=...</code>) that would have been worse UX.</li>
+  <li><strong>Tests reproduce the actual reported invocation.</strong> The embedded test does <code>bdClose(t, bd, dir, id1, "--reason", "A", id2, "--reason", "B")</code> — a real spawned process exercising real cobra parsing — so a future regression in flag-slice handling would be caught.</li>
+  <li><strong>Backward-compat path for shared reason is preserved.</strong> <code>bd close id1 id2 id3 --reason X</code> still works, and <code>bd close --reason X id1 id2 id3</code> also works (verified by <code>TestCloseResolveReasons_SharedReasonForMultipleIDs</code> and by reading the logic — single-reason short-circuits in <code>reasonForCloseIndex</code>).</li>
+  <li><strong>Aliases preserved as single-valued.</strong> <code>--resolution</code>, <code>--message</code>, <code>--comment</code> keep their existing semantics; the slice behavior is <code>--reason</code>-only. This is the right call: those aliases are hidden agent ergonomics, not the multi-issue path.</li>
+  <li><strong><code>bd done &lt;id&gt; &lt;reason&gt;</code> desire-path preserved.</strong> New code (close.go:355-358) keeps the "last positional is reason" handling for the <code>done</code> alias when no <code>--reason</code> flag was given. Also handles <code>bd done id1 id2 reason</code> correctly (single shared reason).</li>
+  <li><strong><code>--reason-file</code> interaction is sensible.</strong> A file-supplied reason becomes a single shared reason (<code>reasons = []string{fileReason}</code>), which is the only meaningful semantic — file body cannot be split per-ID.</li>
+  <li><strong>Validation runs over every reason.</strong> When <code>validation.on-close=error</code>, each per-ID reason is checked; the loop in <code>validateCloseReasons</code> matches the per-ID semantics.</li>
+  <li><strong>Refactor is a net structural improvement.</strong> Pulling the reason-derivation tangle out of <code>Run</code> into testable helpers makes the close command substantially easier to reason about, even apart from the bug fix.</li>
+  <li><strong>CI is otherwise green.</strong> Differential regression (v0.49.6 baseline), 5 cross-version upgrade smokes (v1.0.0–v1.0.4), all 20 embedded-Dolt shards, macOS, Windows smoke, Nix flake, storage-domain — all pass.</li>
+</ul>
+
+<h2>Concerns</h2>
+<ol>
+  <li><strong>(blocker)</strong> <code>Check doc flags freshness</code> is failing because <code>docs/CLI_REFERENCE.md</code> line ~346 does not include the two new lines added to <code>closeCmd.Long</code> ("When closing multiple issues, provide one --reason for all IDs or repeat --reason once per ID in the same order."). The CI log explicitly says <code>Run: ./scripts/generate-cli-docs.sh ./bd</code>. Fix is one-command-and-commit; must happen before merge or this required gate stays red.</li>
+
+  <li><strong>(minor backward-compat break, not a blocker)</strong> The previous <code>--reason</code> was a normal cobra string with last-wins. <code>bd close id1 --reason X --reason Y</code> used to close <code>id1</code> with reason "Y"; new code returns <code>got 2 close reasons for 1 issue IDs</code> and exits non-zero. Probably no one was doing this intentionally, but a shell-history rerun or an alias that double-supplies <code>--reason</code> will now fail. Two cheap options:
+    <ul>
+      <li>(a) Mention this in the PR description and release notes.</li>
+      <li>(b) Relax: when <code>len(args) == 1</code>, accept any number of <code>--reason</code> flags and use the last (preserving old behavior for the one case that's unambiguous). Suggested edit at close.go:363:
+        <pre><code>if len(reasons) &gt; 1 &amp;&amp; len(args) == 1 {
+    reasons = reasons[len(reasons)-1:]
+}
+if len(reasons) &gt; 1 &amp;&amp; len(reasons) != len(args) { ... }</code></pre>
+      </li>
+    </ul>
+    Either is fine; option (b) is more conservative and costs three lines.
+  </li>
+
+  <li><strong>(nit)</strong> Error message at close.go:364 reads <code>"got 2 close reasons for 3 issue IDs; ..."</code>. When <code>len(args)==1</code> you would see <code>"got 2 close reasons for 1 issue IDs"</code> — the trailing <code>IDs</code> is plural in a singular case. Trivial polish: <code>"got %d close reasons for %d issue ID(s)"</code> or branch on <code>len(args)==1</code>.</li>
+
+  <li><strong>(nit, won't bite this PR but worth noting)</strong> <code>closeReasonFlagValue</code> is registered against the package-global <code>closeCmd</code> via <code>init()</code>. The same <code>*closeReasonFlagValue</code> pointer persists for the life of the process. The CLI runs one-shot per invocation so this is fine, but if anyone starts driving <code>closeCmd.Execute()</code> in-process (the embedded-Dolt tests do not — they spawn subprocesses, confirmed at close_embedded_test.go:24-32), reasons will accumulate across invocations. A <code>Reset()</code> method or a fresh-value-per-Run construction would future-proof it. Suggest adding a one-line <code>cobra.OnInitialize</code>-style reset, or accepting it and adding a <code>// CAUTION: not safe for in-process Execute reuse</code> comment near close.go:311.</li>
+
+  <li><strong>(nit)</strong> Patch coverage 37.87% (Codecov) — 36 missing + 5 partial in close.go. Most of the new error-handling branches are unexercised, particularly the <code>collectCloseReasonFlags</code> <code>cmd.Flags().GetString(name)</code> error arm (which can only fire if the flag was registered with the wrong type, i.e. dead code in practice). The slice-flag <code>Type()</code> and <code>String()</code> methods are also uncovered. Worth a single unit test that walks each alias (<code>--resolution</code>, <code>--message</code>, <code>--comment</code>) and asserts each produces a <code>[]string{value}</code> from <code>collectCloseReasonFlags</code>. Not a blocker; the integration coverage of the happy paths is solid.</li>
+
+  <li><strong>(nit)</strong> <code>Values() []string</code> returns a defensive copy (close.go:335-339) — good. But the duck-typed interface assertion at close.go:371 (<code>if v, ok := flag.Value.(interface{ Values() []string }); ok</code>) means if someone replaces <code>closeReasonFlagValue</code> with another <code>pflag.Value</code> implementation that doesn't expose <code>Values()</code>, the function silently falls through to the alias scan and the multi-reason flag stops working without any warning. A type-asserted access (<code>flag.Value.(*closeReasonFlagValue)</code>) would fail loudly. Style preference; current pattern is more decoupled.</li>
+
+  <li><strong>(nit)</strong> <code>--suggest-next</code> (close.go:74-76) and <code>--continue</code> (close.go:69-71) already enforce single-ID. Worth a sentence in the help text saying "with multiple IDs, per-issue --reason flags must match positional order" or pointing at the <code>Long</code> description — the current <code>--reason</code> help string is just <code>"Reason for closing"</code>, which doesn't hint at the per-ID syntax. Cheap polish, low priority.</li>
+
+  <li><strong>(observation)</strong> The #3268 regression guard (<code>ready_includes_open_issue_with_zero_dependencies</code>) only proves <em>current</em> main produces ready output for a zero-dep issue. The original bug report (slagyr) describes an <em>intermittent</em> failure under <code>status.custom = unverified:wip</code> + <code>workflow.done-status = unverified</code> — neither of which the new test exercises. The author's PR description is honest about this ("current main did not reproduce... this adds a regression guard"), so it is not a misrepresentation. But anyone scanning the PR title may assume #3268 is fixed; the title says only <code>fix(close)</code>, which is accurate. No action needed unless you want to clarify in the merge commit that #3268 remains open.</li>
+
+  <li><strong>(observation)</strong> PR branch is based on <code>4e387914a</code> (2026-05-26). Upstream <code>main</code> has since merged <code>7fc2374ed Merge pull request #3533</code> (dolt mode config), <code>be0aa7072</code> (init server-mode), and <code>a650497ae Merge pull request #4185 from coffeegoddd/db/provider</code> (a 4k-line refactor that deletes a lot of the deprecated <code>cmd/bd/create_proxied_*</code> and <code>internal/storage/domain/db/issue.go</code>). GitHub still reports MERGEABLE, which is consistent — close.go and its tests are untouched by those merges. Still, rebasing onto current <code>main</code> before merge will surface any subtle conflict (e.g. import path changes from #4185).</li>
+</ol>
+
+<h2>Storage-driver-boundary check</h2>
+<p><strong>No violations.</strong> The PR is entirely in <code>cmd/bd/close.go</code> and its tests. All storage interactions (<code>activeStore.CloseIssue</code>, <code>activeStore.GetIssue</code>, <code>activeStore.GetNewlyUnblockedByClose</code>, <code>activeStore.IsBlocked</code>, <code>activeStore.GetDependentsWithMetadata</code>, <code>s.GetIssue</code>, <code>s.CloseIssue</code> in <code>autoCloseCompletedMolecule</code>) go through the existing <code>storage.DoltStorage</code> interface; the diff does not add any new calls, does not introduce flocks, does not reach into engine internals, and does not add SQLite/Dolt-specific retry or crash-recovery. The reason-resolution helpers do not touch storage at all.</p>
+
+<h2>Backwards compatibility &amp; migration</h2>
+<ul>
+  <li><strong>Compatible</strong>:
+    <ul>
+      <li><code>bd close id1</code> (no reason) — unchanged.</li>
+      <li><code>bd close id1 --reason X</code> — unchanged.</li>
+      <li><code>bd close id1 id2 id3 --reason X</code> — unchanged (shared X applies to all).</li>
+      <li><code>bd close --reason X id1 id2 id3</code> — unchanged (shared X applies to all).</li>
+      <li><code>bd close id1 --resolution X</code> / <code>--message X</code> / <code>--comment X</code> — unchanged.</li>
+      <li><code>bd close id1 --reason-file=path</code> — unchanged.</li>
+      <li><code>bd done id1 reason</code> — unchanged (desire-path preserved).</li>
+      <li><code>bd done id1 id2 reason</code> — unchanged (single shared reason).</li>
+    </ul>
+  </li>
+  <li><strong>Newly working (the actual fix)</strong>:
+    <ul>
+      <li><code>bd close id1 --reason A id2 --reason B id3 --reason C</code> — now closes each with its own reason instead of all with "C".</li>
+    </ul>
+  </li>
+  <li><strong>Newly rejected (the minor break, see Concern 2)</strong>:
+    <ul>
+      <li><code>bd close id1 --reason X --reason Y</code> (single ID, repeated flag) — used to take "Y" (cobra last-wins), now errors <code>got 2 close reasons for 1 issue IDs</code>.</li>
+      <li><code>bd close id1 id2 --reason X --reason Y --reason Z</code> (any count mismatch where reasons &gt; 1) — used to take "Z" for both, now errors.</li>
+    </ul>
+  </li>
+  <li><strong>JSON output</strong>: shape unchanged. <code>closedIssues</code> is built per-ID and the JSON envelope (<code>map[string]interface{}{"closed": ..., "unblocked"/"continue"/"claimed": ...}</code>) is identical. Per-ID reasons appear in each issue's stored <code>CloseReason</code> field, which is what users would inspect via <code>bd show --json</code> or in scripts.</li>
+  <li><strong>Audit log</strong>: <code>audit.LogFieldChange(id, "status", oldStatus, "closed", actor, reason)</code> now records the per-ID reason — strictly an improvement.</li>
+  <li><strong>Release-note line suggestion</strong>: "Closing multiple issues with <code>bd close A --reason X B --reason Y</code> now records each reason against its issue. Supplying two or more <code>--reason</code> flags whose count does not match the positional ID count (and is not exactly 1) now exits with a clear error rather than silently using the last value."</li>
+</ul>
+
+<h2>Recommendations</h2>
+<ol>
+  <li><strong>Regenerate the CLI docs and push</strong> before merge:
+    <pre><code>./scripts/generate-cli-docs.sh ./bd
+git add docs/CLI_REFERENCE.md
+git commit -m "docs: regenerate CLI reference for close per-id reasons"
+git push origin codex/mybd-r1cb</code></pre>
+    This is required to clear the failing <code>Check doc flags freshness</code> gate.
+  </li>
+
+  <li><strong>Decide on the single-ID-repeated-<code>--reason</code> case</strong> (Concern 2). Either:
+    <ul>
+      <li>Add a single sentence to the PR description ("Note: <code>bd close id --reason X --reason Y</code> now errors instead of using Y"), or</li>
+      <li>Apply the three-line relaxation suggested in Concern 2.</li>
+    </ul>
+  </li>
+
+  <li><strong>Polish (optional, can be follow-ups):</strong>
+    <ul>
+      <li>Fix the singular/plural in the count-mismatch error message (Concern 3).</li>
+      <li>Add a one-shot unit test for <code>collectCloseReasonFlags</code> covering each alias (Concern 5).</li>
+      <li>Update the <code>--reason</code> flag help string to hint at per-ID semantics (Concern 7).</li>
+    </ul>
+  </li>
+
+  <li><strong>Rebase onto current <code>upstream/main</code></strong> before merge to surface any conflict from the #4185 (<code>db/provider</code>) refactor that landed after this branch diverged. Should be a no-op for close.go but worth verifying locally.</li>
+
+  <li><strong>On merge</strong>: close gastownhall/beads#3279 via the <code>Fixes</code> line in the PR body. Leave #3268 open with a comment noting that the regression guard landed but the original intermittent reproduction is still unconfirmed.</li>
+
+  <li><strong>mybd housekeeping</strong>: <code>mybd-r1cb</code> is already marked CLOSED with external = <code>gh-pr-4194</code>. Once the upstream PR merges, that's consistent — no extra bookkeeping needed.</li>
+</ol>
+
+<p class="sign"><em>claude-opus-4-7-xhigh on behalf of matt wilkie</em></p>
+
+</body>
+</html>

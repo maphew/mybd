@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR #4190 Review — commit federation metadata before sync</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #5a5a5a;
+    --accent: #0b62c4;
+    --bg: #fcfcfc;
+    --code-bg: #f1f3f5;
+    --border: #d8dde3;
+    --good: #1c7a3e;
+    --warn: #a3590a;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    max-width: 880px;
+    margin: 2em auto;
+    padding: 0 1.25em;
+    line-height: 1.55;
+  }
+  h1 { font-size: 1.55em; border-bottom: 2px solid var(--accent); padding-bottom: 0.3em; }
+  h2 { margin-top: 1.8em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+  h3 { margin-top: 1.4em; color: var(--muted); }
+  table { border-collapse: collapse; margin: 0.6em 0 1.4em; }
+  th, td { text-align: left; padding: 0.35em 0.9em 0.35em 0; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  code, pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.92em;
+  }
+  code { background: var(--code-bg); padding: 0.08em 0.35em; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    padding: 0.8em 1em;
+    border-radius: 5px;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre code { background: transparent; padding: 0; }
+  ol li, ul li { margin: 0.35em 0; }
+  blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 1em 0;
+    padding: 0.3em 0 0.3em 0.9em;
+    color: var(--muted);
+  }
+  .verdict {
+    display: inline-block;
+    padding: 0.25em 0.8em;
+    border-radius: 4px;
+    font-weight: 600;
+    background: #e3f4e9;
+    color: var(--good);
+    border: 1px solid #b8e0c3;
+  }
+  .sig {
+    margin-top: 2.4em;
+    padding-top: 0.8em;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-style: italic;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>PR #4190 Review — fix: commit federation metadata before sync</h1>
+
+<table>
+  <tr><th>PR</th><td><a href="https://github.com/gastownhall/beads/pull/4190">gastownhall/beads#4190</a></td></tr>
+  <tr><th>Title</th><td><code>fix: commit federation metadata before sync</code></td></tr>
+  <tr><th>Author</th><td>maphew (matt wilkie)</td></tr>
+  <tr><th>Branch</th><td><code>fix/mybd-o6a-federation</code> -&gt; <code>main</code></td></tr>
+  <tr><th>State</th><td>OPEN, MERGEABLE, no review decision yet</td></tr>
+  <tr><th>Size</th><td>+69 / -1 across 3 files</td></tr>
+  <tr><th>Linked issue</th><td>gastownhall/beads#3852 (reporter: dlwiii)</td></tr>
+  <tr><th>Local bead</th><td>mybd-o6a (P0, v1.0.4 release triage)</td></tr>
+  <tr><th>Reviewer date</th><td>2026-05-27</td></tr>
+</table>
+
+<h2>Verdict</h2>
+
+<p><span class="verdict">ready-to-merge</span> (with one optional follow-up). This is an easy win.</p>
+
+<p>The PR is small, focused, and addresses a real reproducible P0 bug in v1.0.3 / current main. The implementation reuses existing storage-driver primitives (<code>doltAddAndCommit</code>, <code>Commit</code>, <code>isDoltNothingToCommit</code>) and mirrors a well-established pattern already used in <code>PullFrom</code> (GH#2474). It lives entirely inside <code>internal/storage/dolt/</code>, which is the correct side of the storage-driver boundary — no beads-side code is being asked to know anything new about Dolt. A regression test is included. CI is green (codecov is only flagging that the new lines aren't exercised by non-integration runs, which is expected for tests gated by <code>//go:build integration</code>).</p>
+
+<h2>Why it exists</h2>
+
+<p><code>bd federation add-peer</code> writes a row into <code>federation_peers</code> but does not <code>DOLT_COMMIT</code> it. Any subsequent <code>bd federation sync</code> triggers <code>DOLT_FETCH</code> -&gt; <code>DOLT_MERGE</code>, and the merge refuses to proceed with the working set dirty:</p>
+
+<pre><code>merge failed: local changes would be stomped by merge: federation_peers</code></pre>
+
+<p>The reporter (dlwiii) provided a clean reproducer plus a worrying side-effect note: workarounds involving killing the bg <code>dolt sql-server</code> and running <code>dolt gc</code> apparently caused silent loss of two locally-created issues. So the fix is on the P0 path because it removes the user's incentive to hand-roll dangerous workarounds.</p>
+
+<p>The current <code>Sync</code> also did not perform the pre-merge auto-commit that <code>PullFrom</code> (<code>internal/storage/dolt/federation.go:57-66</code>) already does. So even if <code>add-peer</code> had committed cleanly, any other source of working-set churn between add-peer and sync (e.g. concurrent issue writes) would have hit the same wall.</p>
+
+<h2>What it changes</h2>
+
+<ol>
+  <li><strong><code>internal/storage/dolt/credentials.go:308-311</code></strong> — after <code>AddFederationPeer</code> upserts the row and registers the Dolt remote, it now calls <code>s.doltAddAndCommit(ctx, []string{"federation_peers"}, "federation: add peer "+peer.Name)</code>. The commit is scoped to the single table, matching the GH#2455 pattern used by <code>dependencies.go:55,88</code> and <code>issues.go</code> callsites.</li>
+  <li><strong><code>internal/storage/dolt/federation.go:294-303</code></strong> — <code>Sync</code> now does an auto-commit before <code>Fetch</code>, with the same shape as <code>PullFrom</code>:
+<pre><code>if !s.readOnly {
+    if err := s.Commit(ctx, "auto-commit before sync"); err != nil {
+        if !isDoltNothingToCommit(err) {
+            result.Error = fmt.Errorf("failed to commit pending changes before sync: %w", err)
+            return result, result.Error
+        }
+    }
+}</code></pre>
+  </li>
+  <li><strong><code>internal/storage/dolt/federation_test.go:392-441</code></strong> — new <code>TestFederationSyncCommitsPendingPeerMetadataBeforeFetch</code>. Adds a peer, asserts <code>dolt_status</code> is clean (catches the add-peer bug directly), then dirties <code>federation_peers</code> via a raw UPDATE and runs <code>Sync</code> against a nonexistent remote; the sync is expected to fail at fetch, but <code>dolt_status</code> must be clean afterward (catches the missing pre-merge commit on the Sync side). A small helper <code>federationStatusHasTable</code> queries <code>dolt_status</code> by table name.</li>
+</ol>
+
+<h2>Strengths</h2>
+
+<ul>
+  <li><strong>Right side of the storage-driver boundary.</strong> All edits land inside <code>internal/storage/dolt/</code>. Beads-side packages are untouched. This aligns with the storage-driver roadmap captured in the <code>beads-storage-driver-roadmap</code> memory and GH#3617: crash-safety and dirty-working-set handling are the driver's job, and that's where the fix lives.</li>
+  <li><strong>Reuses existing helpers verbatim.</strong> No new commit/staging machinery is invented; the change leans on <code>doltAddAndCommit</code> (<code>store.go:1715-1732</code>) and <code>Commit</code> (<code>store.go:1630-1690</code>). <code>Commit</code> already correctly excludes <code>config</code> to avoid the GH#2455 staging-corruption pattern, so the Sync pre-commit inherits that safety.</li>
+  <li><strong>Mirrors <code>PullFrom</code>'s precedent exactly.</strong> Same <code>readOnly</code> guard, same <code>isDoltNothingToCommit</code> short-circuit, same wrapped error message shape (<code>federation.go:60-66</code> vs new <code>federation.go:294-303</code>). This makes the change trivially auditable.</li>
+  <li><strong>Honors <code>readOnly</code>.</strong> A read-only store will not attempt a commit; behavior degrades gracefully.</li>
+  <li><strong>Targeted commit scope on add-peer.</strong> <code>doltAddAndCommit(ctx, []string{"federation_peers"}, ...)</code> only stages the one table, so it cannot sweep up unrelated dirty work into a "federation: add peer X" commit (GH#2455 hygiene).</li>
+  <li><strong>Regression test is asserting the right property.</strong> Probing <code>dolt_status</code> directly is the cleanest way to detect a dirty working set without relying on the merge error message.</li>
+  <li><strong>Tight diff.</strong> +69/-1, 3 files, one of them tests. Easy to review, easy to revert.</li>
+</ul>
+
+<h2>Concerns</h2>
+
+<ol>
+  <li><strong><code>internal/storage/dolt/federation.go:294-303</code> — Sync's pre-commit is broader than add-peer's.</strong> Add-peer commits only <code>federation_peers</code>, but Sync's pre-commit calls <code>s.Commit(ctx, "auto-commit before sync")</code> which stages every dirty table except <code>config</code>. That matches <code>PullFrom</code>'s existing behavior, but in the worst case it can produce a commit titled <code>auto-commit before sync</code> containing unrelated issue/dependency churn. That's pre-existing behavior in <code>PullFrom</code>, not a regression introduced here, and changing it is out of scope for a P0 fix. Worth a follow-up bead to consider scoping the pre-sync commit to federation/metadata tables only, or producing a richer commit message via <code>CommitPending</code>-style logic.</li>
+  <li><strong><code>internal/storage/dolt/credentials.go:300-306</code> — "remote already exists" string-match is unchanged but brittle.</strong> The PR did not touch this, but since AddFederationPeer's commit now follows the AddRemote call, any future variation in the remote-already-exists error string would cause the new commit to be skipped (we'd return before reaching the new code). Pre-existing risk; flag only as a future-hardening note, not a blocker.</li>
+  <li><strong><code>internal/storage/dolt/federation_test.go:1</code> — test is <code>//go:build integration</code>-gated.</strong> That is correct (it touches a live <code>dolt sql-server</code>), and matches the rest of the file, but it does mean codecov sees 0% patch coverage on the new lines. The Codecov bot comment is therefore noise, not a real signal. CI passing the integration tag remains the gate; the PR description acknowledges the local skip due to no Docker/Dolt. Not blocking.</li>
+  <li><strong><code>internal/storage/dolt/federation_test.go:430-441</code></strong> — the helper <code>federationStatusHasTable</code> swallows test context via <code>t.Helper()</code> but is a free function rather than a method. Fine as-is; consider promoting to a shared test util if more federation tests start querying <code>dolt_status</code>.</li>
+  <li><strong>No CHANGELOG / docs update.</strong> <code>FEDERATION-SETUP.md</code> historically had a "if sync fails with stomped federation_peers, run dolt commit" workaround note (per the reporter). If that note still exists, it should be removed or updated. Worth a quick <code>grep -ri "stomped\|federation_peers" docs/ FEDERATION-SETUP.md</code> follow-up. Not blocking the merge.</li>
+  <li><strong>dlwiii's secondary observation about <code>dolt gc</code> eating issues is not addressed and shouldn't be.</strong> That's a separate issue (gc safety / docs warning) and rightly out of scope here. Filing a follow-up bead is appropriate.</li>
+</ol>
+
+<h2>Recommendations</h2>
+
+<ul>
+  <li><strong>Merge as-is.</strong> Outcome from <code>PR_MAINTAINER_GUIDELINES.md</code>: this is a clean <strong>Merge</strong> (or arguably <strong>Easy win</strong>). It solves the reported bug, follows the established <code>PullFrom</code> precedent, includes a targeted regression test, and is the right shape for the storage-driver-boundary roadmap.</li>
+  <li><strong>File two follow-up beads</strong> (not blocking):
+    <ol>
+      <li>Doc cleanup: scrub <code>FEDERATION-SETUP.md</code> for the obsolete <code>dolt add -A &amp;&amp; dolt commit -m flush</code> workaround, since the fix makes it unnecessary.</li>
+      <li><code>dolt gc</code> safety: a new bead capturing dlwiii's report that running <code>dolt gc</code> against a bd-managed Dolt directory while bd was off appears to have eaten two issues. Whether the resolution is docs, a guard, or a driver-side fix, it shouldn't be lost.</li>
+    </ol>
+  </li>
+  <li><strong>On the PR thread,</strong> confirm CI ran the integration tag (so the new test actually exercised the fix), then ship it. If CI did not run integration, the maintainer-side validation should at minimum run <code>go test -tags=integration ./internal/storage/dolt -run TestFederationSyncCommitsPendingPeerMetadataBeforeFetch -count=1 -v</code> against a local Dolt server before merge — the PR description notes this was skipped locally.</li>
+</ul>
+
+<p class="sig">_claude-opus-4-7-xhigh on behalf of matt wilkie_</p>
+
+</body>
+</html>
