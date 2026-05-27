@@ -18,6 +18,11 @@ In reports, default to both html and md.
 Answer 'why' when opening a PR.
 PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md)
 
+When creating or editing GitHub PR, issue, comment, or review bodies:
+- Write Markdown to a file and use `gh ... --body-file`; do not pass multiline bodies via inline shell strings.
+- Use `#1234` or `owner/repo#1234`, not `GH#1234`, in GitHub-facing text.
+- Run `scripts/gh-body-lint <body-file>` before posting; fix literal `\n` sequences and non-linking issue refs first.
+
 ### Signing
 
 - Sign comments and commits using:

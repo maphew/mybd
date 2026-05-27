@@ -133,6 +133,21 @@ Override the upstream repo with `TRI_UPSTREAM` env var (default
 TRI_UPSTREAM=other/repo scripts/tri-pull
 ```
 
+## GitHub body lint
+
+Before posting PR, issue, comment, or review Markdown through `gh`, write the
+body to a file and lint it:
+
+```bash
+scripts/gh-body-lint body.md
+scripts/gh-body-lint --fix body.md   # rewrites GH#1234 to #1234
+gh pr edit 1234 --repo gastownhall/beads --body-file body.md
+```
+
+The lint guard rejects literal `\n` sequences and `GH#1234` refs, both of
+which render badly or fail to autolink in GitHub posts. `tri-submit` runs this
+guard automatically before posting review notes.
+
 ## tri-review (PR work loop)
 
 ```bash

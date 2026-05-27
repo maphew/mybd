@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# gh-body-lint — guard GitHub PR/comment/review Markdown before posting.
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+
+FIX=0
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fix) FIX=1; shift;;
+    -h|--help)
+      cat <<'USAGE'
+Usage:
+  scripts/gh-body-lint [--fix] <body.md> [body2.md...]
+
+Checks GitHub-facing Markdown bodies for common formatting mistakes:
+  - literal \n sequences that render as text instead of line breaks
+  - GH#1234 refs that do not autolink on GitHub
+
+With --fix, rewrites GH#1234 to #1234 in-place. Literal \n sequences are
+reported but not rewritten because they may appear inside legitimate examples.
+USAGE
+      exit 0
+      ;;
+    -*) tri_die "unknown flag: $1";;
+    *) FILES+=("$1"); shift;;
+  esac
+done
+
+[[ "${#FILES[@]}" -gt 0 ]] || tri_die "usage: gh-body-lint [--fix] <body.md> [body2.md...]"
+
+for file in "${FILES[@]}"; do
+  if [[ "$FIX" == 1 ]]; then
+    tri_normalize_gh_body "$file"
+  fi
+  tri_lint_gh_body "$file"
+done

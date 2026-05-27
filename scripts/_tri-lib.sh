@@ -75,3 +75,29 @@ tri_resolve_bd_id() {
 
 # Print a formatted line of "key: value" diagnostics, padded.
 tri_kv() { printf '  %-22s %s\n' "$1:" "$2"; }
+
+# Lint a Markdown body before posting it to GitHub. This catches the two
+# recurring shell-handoff mistakes that GitHub will render badly.
+tri_lint_gh_body() {
+  local body_file="$1"
+  [[ -f "$body_file" ]] || tri_die "GitHub body file not found: $body_file"
+
+  local failed=0
+  if grep -nF '\n' "$body_file" >&2; then
+    echo "GitHub body contains literal \\n sequences; write real newlines and use --body-file" >&2
+    failed=1
+  fi
+  if grep -nE '(^|[^[:alnum:]_])GH#[0-9]+' "$body_file" >&2; then
+    echo "GitHub body contains GH# refs; use #1234 or owner/repo#1234 for GitHub autolinks" >&2
+    failed=1
+  fi
+  [[ "$failed" == 0 ]] || tri_die "GitHub body lint failed: $body_file"
+}
+
+# Normalize safe GitHub body patterns in-place. This intentionally only changes
+# same-repo shorthand refs; literal \n needs a human/template fix.
+tri_normalize_gh_body() {
+  local body_file="$1"
+  [[ -f "$body_file" ]] || tri_die "GitHub body file not found: $body_file"
+  perl -0pi -e 's/(^|[^[:alnum:]_])GH#([0-9]+)/$1#$2/g' "$body_file"
+}

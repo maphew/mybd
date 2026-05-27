@@ -65,6 +65,7 @@ fi
 
 echo
 echo "Posting review to upstream..."
+tri_lint_gh_body "$NOTE"
 if ! gh pr review "$num" --repo "$TRI_UPSTREAM" --"$VERDICT" --body-file "$NOTE"; then
   tri_die "gh pr review failed — bd issue NOT closed"
 fi
