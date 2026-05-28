@@ -28,6 +28,20 @@ VERIFY_WORKTREE_BASE="${VERIFY_WORKTREE_BASE:-$TRI_PROJECT_ROOT/.worktrees/beads
 VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$VERIFY_WORKTREE_BASE/.verify-logs}"
 VERIFY_KEEP_WORKTREE="${VERIFY_KEEP_WORKTREE:-failed}"
 
+# cgo link fix (mybd-4sw1): the verify command runs under a login shell, whose
+# profile can put linuxbrew gcc ahead of system gcc. That gcc cannot find
+# Fedora's glibc startup objects (Scrt1.o/crti.o), so every cgo test link fails
+# while pure-Go packages pass. Pin CC/CXX to the system toolchain (honored by
+# cgo regardless of PATH). Use single-dash defaults so an explicit empty value
+# (VERIFY_CC=) disables the pin; the pin is skipped when the binary is absent
+# (e.g. macOS), making this a no-op on boxes that don't need it.
+VERIFY_CC="${VERIFY_CC-/usr/bin/gcc}"
+VERIFY_CXX="${VERIFY_CXX-/usr/bin/g++}"
+
+verify_env=()
+[[ -n "$VERIFY_CC" && -x "$VERIFY_CC" ]] && verify_env+=("CC=$VERIFY_CC")
+[[ -n "$VERIFY_CXX" && -x "$VERIFY_CXX" ]] && verify_env+=("CXX=$VERIFY_CXX")
+
 if [[ $# -gt 1 ]]; then
   usage >&2
   exit 2
@@ -104,6 +118,7 @@ finish() {
   echo "  head:      $head_sha"
   echo "  branch:    $branch"
   echo "  command:   $verify_cmd"
+  echo "  compiler:  ${verify_env[*]:-(system default)}"
   echo "  runner:    $runner"
   echo "  started:   $started_at"
   echo "  worktree:  $verify_wt"
@@ -125,9 +140,9 @@ fi
 
 set +e
 if command -v timeout >/dev/null 2>&1; then
-  (cd "$verify_wt" && timeout "$VERIFY_TIMEOUT" bash -lc "$verify_cmd") >>"$log" 2>&1
+  (cd "$verify_wt" && timeout "$VERIFY_TIMEOUT" env ${verify_env[@]+"${verify_env[@]}"} bash -lc "$verify_cmd") >>"$log" 2>&1
 else
-  (cd "$verify_wt" && bash -lc "$verify_cmd") >>"$log" 2>&1
+  (cd "$verify_wt" && env ${verify_env[@]+"${verify_env[@]}"} bash -lc "$verify_cmd") >>"$log" 2>&1
 fi
 exit_code=$?
 set -e
