@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# verify-next - run one queued local verification job.
+#
+# Usage:
+#   scripts/verify-next [bd-id-or-pr-num]
+#
+# Environment:
+#   VERIFY_TIMEOUT=45m
+#   VERIFY_WORKTREE_BASE=/var/home/matt/dev/mybd/.worktrees/beads
+#   VERIFY_LOG_DIR=/var/home/matt/dev/mybd/.worktrees/beads/.verify-logs
+#   VERIFY_KEEP_WORKTREE=failed   # always | failed | never
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd git jq bash
+
+usage() {
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-45m}"
+VERIFY_WORKTREE_BASE="${VERIFY_WORKTREE_BASE:-$TRI_PROJECT_ROOT/.worktrees/beads}"
+VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$VERIFY_WORKTREE_BASE/.verify-logs}"
+VERIFY_KEEP_WORKTREE="${VERIFY_KEEP_WORKTREE:-failed}"
+
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+if [[ $# -eq 1 ]]; then
+  BD_ID="$(tri_resolve_bd_id "$1")"
+else
+  BD_ID="$(
+    bd list --limit 0 --json \
+      | jq -r '[.[] | select((.metadata.verify_state // "") == "queued")]
+               | sort_by((.priority // 99), (.updated_at // ""))
+               | .[0].id // empty'
+  )"
+fi
+
+if [[ -z "$BD_ID" ]]; then
+  echo "No queued verification jobs."
+  exit 0
+fi
+
+issue_json="$(bd show "$BD_ID" --json)"
+state="$(jq -r '.[0].metadata.verify_state // empty' <<<"$issue_json")"
+head_sha="$(jq -r '.[0].metadata.verify_head // empty' <<<"$issue_json")"
+verify_cmd="$(jq -r '.[0].metadata.verify_cmd | if . == null or . == "" then "make test" else tostring end' <<<"$issue_json")"
+branch="$(jq -r '.[0].metadata.verify_branch | if . == null or . == "" then "unknown" else tostring end' <<<"$issue_json")"
+
+[[ "$state" == "queued" ]] || tri_die "$BD_ID verify_state is '$state', not queued"
+[[ -n "$head_sha" ]] || tri_die "$BD_ID has no verify_head metadata"
+[[ -n "$verify_cmd" ]] || verify_cmd="make test"
+
+git -C "$TRI_BD_MAIN" cat-file -e "$head_sha^{commit}" 2>/dev/null \
+  || tri_die "commit $head_sha is not visible from $TRI_BD_MAIN"
+
+mkdir -p "$VERIFY_WORKTREE_BASE" "$VERIFY_LOG_DIR"
+
+short="${head_sha:0:12}"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+runner="$(hostname -s 2>/dev/null || echo unknown):$$"
+verify_wt="$VERIFY_WORKTREE_BASE/verify-$BD_ID-$short-$stamp"
+log="$VERIFY_LOG_DIR/$BD_ID-$short-$stamp.log"
+
+bd update "$BD_ID" \
+  --set-metadata verify_state=running \
+  --set-metadata "verify_started_at=$started_at" \
+  --set-metadata verify_finished_at= \
+  --set-metadata "verify_runner=$runner" \
+  --set-metadata "verify_log=$log" \
+  --set-metadata "verify_result=running" \
+  >/dev/null
+
+tri_log_note "$BD_ID" "verification running: runner=$runner head=$short log=$log"
+
+finish() {
+  local final_state="$1"
+  local result="$2"
+  local finished_at
+  finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  bd update "$BD_ID" \
+    --set-metadata "verify_state=$final_state" \
+    --set-metadata "verify_result=$result" \
+    --set-metadata "verify_finished_at=$finished_at" \
+    --set-metadata "verify_worktree=$verify_wt" \
+    >/dev/null
+
+  tri_log_note "$BD_ID" "verification $final_state: head=$short result=$result log=$log"
+}
+
+{
+  echo "verification job"
+  echo "  bead:      $BD_ID"
+  echo "  head:      $head_sha"
+  echo "  branch:    $branch"
+  echo "  command:   $verify_cmd"
+  echo "  runner:    $runner"
+  echo "  started:   $started_at"
+  echo "  worktree:  $verify_wt"
+  echo
+  echo "creating clean verification worktree..."
+} >"$log"
+
+if ! git -C "$TRI_BD_MAIN" worktree add --detach "$verify_wt" "$head_sha" >>"$log" 2>&1; then
+  finish failed "worktree-add-failed"
+  echo "Verification failed for $BD_ID while creating worktree. Log: $log" >&2
+  exit 1
+fi
+
+{
+  echo
+  echo "running command with timeout $VERIFY_TIMEOUT..."
+  echo
+} >>"$log"
+
+set +e
+if command -v timeout >/dev/null 2>&1; then
+  (cd "$verify_wt" && timeout "$VERIFY_TIMEOUT" bash -lc "$verify_cmd") >>"$log" 2>&1
+else
+  (cd "$verify_wt" && bash -lc "$verify_cmd") >>"$log" 2>&1
+fi
+exit_code=$?
+set -e
+
+{
+  echo
+  echo "command exit code: $exit_code"
+  echo
+  echo "post-run git status:"
+  git -C "$verify_wt" status --short || true
+} >>"$log"
+
+if [[ "$exit_code" -eq 0 ]]; then
+  finish passed "exit=0"
+  case "$VERIFY_KEEP_WORKTREE" in
+    always) ;;
+    failed|never)
+      {
+        echo
+        echo "removing verification worktree after pass..."
+        git -C "$TRI_BD_MAIN" worktree remove --force "$verify_wt"
+      } >>"$log" 2>&1 || true
+      ;;
+    *) tri_die "unknown VERIFY_KEEP_WORKTREE=$VERIFY_KEEP_WORKTREE (expected always, failed, never)" ;;
+  esac
+  echo "Verification passed for $BD_ID. Log: $log"
+  exit 0
+fi
+
+finish failed "exit=$exit_code"
+case "$VERIFY_KEEP_WORKTREE" in
+  always|failed) ;;
+  never)
+    {
+      echo
+      echo "removing verification worktree after failure..."
+      git -C "$TRI_BD_MAIN" worktree remove --force "$verify_wt"
+    } >>"$log" 2>&1 || true
+    ;;
+  *) tri_die "unknown VERIFY_KEEP_WORKTREE=$VERIFY_KEEP_WORKTREE (expected always, failed, never)" ;;
+esac
+
+echo "Verification failed for $BD_ID with exit=$exit_code. Log: $log" >&2
+exit "$exit_code"

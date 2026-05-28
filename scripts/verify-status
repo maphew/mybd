@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# verify-status - show local asynchronous verification queue state.
+#
+# Usage:
+#   scripts/verify-status [--json]
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd jq
+
+json_out=0
+case "${1:-}" in
+  --json) json_out=1; shift ;;
+  -h|--help)
+    sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+esac
+
+[[ $# -eq 0 ]] || tri_die "usage: scripts/verify-status [--json]"
+
+queue_json="$(
+  bd list --limit 0 --json \
+    | jq '[.[] | select((.metadata.verify_state // "") != "")
+           | {
+               id,
+               title,
+               priority,
+               status,
+               updated_at,
+               verify_state: ((.metadata.verify_state // "") | tostring),
+               verify_head: ((.metadata.verify_head // "") | tostring),
+               verify_branch: ((.metadata.verify_branch // "") | tostring),
+               verify_cmd: ((.metadata.verify_cmd // "") | tostring),
+               verify_result: ((.metadata.verify_result // "") | tostring),
+               verify_runner: ((.metadata.verify_runner // "") | tostring),
+               verify_started_at: ((.metadata.verify_started_at // "") | tostring),
+               verify_finished_at: ((.metadata.verify_finished_at // "") | tostring),
+               verify_log: ((.metadata.verify_log // "") | tostring)
+             }]
+          | sort_by(.verify_state, (.priority // 99), (.updated_at // ""))'
+)"
+
+if [[ "$json_out" -eq 1 ]]; then
+  jq . <<<"$queue_json"
+  exit 0
+fi
+
+if [[ "$(jq 'length' <<<"$queue_json")" -eq 0 ]]; then
+  echo "No verification metadata found."
+  exit 0
+fi
+
+printf '%-12s %-9s %-12s %-12s %s\n' "BD-ID" "STATE" "HEAD" "RESULT" "LOG"
+jq -r '.[] | [
+    .id,
+    .verify_state,
+    (.verify_head[0:12] // ""),
+    .verify_result,
+    .verify_log
+  ] | @tsv' <<<"$queue_json" \
+  | while IFS=$'\t' read -r id state head result log; do
+      printf '%-12s %-9s %-12s %-12s %s\n' "$id" "$state" "$head" "$result" "$log"
+    done

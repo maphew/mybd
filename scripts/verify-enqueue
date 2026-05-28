@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# verify-enqueue - record a beads source candidate for asynchronous validation.
+#
+# Usage:
+#   scripts/verify-enqueue <bd-id-or-pr-num> <worktree> [verify command...]
+#
+# The worktree must be clean. Verification runs later from the recorded commit,
+# not from uncommitted local state.
+
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd git jq
+
+usage() {
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+[[ $# -ge 2 ]] || {
+  usage >&2
+  exit 2
+}
+
+BD_ID="$(tri_resolve_bd_id "$1")"
+shift
+
+INPUT_WT="$1"
+shift
+
+VERIFY_CMD="${*:-make test}"
+
+[[ -d "$INPUT_WT" ]] || tri_die "worktree does not exist: $INPUT_WT"
+WT="$(cd "$INPUT_WT" && pwd -P)"
+
+git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || tri_die "not a git worktree: $WT"
+
+WT="$(git -C "$WT" rev-parse --show-toplevel)"
+HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
+BRANCH="$(git -C "$WT" branch --show-current)"
+[[ -n "$BRANCH" ]] || BRANCH="detached"
+
+dirty="$(git -C "$WT" status --porcelain=v1 --untracked-files=normal)"
+if [[ -n "$dirty" ]]; then
+  echo "verify-enqueue: refusing to enqueue a dirty worktree:" >&2
+  git -C "$WT" status --short >&2
+  echo >&2
+  echo "Commit or clean the candidate first; verification runs from HEAD only." >&2
+  exit 1
+fi
+
+git -C "$TRI_BD_MAIN" cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null \
+  || tri_die "commit $HEAD_SHA is not visible from $TRI_BD_MAIN; use a worktree created from bd-main"
+
+stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+bd update "$BD_ID" \
+  --set-metadata verify_state=queued \
+  --set-metadata "verify_head=$HEAD_SHA" \
+  --set-metadata "verify_branch=$BRANCH" \
+  --set-metadata "verify_cmd=$VERIFY_CMD" \
+  --set-metadata "verify_worktree=$WT" \
+  --set-metadata "verify_enqueued_at=$stamp" \
+  --set-metadata verify_started_at= \
+  --set-metadata verify_finished_at= \
+  --set-metadata verify_runner= \
+  --set-metadata verify_result= \
+  --set-metadata verify_log= \
+  >/dev/null
+
+tri_log_note "$BD_ID" "verification queued: head=${HEAD_SHA:0:12} branch=$BRANCH cmd='$VERIFY_CMD'"
+
+echo "Queued verification for $BD_ID"
+tri_kv "head" "$HEAD_SHA"
+tri_kv "branch" "$BRANCH"
+tri_kv "command" "$VERIFY_CMD"
+tri_kv "source worktree" "$WT"

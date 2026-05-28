@@ -84,6 +84,36 @@ git -C bd-main worktree add ../.worktrees/beads/pr-4028-review <branch>
 
 The `mybd/` root should contain only the coordination repo files, the nested `bd-main/` clone, and ignored container directories such as `.worktrees/`.
 
+### Local Verification Queue
+
+Long beads source validation must not block implementation agents unless they
+are actively debugging a failure. Agents working in beads source worktrees
+should use this handoff:
+
+1. Run fast local preflight in the implementation worktree: targeted tests,
+   build, format/lint checks when cheap.
+2. Commit or otherwise freeze the candidate. The worktree must be clean.
+3. Enqueue slow validation instead of waiting on it:
+   ```bash
+   scripts/verify-enqueue <bd-id> /var/home/matt/dev/mybd/.worktrees/beads/<worktree> "make test"
+   ```
+4. Stop blocking on the long suite. The bead is not complete until verification
+   passes for the recorded `verify_head` or a maintainer explicitly overrides
+   the gate.
+
+The verifier runs locally, without GitHub Actions or status polling:
+
+```bash
+scripts/verify-status
+scripts/verify-next          # runs one queued job
+```
+
+`verify-next` creates a clean detached worktree under
+`/var/home/matt/dev/mybd/.worktrees/beads/verify-*`, runs the recorded
+`verify_cmd`, stores logs under `.worktrees/beads/.verify-logs/`, and writes
+`verify_state=passed|failed` plus result metadata back to bd. Keep full-suite
+concurrency low by default; Beads/Dolt tests are process and disk heavy.
+
 ## Quick Reference
 
 ```bash

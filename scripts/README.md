@@ -169,6 +169,50 @@ Effects:
 
 If the review note already exists, it is left untouched — you keep your work.
 
+## verify-* (local asynchronous validation)
+
+The `verify-*` scripts move slow beads source validation out of implementation
+agent sessions while preserving a full local quality gate.
+
+```bash
+scripts/verify-enqueue <bd-id> <worktree> "make test"
+scripts/verify-status
+scripts/verify-next
+```
+
+Workflow:
+
+1. The implementation agent runs fast preflight in its source worktree.
+2. The agent commits or otherwise freezes the candidate; the worktree must be
+   clean.
+3. `verify-enqueue` records the candidate in bd metadata:
+   `verify_state=queued`, `verify_head`, `verify_branch`, `verify_cmd`, and
+   `verify_worktree`.
+4. A verifier shell runs `verify-next`, which creates a clean detached worktree
+   under `.worktrees/beads/verify-*`, runs the recorded command, logs under
+   `.worktrees/beads/.verify-logs/`, and writes `verify_state=passed|failed`.
+
+Defaults:
+
+- `verify_cmd`: `make test`
+- `VERIFY_TIMEOUT`: `45m`
+- `VERIFY_KEEP_WORKTREE`: `failed` (`always`, `failed`, or `never`)
+- `VERIFY_WORKTREE_BASE`: `<project>/.worktrees/beads`
+- `VERIFY_LOG_DIR`: `<project>/.worktrees/beads/.verify-logs`
+
+Run a simple local queue loop from this repo when several agents have queued
+work:
+
+```bash
+while :; do
+  scripts/verify-next || true
+  sleep 30
+done
+```
+
+The verifier intentionally uses local git, local bd metadata, and local logs
+only. It does not call GitHub Actions or poll GitHub status.
+
 ## tri-resume (cross-machine)
 
 ```bash
