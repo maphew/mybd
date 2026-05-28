@@ -23,12 +23,14 @@ PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md
 When creating or editing GitHub PR, issue, comment, or review bodies:
 - Write Markdown to a file and use `gh ... --body-file`; do not pass multiline bodies via inline shell strings.
 - Use `#1234` or `owner/repo#1234`, not `GH#1234`, in GitHub-facing text.
-- Run `scripts/gh-body-lint <body-file>` before posting; fix literal `\n` sequences and non-linking issue refs first.
+- Run `<mybd-root>/scripts/gh-body-lint <body-file>` before posting; fix literal `\n` sequences and non-linking issue refs first.
 
 ### Signing
 
-- Sign comments and commits using:
+- Sign GitHub comments using:
   `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
+- Sign commits with a trailer:
+  `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
 - `{agent_runtime}` is the current agent tool/runtime name, (for example: `amp`, `claude`,`codex`, `kilocode`)
 - `{model}` is the active model name from runtime/session metadata, otherwise `unknown-model`
 - `{reasoning}` is the active reasoning effort from runtime/session metadata, otherwise `unknown-reasoning`
@@ -54,6 +56,7 @@ For Claude Code, read both fields from session metadata, not from the system pro
 proj="$HOME/.claude/projects/$(pwd | sed 's#/#-#g')"
 model=$(jq -r 'select(.message.model) | .message.model' \
   "$proj/$CLAUDE_CODE_SESSION_ID.jsonl" 2>/dev/null | tail -1)
+model=${model#claude-}
 echo "_claude-${model:-unknown-model}-${CLAUDE_EFFORT:-unknown-reasoning} on behalf of $(git config user.name)_"
 ```
 
@@ -61,14 +64,14 @@ The model string carries the `claude-` family prefix (e.g. `claude-opus-4-7`); s
 
 ## Repository Layout
 
-The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. The beads working clone is nested at `bd-main/` (gitignored):
+The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. In these instructions, `<mybd-root>` means the root of this coordination repo, wherever it is cloned on the current machine. The beads working clone is nested at `bd-main/` (gitignored):
 
 | Path | `origin` | `upstream` | Purpose |
 |------|----------|------------|---------|
 | `~/dev/mybd/` | `maphew/mybd` | — | Coordination: beads issues, notes, agent config |
 | `~/dev/mybd/bd-main/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads source — code edits, builds, PRs happen here |
 
-In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo. See [CLAUDE.md](CLAUDE.md) for the full layout and PR hygiene rules.
+In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo.
 
 ### Worktree Location
 
@@ -76,7 +79,7 @@ Use git worktrees by default, but do not create sibling review/source worktrees 
 
 For Beads source worktrees, create them under the tracked ignored directory:
 
-`/var/home/matt/dev/mybd/.worktrees/beads/<short-purpose>`
+`<mybd-root>/.worktrees/beads/<short-purpose>`
 
 Example:
 
@@ -97,7 +100,7 @@ should use this handoff:
 2. Commit or otherwise freeze the candidate. The worktree must be clean.
 3. Enqueue slow validation instead of waiting on it:
    ```bash
-   scripts/verify-enqueue <bd-id> /var/home/matt/dev/mybd/.worktrees/beads/<worktree> "make test"
+   <mybd-root>/scripts/verify-enqueue <bd-id> <mybd-root>/.worktrees/beads/<worktree> "make test"
    ```
 4. Stop blocking on the long suite. The bead is not complete until verification
    passes for the recorded `verify_head` or a maintainer explicitly overrides
@@ -111,7 +114,7 @@ scripts/verify-next          # runs one queued job
 ```
 
 `verify-next` creates a clean detached worktree under
-`/var/home/matt/dev/mybd/.worktrees/beads/verify-*`, runs the recorded
+`<mybd-root>/.worktrees/beads/verify-*`, runs the recorded
 `verify_cmd`, stores logs under `.worktrees/beads/.verify-logs/`, and writes
 `verify_state=passed|failed` plus result metadata back to bd. Keep full-suite
 concurrency low by default; Beads/Dolt tests are process and disk heavy.
