@@ -63,3 +63,4 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 - File follow-up work as beads issues instead of hidden notes.
 - When code changes result from PR maintenance, follow repo quality gates and session completion rules in `AGENTS.md`.
 - Post multi-line PR comments from a real Markdown body file or a shell heredoc, not from strings with escaped `\n` sequences. After posting or editing, verify the rendered body with `gh pr view --comments --json comments --jq ...` before moving on.
+- Before finishing, re-read the PR, latest comments, review threads, and linked issues; address or explicitly note any unresolved action items.
