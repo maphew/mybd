@@ -22,7 +22,7 @@ Recommendation: do not try to drain the backlog before release. Land a focused b
 
 ## Minimal Land-First Batch
 
-These are the PRs I would land before the release unless a final maintainer review finds a concrete defect.
+These are the PRs I would land before the release unless a final maintainer review finds a concrete defect. When a maintainer rebase/cherry-pick exists for contributor work, treat the contributor PR as the preferred merge path and the maintainer PR as a fallback integration vehicle only.
 
 | PR | Why before release |
 |---|---|
@@ -32,10 +32,10 @@ These are the PRs I would land before the release unless a final maintainer revi
 | [#4027](https://github.com/gastownhall/beads/pull/4027) | Migrates large content columns to LONGTEXT; release-facing data capacity fix; green CI. |
 | [#3682](https://github.com/gastownhall/beads/pull/3682) | Widens event and wisp event value columns to LONGTEXT; pairs well with #4027; green CI. |
 | [#3994](https://github.com/gastownhall/beads/pull/3994) | JSONL import skips metadata/header lines; direct import correctness fix; green CI. |
-| [#4097](https://github.com/gastownhall/beads/pull/4097) | Stops repeated auto-import of unchanged JSONL; maintainer cherry-pick from #4085; green CI. |
-| [#4198](https://github.com/gastownhall/beads/pull/4198) | Rebased/tested #4112: `bd create --defer <future>` correctly creates deferred issues; green CI. |
-| [#4199](https://github.com/gastownhall/beads/pull/4199) | Rebased/tested #4113: re-closing an already-closed issue is idempotent; green CI. |
-| [#4200](https://github.com/gastownhall/beads/pull/4200) | Rebased/tested #4115: MCP validate/detect-pollution routes to `bd doctor`; green CI. |
+| [#4085](https://github.com/gastownhall/beads/pull/4085), fallback [#4097](https://github.com/gastownhall/beads/pull/4097) | Stops repeated auto-import of unchanged JSONL. Prefer repairing/landing the contributor PR; use the maintainer cherry-pick only if in-place repair is not practical. |
+| [#4112](https://github.com/gastownhall/beads/pull/4112), fallback [#4198](https://github.com/gastownhall/beads/pull/4198) | `bd create --defer <future>` correctly creates deferred issues. Prefer the contributor PR; fallback rebase preserves the original commit and adds tests. |
+| [#4113](https://github.com/gastownhall/beads/pull/4113), fallback [#4199](https://github.com/gastownhall/beads/pull/4199) | Re-closing an already-closed issue is idempotent. Prefer the contributor PR; fallback rebase preserves the original commit and adds tests. |
+| [#4115](https://github.com/gastownhall/beads/pull/4115), fallback [#4200](https://github.com/gastownhall/beads/pull/4200) | MCP validate/detect-pollution routes to `bd doctor`. Prefer the contributor PR; fallback rebase preserves the original commit and adds tests. |
 | [#4201](https://github.com/gastownhall/beads/pull/4201) | Hardens setup symlink follow-up handling; green CI. |
 | [#4172](https://github.com/gastownhall/beads/pull/4172) | Bounds `bd prime` and hook waits; avoids hangs in agent workflows; green CI. |
 | [#4046](https://github.com/gastownhall/beads/pull/4046) | Widens audit `newID` entropy; low-risk correctness/safety fix; green CI. |
@@ -55,27 +55,32 @@ These are clean and useful, but I would land them after the minimal batch only i
 | [#4186](https://github.com/gastownhall/beads/pull/4186) | Propagates dependent/comment iterator errors in `bd show`. |
 | [#4163](https://github.com/gastownhall/beads/pull/4163) | Improves cross-table duplicate handling and CGO-free duplicate checks. |
 | [#4077](https://github.com/gastownhall/beads/pull/4077) | Replaces undirected sibling checks with directed ancestor queries. |
-| [#4096](https://github.com/gastownhall/beads/pull/4096) | Maintainer cherry-pick from #4066 for graph import parent/estimate/external_ref/deps. |
-| [#4095](https://github.com/gastownhall/beads/pull/4095) | Maintainer cherry-pick from #4065 for FIFO ordering within same ready priority tier. |
+| [#4066](https://github.com/gastownhall/beads/pull/4066), fallback [#4096](https://github.com/gastownhall/beads/pull/4096) | Graph import parent/estimate/external_ref/deps fix. Prefer the contributor PR; maintainer cherry-pick is a fallback. |
+| [#4065](https://github.com/gastownhall/beads/pull/4065), fallback [#4095](https://github.com/gastownhall/beads/pull/4095) | FIFO ordering within same ready priority tier. Prefer the contributor PR; maintainer cherry-pick is a fallback. |
 | [#3813](https://github.com/gastownhall/beads/pull/3813) | Fixes partial ID resolution for wisps on PostgreSQL path. |
 | [#3710](https://github.com/gastownhall/beads/pull/3710) | Removes a 12s Dolt slow path when `.local_version` is stale. |
-| [#4158](https://github.com/gastownhall/beads/pull/4158) | Clean test fix from #4114 for list output truncation when stdout is piped. |
+| [#4114](https://github.com/gastownhall/beads/pull/4114), fallback [#4158](https://github.com/gastownhall/beads/pull/4158) | List output truncation when stdout is piped. Prefer the contributor PR; maintainer test-fix branch is a fallback. |
 | [#4161](https://github.com/gastownhall/beads/pull/4161) | Documents schema-version guard behavior in README/CHANGELOG. |
 | [#4213](https://github.com/gastownhall/beads/pull/4213) | Makes the domain/fs test suite hermetic from linked worktrees. |
 
-## Superseded PR Handling
+## Attribution-First Integration
 
-Do not merge both original and rebased/cherry-picked variants.
+Do not let maintainer branches replace contributor PRs by default. For each original/fallback pair:
 
-| Merge this | Then close or supersede |
+1. Try to land the contributor PR directly if it is correct and green enough for the release.
+2. If it needs small fixes and maintainer edits are allowed, push the fix commits to the contributor branch.
+3. If the branch cannot be edited or repaired without unreasonable risk, merge the maintainer fallback only when it preserves the contributor commits or includes explicit co-author attribution and PR references.
+4. When closing the other PR, explain exactly which commits, tests, design, or bug report were preserved and link the merged PR.
+
+| Contributor PR | Maintainer fallback |
 |---|---|
-| [#4198](https://github.com/gastownhall/beads/pull/4198) | [#4112](https://github.com/gastownhall/beads/pull/4112) |
-| [#4199](https://github.com/gastownhall/beads/pull/4199) | [#4113](https://github.com/gastownhall/beads/pull/4113) |
-| [#4200](https://github.com/gastownhall/beads/pull/4200) | [#4115](https://github.com/gastownhall/beads/pull/4115) |
-| [#4097](https://github.com/gastownhall/beads/pull/4097) | [#4085](https://github.com/gastownhall/beads/pull/4085) |
-| [#4096](https://github.com/gastownhall/beads/pull/4096) | [#4066](https://github.com/gastownhall/beads/pull/4066) |
-| [#4095](https://github.com/gastownhall/beads/pull/4095) | [#4065](https://github.com/gastownhall/beads/pull/4065) |
-| [#4158](https://github.com/gastownhall/beads/pull/4158) | [#4114](https://github.com/gastownhall/beads/pull/4114) |
+| [#4112](https://github.com/gastownhall/beads/pull/4112) | [#4198](https://github.com/gastownhall/beads/pull/4198) |
+| [#4113](https://github.com/gastownhall/beads/pull/4113) | [#4199](https://github.com/gastownhall/beads/pull/4199) |
+| [#4115](https://github.com/gastownhall/beads/pull/4115) | [#4200](https://github.com/gastownhall/beads/pull/4200) |
+| [#4085](https://github.com/gastownhall/beads/pull/4085) | [#4097](https://github.com/gastownhall/beads/pull/4097) |
+| [#4066](https://github.com/gastownhall/beads/pull/4066) | [#4096](https://github.com/gastownhall/beads/pull/4096) |
+| [#4065](https://github.com/gastownhall/beads/pull/4065) | [#4095](https://github.com/gastownhall/beads/pull/4095) |
+| [#4114](https://github.com/gastownhall/beads/pull/4114) | [#4158](https://github.com/gastownhall/beads/pull/4158) |
 
 ## Do Not Block Release
 
@@ -93,5 +98,5 @@ I would not hold the release for these groups:
 1. Merge the minimal land-first batch.
 2. Let main CI complete once after the batch, because several PRs touch schema/migration and storage paths.
 3. Optionally merge the good second batch and run another main CI cycle.
-4. Close or comment on superseded originals with attribution-preserving explanations.
+4. Resolve original/fallback PR pairs with the attribution-first integration rule above.
 5. Cut the release from the green main branch.
