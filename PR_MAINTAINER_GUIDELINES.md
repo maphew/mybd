@@ -10,6 +10,11 @@ For every PR, look for the value in it and choose the action that moves useful w
 
 The goal is not to block contributors unnecessarily. The goal is to identify useful work, preserve it, and keep the project moving.
 
+For upstream beads PRs that change product surface area, read
+[bd-main/docs/PROJECT_CHARTER.md](bd-main/docs/PROJECT_CHARTER.md). Scope
+boundaries should guide where value lands: core, metadata, integration, plugin,
+orchestration layer, or external tool.
+
 ## Contributor Protection
 
 External contributor PRs have priority. Before implementing related work, opening a competing PR, or closing a PR, check whether an existing contributor PR already addresses the same area.
