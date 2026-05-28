@@ -11,6 +11,8 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 When working on beads, spawn agents according to their metadata hints.
 The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
 
+When a bead is correlated with a gh issue or PR, check for drift.
+
 Assume you are not working alone.
 Use git worktrees by default.
 In reports, default to both html and md.
