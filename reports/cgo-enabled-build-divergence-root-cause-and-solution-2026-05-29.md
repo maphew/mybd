@@ -252,7 +252,8 @@ layers, not a smoke test.
 release binaries and source builds, but the *durable* home for the swap is a
 build-tagged seam inside Dolt. Hence the dual track: fork-carry now for releases,
 plus the upstream proposal at
-`proposals/upstream-dolt-pure-go-zstd-seam-2026-05-29.md`. The gap to production is (a) **compression ratio** — use klauspost
+`proposals/upstream-dolt-pure-go-zstd-seam-2026-05-29.md` (posted as
+gastownhall/beads#4249). The gap to production is (a) **compression ratio** — use klauspost
 trained dictionaries / better raw-dict content / level tuning to match libzstd,
 and relax the ratio-pinned test fixtures — and (b) **legacy-archive decode** —
 verify a klauspost reader decodes an archive written by the real C-ZDICT build

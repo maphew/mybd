@@ -26,7 +26,7 @@
 </head>
 <body>
 <h1>Proposal: a build-tagged zstd seam so embedded Dolt can build without cgo (pure-Go bd is proven)</h1>
-<blockquote>Draft issue body for <strong>gastownhall/beads</strong>, for @coffeegoddd (storage owner). Status: DRAFT — not yet posted. Run <code>scripts/gh-body-lint</code> before posting.</blockquote>
+<blockquote><strong>Posted as gastownhall/beads#4249</strong> (2026-05-29), framed for @coffeegoddd (storage owner). This file is the source; the live issue is canonical.</blockquote>
 <h2>Summary</h2>
 <p>Beads&#x27; entire cgo maintenance burden traces to a <strong>single</strong> transitive dependency: <code>github.com/dolthub/gozstd</code> (a cgo wrapper over libzstd), imported by exactly one package, <code>github.com/dolthub/dolt/go/store/nbs</code>. Once <code>-tags=gms_pure_go</code> removes the other C dependency (<code>go-icu-regex</code>), <code>gozstd</code> is the <strong>only</strong> cgo dependency left in a full <code>bd</code> binary.</p>
 <p>That one dep forces the <code>//go:build cgo</code> / <code>!cgo</code> split that ripples through beads — embedded-storage stubs, the gated <code>federation</code> command, ~100 cgo-only test files, nondeterministic doc generation (#4203), the pre-commit typecheck trap (#3402), and a split release matrix where android/Termux ships without embedded mode (#3538).</p>

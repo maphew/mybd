@@ -1,7 +1,7 @@
 # Proposal: a build-tagged zstd seam so embedded Dolt can build without cgo (pure-Go bd is proven)
 
-> Draft issue body for **gastownhall/beads**, for @coffeegoddd (storage owner).
-> Status: DRAFT — not yet posted. Run `scripts/gh-body-lint` before posting.
+> **Posted as gastownhall/beads#4249** (2026-05-29), framed for @coffeegoddd
+> (storage owner). This file is the source; the live issue is canonical.
 
 ## Summary
 
