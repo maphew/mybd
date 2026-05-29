@@ -56,7 +56,7 @@ no-db: true
 
 sync.remote: "git+https://github.com/maphew/mybd.git"
 
-no-git-ops: true
+no-git-ops: false
 
 export.auto: false
 
