@@ -245,7 +245,11 @@ links static, and runs embedded Dolt at `CGO_ENABLED=0` with no upstream change.
 The new-write path is proven; the full test tree compiles at CGO=0 and **both**
 the `internal/storage/embeddeddolt` (59s) **and the `cmd/bd` CLI-layer embedded
 (239s) suites pass** — comprehensive validation across the storage and CLI
-layers, not a smoke test.
+layers, not a smoke test. **Legacy decode is verified too:** pure-Go klauspost
+decodes frames the cgo libzstd build compressed with `ZDICT`-trained dictionaries
+(round-trip match), so existing databases stay readable after the switch — no
+read-path rewrite needed (the shim's `NewDDict` loads trained dicts via
+`WithDecoderDicts`).
 
 **Carry caveat (found in preflight):** the fork-side mechanism is a `go.mod`
 `replace`, which **breaks `go install …@latest`** (#3338, #3312) — fine for
