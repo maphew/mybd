@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal: a build-tagged zstd seam so embedded Dolt can build without cgo (pure-Go bd is proven)</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Proposal: a build-tagged zstd seam so embedded Dolt can build without cgo (pure-Go bd is proven)</h1>
+<blockquote>Draft issue body for <strong>gastownhall/beads</strong>, for @coffeegoddd (storage owner). Status: DRAFT — not yet posted. Run <code>scripts/gh-body-lint</code> before posting.</blockquote>
+<h2>Summary</h2>
+<p>Beads&#x27; entire cgo maintenance burden traces to a <strong>single</strong> transitive dependency: <code>github.com/dolthub/gozstd</code> (a cgo wrapper over libzstd), imported by exactly one package, <code>github.com/dolthub/dolt/go/store/nbs</code>. Once <code>-tags=gms_pure_go</code> removes the other C dependency (<code>go-icu-regex</code>), <code>gozstd</code> is the <strong>only</strong> cgo dependency left in a full <code>bd</code> binary.</p>
+<p>That one dep forces the <code>//go:build cgo</code> / <code>!cgo</code> split that ripples through beads — embedded-storage stubs, the gated <code>federation</code> command, ~100 cgo-only test files, nondeterministic doc generation (#4203), the pre-commit typecheck trap (#3402), and a split release matrix where android/Termux ships without embedded mode (#3538).</p>
+<p><strong>I built a pure-Go <code>bd</code> and it works.</strong> Replacing <code>gozstd</code> with a ~120-line shim over <code>github.com/klauspost/compress/zstd</code> (already an indirect dep) and decoupling beads&#x27; code from the <code>cgo</code> build tag yields a statically-linked, cgo-free <code>bd</code> that builds and <strong>runs embedded Dolt</strong> end to end.</p>
+<p>This issue asks whether Dolt would accept a <strong>build-tagged seam</strong> in <code>store/nbs</code> so this can be done cleanly upstream — defaulting to cgo/gozstd so prebuilt binaries and big-data Dolt users are completely unaffected.</p>
+<h2>Evidence (reproducible)</h2>
+<p>In a worktree, <code>replace github.com/dolthub/gozstd =&gt; ./gozstd-shim</code> (klauspost backend) plus flipping beads&#x27; <code>//go:build cgo/!cgo</code> tags to a CGO-independent <code>nocgo</code> tag (reproducing today&#x27;s CGO=1 file set), then at <code>CGO_ENABLED=0 -tags gms_pure_go</code>:</p>
+<ul><li><code>go build ./cmd/bd</code> → <strong>exit 0</strong>; <code>file bd</code> → <strong>statically linked</strong>, <code>ldd</code> → <em>not a dynamic executable</em> (no libzstd / ICU / libc).</li><li><code>bd init</code> → <code>Backend: dolt, Mode: embedded</code>; <code>bd create</code> / <code>bd list</code> round-trip issues. <strong>Embedded Dolt runs pure-Go.</strong></li><li><code>bd federation --help</code> → full subcommand tree at CGO=0.</li><li><strong>All test packages compile</strong>, and the <strong><code>internal/storage/embeddeddolt</code> suite passes</strong> (create/query/deps/transactions/schema/version-control/federation).</li><li>The only <code>store/nbs</code> test regressions are <strong>two compression-ratio fixtures</strong> (a hand-tuned <code>FixedBufferByteSink</code> size; a <code>±byte</code> window assertion at <code>archive_test.go:1176</code>) — klauspost lands within single-digit bytes of libzstd. Not format or correctness.</li></ul>
+<p><code>gozstd</code>&#x27;s surface here is small and stable: <strong>9 symbols</strong> (<code>Compress</code>, <code>Decompress</code>, <code>CompressDict</code>, <code>DecompressDict</code>, <code>BuildDict</code>, <code>NewCDict</code>, <code>NewDDict</code>, <code>CDict</code>/<code>DDict</code>), all in <code>store/nbs/archive_*.go</code>, with no streaming. Normal chunk writes already use snappy (pure-Go); <code>gozstd</code> only engages on the archive/GC path.</p>
+<h2>The ask: a build-tagged seam in <code>store/nbs</code></h2>
+<p>Route the 9 <code>gozstd</code> calls through a tiny interface with two implementations selected by build tag — <code>//go:build cgo</code> → gozstd (default, unchanged), a pure-Go tag → klauspost. This mirrors two precedents already in the tree: the <code>gms_pure_go</code> tag for go-mysql-server regex, and DoltHub&#x27;s wazero/WebAssembly approach for ICU. Prebuilt release binaries keep libzstd; only opt-in pure-Go builds change.</p>
+<p>Why the seam belongs upstream rather than a beads-side <code>replace</code>: a <code>replace</code> directive in beads&#x27; <code>go.mod</code> <strong>breaks <code>go install …@latest</code></strong> (#3338, #3312). A build-tagged seam inside Dolt needs no replace, so <code>go install</code> keeps working.</p>
+<h2>Questions for @coffeegoddd</h2>
+<ol><li>Would you accept a build-tagged seam in <code>store/nbs</code> routing the ~9 gozstd calls through an interface, with a klauspost backend under a pure-Go tag, defaulting to gozstd so prebuilt binaries are unchanged?</li><li><strong>Dictionary format (the load-bearing risk):</strong> the archive format stores <code>ZDICT_trainFromBuffer</code> dictionaries. Have you tested whether klauspost can decode dictionary-compressed frames produced by libzstd with those trained dicts — i.e., is on-disk archive interop expected to hold, or would a pure-Go reader need raw/content-only dicts?</li><li><code>DecompBundle</code> already retains <code>rawDictionary []byte</code>. Is there a correctness reason the archive path needs libzstd&#x27;s <em>trained</em> entropy tables, or would content-only (raw) dicts — which klauspost supports on both encode and decode — be acceptable, accepting some compression-ratio loss?</li><li>What compression-ratio / GC-throughput regression would be disqualifying for an opt-in pure-Go backend? Any archive-format benchmarks we could run against?</li><li>Roadmap: is shrinking the cgo surface (toward a single <code>CGO_ENABLED=0</code> build, which would also collapse the cross-platform release matrix to plain <code>GOOS/GOARCH</code>) something Dolt wants long-term, or is cgo-zstd a permanent performance decision beads should design <em>around</em> (carry the seam in a fork)?</li></ol>
+<h2>What beads gets</h2>
+<p>A single pure-Go <code>CGO_ENABLED=0</code> build erases the <code>cgo/!cgo</code> split entirely: embedded + federation always present (no doc drift, #4203), the ~100 cgo-only test files always run, no pre-commit typecheck trap (#3402), embedded mode on android/Termux (#3538), and the release pipeline collapses to plain cross-builds (no zig sysroots, mingw/clang cross-toolchains, or <code>verify-cgo</code> hooks).</p>
+<hr>
+<p class="sig"><em>Drafted by <em>claude-opus-4-8-max on behalf of maphew</em>. Full analysis + repro: mybd <code>reports/cgo-enabled-build-divergence-root-cause-and-solution-2026-05-29</code>, experiment branch <code>experiment/cgo-purego-shim</code>.</em></p>
+</body>
+</html>
