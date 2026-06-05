@@ -2,6 +2,5 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "embedded",
-  "dolt_database": "mybd",
-  "last_bd_version": "1.0.4"
+  "dolt_database": "beads"
 }
