@@ -16,6 +16,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/_tri-lib.sh"
+tri_experiment_guard
+
 PULL_CMD=("${TRI_PULL_CMD:-$SCRIPT_DIR/tri-pull}")
 SYNC_CMD=("${TRI_SYNC_CMD:-$SCRIPT_DIR/tri-sync}")
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
@@ -93,4 +96,3 @@ if [[ "$pull_created" -gt 0 || "$sync_closed" -gt 0 ]]; then
     printf '%s\n' "$summary"
   fi
 fi
-

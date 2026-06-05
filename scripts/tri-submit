@@ -14,6 +14,7 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
+tri_experiment_guard
 tri_require bd gh jq git
 
 INPUT=""

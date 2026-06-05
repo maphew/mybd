@@ -10,6 +10,9 @@ scratch/cleanroom/
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
 .beads/backup/
+.beads/embeddeddolt/
+.beads/interactions.jsonl
+.beads/last-touched
 
 # Git worktrees managed outside the repo
 .worktrees/
@@ -24,3 +27,9 @@ tmp/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# bt (beadstui) local config and caches
+.bt/
+
+# Kilo local runtime files and dependencies
+.kilo/

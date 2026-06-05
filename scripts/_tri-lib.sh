@@ -11,6 +11,17 @@ TRI_REVIEWS_DIR="${TRI_REVIEWS_DIR:-$TRI_PROJECT_ROOT/_working_on/pr-reviews}"
 
 tri_die() { echo "${0##*/}: $*" >&2; exit 1; }
 
+tri_experiment_guard() {
+  if [[ "${MYBD_ENABLE_TRIAGE:-}" == "1" ]]; then
+    return 0
+  fi
+  cat >&2 <<'EOF'
+The local triage tooling experiment is disabled.
+Set MYBD_ENABLE_TRIAGE=1 to run this legacy script explicitly.
+EOF
+  exit 2
+}
+
 tri_require() {
   for cmd in "$@"; do
     command -v "$cmd" >/dev/null || tri_die "$cmd not on PATH"
