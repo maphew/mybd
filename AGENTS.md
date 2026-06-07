@@ -8,6 +8,11 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 "gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
 
+If `bd list` unexpectedly appears empty in this coordination repo, do not
+restore `.beads` blindly. Run `scripts/check-beads-config`; the live local
+database is `.beads/embeddeddolt/beads`, and stale config can point `bd` at the
+empty legacy `mybd` database.
+
 When working on beads, spawn agents according to their metadata hints.
 The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
 

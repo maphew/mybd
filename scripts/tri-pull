@@ -20,6 +20,7 @@ set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
 tri_experiment_guard
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UPSTREAM="${TRI_UPSTREAM:-gastownhall/beads}"
 LIMIT=100
 DO_ISSUES=1
@@ -41,6 +42,7 @@ done
 command -v bd >/dev/null || { echo "tri-pull: bd not on PATH" >&2; exit 127; }
 command -v gh >/dev/null || { echo "tri-pull: gh not on PATH" >&2; exit 127; }
 command -v jq >/dev/null || { echo "tri-pull: jq not on PATH" >&2; exit 127; }
+"$SCRIPT_DIR/check-beads-config" --quiet
 
 issues_json="$(mktemp)"
 prs_json="$(mktemp)"
