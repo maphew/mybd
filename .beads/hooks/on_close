@@ -2,4 +2,5 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+"$ROOT/scripts/check-beads-config" --quiet
 "$ROOT/scripts/tri-label-upstream"

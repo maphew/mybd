@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# check-beads-config - fail fast if bd is pointed at the wrong local DB.
+
+set -euo pipefail
+
+QUIET=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=1; shift;;
+    -h|--help)
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "check-beads-config: unknown arg: $1" >&2; exit 2;;
+  esac
+done
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+BEADS_DIR="$ROOT/.beads"
+CONFIG="$BEADS_DIR/config.yaml"
+METADATA="$BEADS_DIR/metadata.json"
+EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-beads}"
+
+die() { echo "check-beads-config: $*" >&2; exit 1; }
+say() { [[ "$QUIET" == 1 ]] || printf '%s\n' "$*"; }
+
+command -v jq >/dev/null || die "jq not on PATH"
+command -v dolt >/dev/null || die "dolt not on PATH"
+[[ -f "$CONFIG" ]] || die "missing $CONFIG"
+[[ -f "$METADATA" ]] || die "missing $METADATA"
+
+metadata_backend="$(jq -r '.backend // empty' "$METADATA")"
+metadata_database="$(jq -r '.database // empty' "$METADATA")"
+active_db="$(jq -r '.dolt_database // empty' "$METADATA")"
+
+count_issues() {
+  local db_name="$1"
+  local db_dir="$BEADS_DIR/embeddeddolt/$db_name"
+  [[ -d "$db_dir/.dolt" ]] || return 1
+  (
+    cd "$db_dir"
+    dolt sql -r json -q 'select count(*) as n from issues' 2>/dev/null \
+      | jq -r '.rows[0].n // empty'
+  )
+}
+
+failures=0
+report_failure() {
+  failures=$((failures + 1))
+  echo "check-beads-config: $*" >&2
+}
+
+if [[ "$metadata_backend" != "dolt" || "$metadata_database" != "dolt" ]]; then
+  report_failure "metadata backend/database should both be dolt, got backend=$metadata_backend database=$metadata_database"
+fi
+
+if [[ "$active_db" != "$EXPECTED_DB" ]]; then
+  report_failure "metadata points at dolt_database=$active_db; expected $EXPECTED_DB"
+fi
+
+if grep -Eq '^[[:space:]]*no-db:[[:space:]]*true([[:space:]]*(#.*)?)?$' "$CONFIG"; then
+  report_failure "config enables no-db:true; mybd must use the embedded Dolt database"
+fi
+
+expected_count="$(count_issues "$EXPECTED_DB" || true)"
+active_count=""
+if [[ -n "$active_db" ]]; then
+  active_count="$(count_issues "$active_db" || true)"
+fi
+
+if [[ -z "$expected_count" ]]; then
+  report_failure "expected database $EXPECTED_DB is missing or unreadable under .beads/embeddeddolt"
+elif [[ "$expected_count" == "0" ]]; then
+  report_failure "expected database $EXPECTED_DB has zero issues"
+fi
+
+if [[ -n "$active_db" && "$active_db" != "$EXPECTED_DB" && -n "$active_count" && "$active_count" == "0" && -n "$expected_count" && "$expected_count" != "0" ]]; then
+  report_failure "active database $active_db is empty while $EXPECTED_DB has $expected_count issues"
+fi
+
+if [[ "$failures" -gt 0 ]]; then
+  echo "check-beads-config: remedy: keep .beads/metadata.json dolt_database=$EXPECTED_DB and do not restore stale no-db:true config" >&2
+  exit 1
+fi
+
+say "beads config ok: active database $EXPECTED_DB ($expected_count issues)"

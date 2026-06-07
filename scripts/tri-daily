@@ -18,6 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PULL_CMD=("${TRI_PULL_CMD:-$SCRIPT_DIR/tri-pull}")
 SYNC_CMD=("${TRI_SYNC_CMD:-$SCRIPT_DIR/tri-sync}")
+CHECK_CMD=("${TRI_CHECK_BEADS_CONFIG_CMD:-$SCRIPT_DIR/check-beads-config}")
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 LOG_PATH="${TRI_DAILY_LOG:-$STATE_HOME/mybd/tri-daily.log}"
 DO_PULL=1
@@ -74,6 +75,8 @@ extract_closed_count() {
 pull_created=0
 sync_closed=0
 
+run_step check-beads-config "${CHECK_CMD[@]}" --quiet >/dev/null || exit 1
+
 if [[ "$DO_PULL" == 1 ]]; then
   pull_output="$(run_step tri-pull "${PULL_CMD[@]}")" || exit 1
   pull_created="$(printf '%s\n' "$pull_output" | extract_created_count | tail -n1)"
@@ -93,4 +96,3 @@ if [[ "$pull_created" -gt 0 || "$sync_closed" -gt 0 ]]; then
     printf '%s\n' "$summary"
   fi
 fi
-

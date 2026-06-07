@@ -8,10 +8,9 @@
 # Example: issue-prefix: "myproject" creates issues like "myproject-1", "myproject-2", etc.
 # issue-prefix: ""
 
-# Legacy no-db compatibility flag. mybd syncs issue state through the
-# configured Dolt remote below; .beads/issues.jsonl is export/backup/viewer
-# data only, not the cross-machine source of truth.
-no-db: true
+# Use no-db mode: JSONL-only, no Dolt database
+# When true, .beads/issues.jsonl is the only local store
+# no-db: false
 
 # Enable JSON output by default
 # json: false
@@ -54,10 +53,4 @@ no-db: true
 # - github.org
 # - github.repo
 
-sync.remote: "git+https://github.com/maphew/mybd.git"
-
-no-git-ops: true
-
-export.auto: false
-
-export.git-add: false
+sync.remote: "git+ssh://git@github.com/maphew/mybd.git"
