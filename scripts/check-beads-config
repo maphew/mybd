@@ -19,7 +19,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 BEADS_DIR="$ROOT/.beads"
 CONFIG="$BEADS_DIR/config.yaml"
 METADATA="$BEADS_DIR/metadata.json"
-EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-beads}"
+EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-mybd}"
 
 die() { echo "check-beads-config: $*" >&2; exit 1; }
 say() { [[ "$QUIET" == 1 ]] || printf '%s\n' "$*"; }
