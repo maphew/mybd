@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# agent-sig [runtime] [--trailer]
+#
+# Emit the agent signature defined in AGENTS.md "Signing":
+#   comment form:  _{runtime}-{model}-{reasoning} on behalf of {user}_
+#   trailer form:  Agent-Signature: {runtime}-{model}-{reasoning} on behalf of {user}
+#
+# Reads live session metadata only; never guesses from defaults, prompts, or
+# memory. Unknown fields become unknown-model / unknown-reasoning.
+#
+# Runtime detection: claude (CLAUDE_CODE_SESSION_ID set), codex (CODEX_HOME or
+# CODEX_THREAD_ID set). Other runtimes pass their name as $1, e.g.
+# `agent-sig kilocode`. Runtimes whose metadata this script cannot read may
+# supply AGENT_MODEL / AGENT_REASONING env vars.
+set -euo pipefail
+
+form=comment
+runtime="${AGENT_RUNTIME:-}"
+for a in "$@"; do
+  case "$a" in
+    --trailer) form=trailer ;;
+    *) runtime="$a" ;;
+  esac
+done
+
+if [ -z "$runtime" ]; then
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+    runtime=claude
+  elif [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
+    runtime=codex
+  else
+    runtime=unknown-runtime
+  fi
+fi
+
+model="${AGENT_MODEL:-}"
+effort="${AGENT_REASONING:-}"
+
+case "$runtime" in
+  claude)
+    # Model is recorded per assistant message in the session transcript JSONL;
+    # there is no model env var. The model id carries the family prefix
+    # (claude-fable-5, claude-opus-4-7); strip it since runtime is already
+    # "claude". CLAUDE_EFFORT tracks /effort; under Fable's `auto` it may
+    # report a resolved level rather than the literal "auto" - sign as-is.
+    if [ -z "$model" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+      f="$HOME/.claude/projects/$(pwd | sed 's#/#-#g')/$CLAUDE_CODE_SESSION_ID.jsonl"
+      model=$(jq -r 'select(.message.model) | .message.model' "$f" 2>/dev/null | tail -1 || true)
+      model=${model#claude-}
+    fi
+    effort="${effort:-${CLAUDE_EFFORT:-}}"
+    ;;
+  codex)
+    # Most recent thread in the state db whose cwd matches; the TUI log
+    # (${CODEX_HOME:-~/.codex}/log/codex-tui.log) is a secondary source with
+    # per-turn model= / codex.turn.reasoning_effort= fields.
+    db="${CODEX_HOME:-$HOME/.codex}/state_5.sqlite"
+    if [ -z "$model" ] && [ -f "$db" ]; then
+      row=$(sqlite3 -separator '|' "$db" \
+        "select coalesce(model,''), coalesce(reasoning_effort,'') from threads where cwd='$(pwd)' order by updated_at desc limit 1;" 2>/dev/null || true)
+      model="${row%%|*}"
+      [ "$row" != "$model" ] && effort="${effort:-${row#*|}}"
+    fi
+    ;;
+esac
+
+user=$(git config user.name 2>/dev/null || true)
+sig="${runtime}-${model:-unknown-model}-${effort:-unknown-reasoning} on behalf of ${user:-$(whoami)}"
+
+if [ "$form" = trailer ]; then
+  printf 'Agent-Signature: %s\n' "$sig"
+else
+  printf '_%s_\n' "$sig"
+fi

@@ -50,36 +50,8 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
   `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
 - Sign commits with a trailer:
   `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
-- `{agent_runtime}` is the current agent tool/runtime name, (for example: `amp`, `claude`,`codex`, `kilocode`)
-- `{model}` is the active model name from runtime/session metadata, otherwise `unknown-model`
-- `{reasoning}` is the active reasoning effort from runtime/session metadata, otherwise `unknown-reasoning`
-- `{user}` is git username if available, otherwise logged-in user
-
-Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If the runtime does not expose reliable metadata, use the unknown placeholders.
-
-For Codex, read the current session metadata from the local Codex state database when available:
-
-```bash
-sqlite3 -json "${CODEX_HOME:-$HOME/.codex}/state_5.sqlite" \
-  "select id, model, reasoning_effort, cwd, title from threads order by updated_at desc limit 5;"
-```
-
-Use the row that matches the active thread/workspace. If the current row cannot be identified unambiguously, use `unknown-model` or `unknown-reasoning` rather than guessing. The TUI log (`${CODEX_HOME:-$HOME/.codex}/log/codex-tui.log`) is a secondary source; it records per-turn fields such as `model=gpt-5.5` and `codex.turn.reasoning_effort=xhigh`.
-
-For Claude Code, read both fields from session metadata, not from the system prompt or memory:
-
-- **Reasoning** comes from the `CLAUDE_EFFORT` env var, which tracks the live effort level (updates within the session when `/effort` changes it).
-- **Model** is recorded per assistant message in the session transcript JSONL at `~/.claude/projects/<cwd-with-/-as->/<session-id>.jsonl`, where the session ID is `$CLAUDE_CODE_SESSION_ID`. There is no model env var; the transcript is the reliable source.
-
-```bash
-proj="$HOME/.claude/projects/$(pwd | sed 's#/#-#g')"
-model=$(jq -r 'select(.message.model) | .message.model' \
-  "$proj/$CLAUDE_CODE_SESSION_ID.jsonl" 2>/dev/null | tail -1)
-model=${model#claude-}
-echo "_claude-${model:-unknown-model}-${CLAUDE_EFFORT:-unknown-reasoning} on behalf of $(git config user.name)_"
-```
-
-The model string carries the `claude-` family prefix (e.g. `claude-opus-4-7`); since the runtime field is already `claude`, drop the prefix to avoid `claude-claude-` (write `opus-4-7`). If `jq` returns empty or `CLAUDE_EFFORT` is unset, use `unknown-model` / `unknown-reasoning` rather than guessing.
+- Generate the line with `<mybd-root>/scripts/agent-sig` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
+- Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If reliable metadata is unavailable, keep the script's `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
 ## Repository Layout
 
