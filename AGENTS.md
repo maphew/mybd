@@ -53,6 +53,26 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
 - Generate the line with `<mybd-root>/scripts/agent-sig` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
 - Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If reliable metadata is unavailable, keep the script's `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
+For Amp, read session metadata from the local Amp state, not from the system prompt or memory. The active thread id is in `AMP_CURRENT_THREAD_ID`.
+
+- **Reasoning** and **agent mode** come from the per-turn `agent_state` log lines in `~/.cache/amp/logs/cli.log` (fields `reasoningEffort` and `agentMode`). Fall back to `~/.local/share/amp/session.json` (`lastReasoningEffortByMode[<mode>]`).
+- **Model** is recorded per assistant message at `messages[].usage.model` in the thread state file `~/.local/share/amp/threads/$AMP_CURRENT_THREAD_ID.json`. The in-progress thread may not be flushed yet; until it is, fall back to the most recently modified thread file (same `agentMode` maps to the same model).
+
+```bash
+tid="$AMP_CURRENT_THREAD_ID"
+src="$HOME/.local/share/amp/threads/$tid.json"
+[ -f "$src" ] || src="$(ls -t "$HOME"/.local/share/amp/threads/*.json 2>/dev/null | head -1)"
+model="$(jq -r '[.messages[]?.usage?.model // empty] | last // empty' "$src" 2>/dev/null)"
+model="${model#claude-}"
+line="$(grep -F "\"threadId\":\"$tid\"" "$HOME/.cache/amp/logs/cli.log" 2>/dev/null | grep -F '"reasoningEffort"' | tail -1)"
+reasoning="$(printf '%s' "$line" | jq -r '.reasoningEffort // empty' 2>/dev/null)"
+mode="$(printf '%s' "$line" | jq -r '.agentMode // empty' 2>/dev/null)"
+[ -z "$reasoning" ] && reasoning="$(jq -r --arg m "${mode:-smart}" '.lastReasoningEffortByMode[$m] // empty' "$HOME/.local/share/amp/session.json" 2>/dev/null)"
+echo "_amp-${model:-unknown-model}-${reasoning:-unknown-reasoning} on behalf of $(git config user.name)_"
+```
+
+The model string carries the `claude-` family prefix; since the runtime field is already `amp`, drop only the `claude-` model-family prefix (write `opus-4-6`, not `claude-opus-4-6`). If the thread file is unreadable or the log has no `reasoningEffort`, use `unknown-model` / `unknown-reasoning` rather than guessing.
+
 ## Repository Layout
 
 The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. In these instructions, `<mybd-root>` means the root of this coordination repo, wherever it is cloned on the current machine. The beads working clone is nested at `bd-main/` (gitignored):
