@@ -10,9 +10,9 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 If `bd list` unexpectedly appears empty in this coordination repo, do not
 restore `.beads` blindly. Run `scripts/check-beads-config`; the live local
-database is `.beads/embeddeddolt/mybd` (issue prefix `mybd-`, synced via the
+database is `.beads/embeddeddolt/beads` (issue prefix `mybd-`, synced via the
 Dolt remote to maphew/mybd), and stale config can point `bd` at the empty
-`beads` bootstrap database.
+legacy `mybd` bootstrap database.
 
 When working on beads, spawn agents according to their metadata hints.
 The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
