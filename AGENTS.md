@@ -8,6 +8,57 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 "gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
 
+### Windows / Daily Housekeeping
+
+On Windows, confirm the `bd` on `PATH` is the expected version before running
+housekeeping or bead commands:
+
+```powershell
+Get-Command bd
+bd --version
+Get-Content .beads/.local_version
+```
+
+The repo-local source build is `bd-main\bd.exe`. If `bd --version` is older
+than `.beads/.local_version` and `bd-main\bd.exe` has the expected version,
+replace the stale PATH binary at `C:\Users\Matt\.local\bin\bd.exe` with the
+repo-local binary, after confirming no `bd` process is running. Keep a backup
+named for the old version.
+
+Several repo scripts are Bash scripts. From PowerShell, run them through Git
+Bash rather than invoking them directly:
+
+```powershell
+& 'C:\Program Files\Git\bin\bash.exe' scripts/check-beads-config
+& 'C:\Program Files\Git\bin\bash.exe' scripts/verify-status
+```
+
+Run embedded-Dolt `bd`/`dolt` commands serially in this repo. Parallel `bd`
+commands can leave Git helper processes or embedded-Dolt locks behind.
+
+Daily start routine:
+
+```powershell
+git pull --rebase
+bd prime
+& 'C:\Program Files\Git\bin\bash.exe' scripts/check-beads-config
+bd context --json
+git -c safe.directory=A:/dev/mybd/bd-main -C bd-main fetch --all --prune
+bd ready
+bd list --status=in_progress
+& 'C:\Program Files\Git\bin\bash.exe' scripts/verify-status
+```
+
+If a newer `bd` refuses to auto-apply pending schema migrations on this
+remote-backed database, do not override it casually. Do not run
+`BD_ALLOW_REMOTE_MIGRATE=1` unless you are explicitly acting as the single
+designated migrator. For ordinary housekeeping, record that schema-sensitive
+commands are blocked by the migration gate and continue with read-only checks
+that do not require migration. Commands such as `bd stats`, `bd blocked`,
+`bd stale`, `bd orphans`, and `bd lint` are useful when schema-compatible, but
+they are best-effort checks while the local database is behind the current
+binary's schema.
+
 If `bd list` unexpectedly appears empty in this coordination repo, do not
 restore `.beads` blindly. Run `scripts/check-beads-config`; the live local
 database is `.beads/embeddeddolt/beads` (issue prefix `mybd-`, synced via the
@@ -123,6 +174,9 @@ The verifier runs locally, without GitHub Actions or status polling:
 scripts/verify-status
 scripts/verify-next          # runs one queued job
 ```
+
+From PowerShell on Windows, invoke these via Git Bash as shown in the Windows
+housekeeping section.
 
 `verify-next` creates a clean detached worktree under
 `<mybd-root>/.worktrees/beads/verify-*`, runs the recorded

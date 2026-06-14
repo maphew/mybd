@@ -6,7 +6,7 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_require bd jq
+tri_require bd dolt jq
 
 json_out=0
 case "${1:-}" in
@@ -19,7 +19,7 @@ esac
 
 [[ $# -eq 0 ]] || tri_die "usage: scripts/verify-status [--json]"
 
-queue_json="$(
+queue_from_bd() {
   bd list --limit 0 --json \
     | jq '[.[] | select((.metadata.verify_state // "") != "")
            | {
@@ -39,7 +39,64 @@ queue_json="$(
                verify_log: ((.metadata.verify_log // "") | tostring)
              }]
           | sort_by(.verify_state, (.priority // 99), (.updated_at // ""))'
+}
+
+queue_from_dolt_sql() {
+  local metadata db_name db_dir sql
+  metadata="$TRI_PROJECT_ROOT/.beads/metadata.json"
+  [[ -f "$metadata" ]] || tri_die "missing $metadata"
+  db_name="$(jq -r '.dolt_database // "beads"' "$metadata")"
+  [[ -n "$db_name" && "$db_name" != "null" ]] || db_name="beads"
+  db_dir="$TRI_PROJECT_ROOT/.beads/embeddeddolt/$db_name"
+  [[ -d "$db_dir/.dolt" ]] || tri_die "missing embedded Dolt database: $db_dir"
+
+  sql="$(cat <<'SQL'
+select
+  id,
+  title,
+  priority,
+  status,
+  updated_at,
+  json_extract(metadata, '$.verify_state') as verify_state,
+  json_extract(metadata, '$.verify_head') as verify_head,
+  json_extract(metadata, '$.verify_branch') as verify_branch,
+  json_extract(metadata, '$.verify_cmd') as verify_cmd,
+  json_extract(metadata, '$.verify_result') as verify_result,
+  json_extract(metadata, '$.verify_runner') as verify_runner,
+  json_extract(metadata, '$.verify_started_at') as verify_started_at,
+  json_extract(metadata, '$.verify_finished_at') as verify_finished_at,
+  json_extract(metadata, '$.verify_log') as verify_log
+from issues
+where json_extract(metadata, '$.verify_state') is not null
+order by json_extract(metadata, '$.verify_state'), priority, updated_at
+SQL
 )"
+
+  (
+    cd "$db_dir"
+    dolt sql -r json -q "$sql"
+  ) | jq '[.rows[] | {
+            id,
+            title,
+            priority,
+            status,
+            updated_at,
+            verify_state: ((.verify_state // "") | tostring),
+            verify_head: ((.verify_head // "") | tostring),
+            verify_branch: ((.verify_branch // "") | tostring),
+            verify_cmd: ((.verify_cmd // "") | tostring),
+            verify_result: ((.verify_result // "") | tostring),
+            verify_runner: ((.verify_runner // "") | tostring),
+            verify_started_at: ((.verify_started_at // "") | tostring),
+            verify_finished_at: ((.verify_finished_at // "") | tostring),
+            verify_log: ((.verify_log // "") | tostring)
+          }]
+          | sort_by(.verify_state, (.priority // 99), (.updated_at // ""))'
+}
+
+if ! queue_json="$(queue_from_bd 2>/dev/null)"; then
+  queue_json="$(queue_from_dolt_sql)"
+fi
 
 if [[ "$json_out" -eq 1 ]]; then
   jq . <<<"$queue_json"
