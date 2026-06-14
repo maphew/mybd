@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: bd-stealth-init [options] [project-dir]
+
+Initialize beads for a project without adding beads files or hooks to that
+project. Issue data lives in a separate git repository and can be synced from
+there.
+
+Options:
+  --repo-dir DIR       Dedicated beads repository directory.
+  --home DIR           Parent directory for generated beads repositories.
+                       Default: $BEADS_STEALTH_HOME or
+                       ${XDG_DATA_HOME:-~/.local/share}/beads-stealth
+  --prefix PREFIX      Bead id prefix. Default: sanitized project name.
+  --remote URL         Git remote for the dedicated beads repository.
+  --branch NAME        Initial branch name for new repos. Default: main.
+  --set-envrc          Append BEADS_DIR export to PROJECT/.envrc.
+  --no-sync            Do not run bd dolt pull/push.
+  --force              Replace an existing origin URL when --remote differs.
+  --print-env          Print shell exports for the configured project.
+  -h, --help           Show this help.
+
+Examples:
+  bd-stealth-init --remote git@github.com:me/project-beads.git
+  bd-stealth-init --repo-dir ~/tracking/project-beads --set-envrc ~/src/project
+  eval "$(bd-stealth-init --print-env ~/src/project)"
+USAGE
+}
+
+die() {
+  printf 'bd-stealth-init: %s\n' "$*" >&2
+  exit 1
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+abs_dir() {
+  local path=$1
+  mkdir -p "$path"
+  (cd "$path" && pwd -P)
+}
+
+existing_abs_dir() {
+  local path=$1
+  [ -d "$path" ] || die "directory does not exist: $path"
+  (cd "$path" && pwd -P)
+}
+
+slugify() {
+  local raw=$1
+  local slug
+  slug=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')
+  slug=${slug#-}
+  slug=${slug%-}
+  printf '%s' "${slug:-project}"
+}
+
+prefixify() {
+  local raw=$1
+  local prefix
+  prefix=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)
+  printf '%s' "${prefix:-bd}"
+}
+
+repo_dir=
+home_dir=
+prefix=
+remote=
+branch=main
+set_envrc=0
+sync=1
+force=0
+print_env=0
+target_dir=.
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo-dir)
+      [ "$#" -ge 2 ] || die "--repo-dir requires a value"
+      repo_dir=$2
+      shift 2
+      ;;
+    --home)
+      [ "$#" -ge 2 ] || die "--home requires a value"
+      home_dir=$2
+      shift 2
+      ;;
+    --prefix)
+      [ "$#" -ge 2 ] || die "--prefix requires a value"
+      prefix=$2
+      shift 2
+      ;;
+    --remote)
+      [ "$#" -ge 2 ] || die "--remote requires a value"
+      remote=$2
+      shift 2
+      ;;
+    --branch)
+      [ "$#" -ge 2 ] || die "--branch requires a value"
+      branch=$2
+      shift 2
+      ;;
+    --set-envrc)
+      set_envrc=1
+      shift
+      ;;
+    --no-sync)
+      sync=0
+      shift
+      ;;
+    --force)
+      force=1
+      shift
+      ;;
+    --print-env)
+      print_env=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      [ "$#" -le 1 ] || die "too many positional arguments"
+      [ "$#" -eq 0 ] || target_dir=$1
+      break
+      ;;
+    -* )
+      die "unknown option: $1"
+      ;;
+    *)
+      target_dir=$1
+      shift
+      [ "$#" -eq 0 ] || die "too many positional arguments"
+      ;;
+  esac
+done
+
+need_cmd bd
+need_cmd git
+
+log_fd=1
+if [ "$print_env" -eq 1 ]; then
+  log_fd=2
+fi
+
+target_dir=$(existing_abs_dir "$target_dir")
+if git_root=$(git -C "$target_dir" rev-parse --show-toplevel 2>/dev/null); then
+  project_dir=$(existing_abs_dir "$git_root")
+else
+  project_dir=$target_dir
+fi
+
+project_name=$(basename "$project_dir")
+slug=$(slugify "$project_name")
+prefix=${prefix:-$(prefixify "$slug")}
+
+if [ -z "$repo_dir" ]; then
+  if [ -n "$home_dir" ]; then
+    base_dir=$home_dir
+  else
+    base_dir=${BEADS_STEALTH_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/beads-stealth}
+  fi
+  base_dir=$(abs_dir "$base_dir")
+  repo_dir=$base_dir/$slug-beads
+fi
+
+repo_parent=$(dirname "$repo_dir")
+repo_parent=$(abs_dir "$repo_parent")
+repo_dir=$repo_parent/$(basename "$repo_dir")
+
+if [ ! -d "$repo_dir/.git" ]; then
+  mkdir -p "$repo_dir"
+  if git -C "$repo_dir" init -b "$branch" >/dev/null 2>&1; then
+    :
+  else
+    git -C "$repo_dir" init >/dev/null
+    git -C "$repo_dir" checkout -B "$branch" >/dev/null
+  fi
+fi
+
+if [ -n "$remote" ]; then
+  if current_remote=$(git -C "$repo_dir" remote get-url origin 2>/dev/null); then
+    if [ "$current_remote" != "$remote" ]; then
+      if [ "$force" -eq 1 ]; then
+        git -C "$repo_dir" remote set-url origin "$remote"
+      else
+        die "origin already points to $current_remote; pass --force to replace it"
+      fi
+    fi
+  else
+    git -C "$repo_dir" remote add origin "$remote"
+  fi
+fi
+
+if [ ! -d "$repo_dir/.beads" ]; then
+  if [ "$print_env" -eq 1 ]; then
+    (cd "$repo_dir" && bd init --prefix "$prefix") >&2
+  else
+    (cd "$repo_dir" && bd init --prefix "$prefix")
+  fi
+fi
+
+beads_dir=$repo_dir/.beads
+BEADS_DIR=$beads_dir bd config set no-git-ops true >/dev/null
+
+if [ "$set_envrc" -eq 1 ]; then
+  envrc=$project_dir/.envrc
+  line="export BEADS_DIR=\"$beads_dir\""
+  if [ -f "$envrc" ] && grep -Fqx "$line" "$envrc"; then
+    :
+  else
+    printf '\n# beads stealth tracking\n%s\n' "$line" >>"$envrc"
+  fi
+fi
+
+has_origin=0
+if git -C "$repo_dir" remote get-url origin >/dev/null 2>&1; then
+  has_origin=1
+fi
+
+if [ "$sync" -eq 1 ] && [ "$has_origin" -eq 1 ]; then
+  if [ "$print_env" -eq 1 ]; then
+    (cd "$repo_dir" && BEADS_DIR=$beads_dir bd dolt pull) >&2 || true
+    (cd "$repo_dir" && BEADS_DIR=$beads_dir bd dolt push) >&2
+  else
+    (cd "$repo_dir" && BEADS_DIR=$beads_dir bd dolt pull) || true
+    (cd "$repo_dir" && BEADS_DIR=$beads_dir bd dolt push)
+  fi
+fi
+
+if [ "$print_env" -eq 1 ]; then
+  printf 'export BEADS_DIR=%q\n' "$beads_dir"
+fi
+
+printf 'Project: %s\n' "$project_dir" >&$log_fd
+printf 'Beads repo: %s\n' "$repo_dir" >&$log_fd
+printf 'BEADS_DIR: %s\n' "$beads_dir" >&$log_fd
+printf 'Prefix: %s\n' "$prefix" >&$log_fd
+if [ "$has_origin" -eq 1 ]; then
+  printf 'Remote: %s\n' "$(git -C "$repo_dir" remote get-url origin)" >&$log_fd
+else
+  printf 'Remote: none; rerun with --remote to enable cross-machine sync\n' >&$log_fd
+fi
+printf '\nUse from the project with:\n  export BEADS_DIR=%q\n  bd ready\n' "$beads_dir" >&$log_fd

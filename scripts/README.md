@@ -302,6 +302,20 @@ scripts/tri-report --weekly-metrics --out /tmp/tri-weekly.md
 - `_working_on/upstream_pr_triage.md` — manual T1–T5 ranking with scoring rubric
 - `_working_on/pr-reviews/NNNN.md` — per-PR detailed review notes (now scaffolded by tri-review)
 
+## Generic beads stealth setup
+
+`bd-stealth-init` initializes beads for any project without putting `.beads`,
+hooks, or beads commits in that target project. It stores issue data in a
+dedicated external git repository and can sync through that repo's remote.
+
+```bash
+cd ~/src/some-project
+/var/home/matt/dev/mybd/scripts/bd-stealth-init --remote git@github.com:me/some-project-beads.git
+```
+
+Use `--set-envrc` only when the target project should persist the `BEADS_DIR`
+export in `.envrc`.
+
 ## Configuration (env vars)
 
 - `TRI_UPSTREAM` — upstream repo (default `gastownhall/beads`)

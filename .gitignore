@@ -32,4 +32,11 @@ tmp/
 .bt/
 
 # Kilo local runtime files and dependencies
-.kilo/
+.kilo/node_modules/
+.kilo/package.json
+.kilo/package-lock.json
+.kilo/pnpm-lock.yaml
+.kilo/bun.lock
+.kilo/yarn.lock
+.kilo/agent-manager.json
+.kilo/worktrees/
