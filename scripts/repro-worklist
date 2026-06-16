@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Build a GitHub repro-verification worklist for gastownhall/beads."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
+
+
+RECIPE_RE = re.compile(
+    r"(?is)("
+    r"repro(?:duction|duce)?|steps to reproduce|minimal repro|"
+    r"```|^\s*(?:bd|dolt|git|go|make|npm|python|curl|gh)\s+|"
+    r"expected|actual|observed|fails?|panic|stack trace|error:"
+    r")"
+)
+
+NON_REPRO_RE = re.compile(
+    r"(?is)("
+    r"\bfeat(?:ure)?\b|proposal|rfc|docs?|documentation|chore|"
+    r"dependabot|build\(deps\)|enhance|support|add .* support|"
+    r"design|architecture|refactor"
+    r")"
+)
+
+
+def label_names(item: dict) -> set[str]:
+    return {label["name"] for label in item.get("labels", [])}
+
+
+def classify_env(text: str) -> str:
+    low = text.lower()
+    if any(token in low for token in ["windows", "powershell", "msvc"]):
+        return "windows"
+    if any(token in low for token in ["android", "termux"]):
+        return "android-termux"
+    if any(token in low for token in ["linear", "jira", "github sync", "gh "]):
+        return "integration"
+    if any(token in low for token in ["s3", "cloud", "remote", "ssh://", "http://", "https://"]):
+        return "external-remote"
+    if any(token in low for token in ["shared-server", "server mode", "sql-server", "mysql", "dolt start"]):
+        return "server-mode-dolt"
+    if any(token in low for token in ["embedded", "embeddeddolt", "dolt", ".beads/embeddeddolt"]):
+        return "embedded-dolt"
+    if any(token in low for token in ["ci", "workflow", "release", "nix", "homebrew", "go install"]):
+        return "ci-release"
+    return "local-cli"
+
+
+def classify_item(kind: str, item: dict) -> dict:
+    title = item.get("title") or ""
+    body = item.get("body") or ""
+    text = f"{title}\n\n{body}"
+    labels = label_names(item)
+    has_repro = "has-repro" in labels
+    recipe = bool(RECIPE_RE.search(text))
+    non_repro = bool(NON_REPRO_RE.search(title)) and not re.search(
+        r"(?is)\bbug\b|fix\(|panic|fails?|error|crash|deadlock|race", text
+    )
+
+    if has_repro:
+        bucket = "already-has-repro"
+    elif recipe and not non_repro:
+        bucket = "needs-verification"
+    elif non_repro:
+        bucket = "not-repro-applicable"
+    else:
+        bucket = "needs-repro-request"
+
+    return {
+        "kind": kind,
+        "number": item["number"],
+        "title": title,
+        "url": item["url"],
+        "author": (item.get("author") or {}).get("login", ""),
+        "updatedAt": item.get("updatedAt", ""),
+        "isDraft": item.get("isDraft", False),
+        "labels": sorted(labels),
+        "bucket": bucket,
+        "environment": classify_env(text),
+    }
+
+
+def load_items(path: Path, kind: str) -> list[dict]:
+    return [classify_item(kind, item) for item in json.loads(path.read_text())]
+
+
+def write_json(path: Path, records: list[dict]) -> None:
+    path.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
+
+
+def write_md(path: Path, records: list[dict]) -> None:
+    bucket_counts = Counter(record["bucket"] for record in records)
+    env_counts = Counter(
+        record["environment"]
+        for record in records
+        if record["bucket"] == "needs-verification"
+    )
+    by_env: dict[str, list[dict]] = defaultdict(list)
+    for record in records:
+        if record["bucket"] == "needs-verification":
+            by_env[record["environment"]].append(record)
+
+    lines = [
+        "# GitHub Repro Verification Worklist",
+        "",
+        "Generated for `mybd-pxzp` from current open `gastownhall/beads` issues and PRs.",
+        "",
+        "## Summary",
+        "",
+    ]
+    for bucket, count in sorted(bucket_counts.items()):
+        lines.append(f"- `{bucket}`: {count}")
+    lines.extend(["", "## Needs Verification By Environment", ""])
+    for env, count in sorted(env_counts.items()):
+        lines.append(f"- `{env}`: {count}")
+    lines.append("")
+
+    for env in sorted(by_env):
+        lines.extend([f"## {env}", ""])
+        for record in sorted(by_env[env], key=lambda row: (row["kind"], -row["number"])):
+            draft = " draft" if record["isDraft"] else ""
+            lines.append(
+                f"- {record['kind']} #{record['number']}{draft}: "
+                f"[{record['title']}]({record['url']})"
+            )
+        lines.append("")
+
+    path.write_text("\n".join(lines))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--issues", required=True, type=Path)
+    parser.add_argument("--prs", required=True, type=Path)
+    parser.add_argument("--json-out", required=True, type=Path)
+    parser.add_argument("--md-out", required=True, type=Path)
+    args = parser.parse_args()
+
+    records = load_items(args.issues, "issue") + load_items(args.prs, "pr")
+    args.json_out.parent.mkdir(parents=True, exist_ok=True)
+    write_json(args.json_out, records)
+    write_md(args.md_out, records)
+    print(f"wrote {len(records)} records")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
