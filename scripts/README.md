@@ -133,6 +133,25 @@ Override the upstream repo with `TRI_UPSTREAM` env var (default
 TRI_UPSTREAM=other/repo scripts/tri-pull
 ```
 
+## Beads Database Drift Guard
+
+The canonical issue database for this coordination repo is
+`.beads/embeddeddolt/mybd`, with issue prefix `mybd-` and Dolt remote
+`git+https://github.com/maphew/mybd.git`. A sibling database named `beads` may
+exist as an empty bootstrap artifact; do not point `.beads/metadata.json` at it.
+
+```bash
+scripts/check-beads-config          # fail if metadata points at the wrong DB
+scripts/check-beads-config --fix    # repair only the known safe mybd/beads drift
+scripts/pre-commit-beads-config     # block staged metadata drift from commits
+```
+
+`--fix` is deliberately conservative. It only rewrites `.beads/metadata.json`
+when the configured database is empty or missing, `mybd` has issues, and `mybd`
+has the expected `origin` remote. If both databases contain issues, export both
+and reconcile manually before changing metadata. Intentional database renames
+must set `MYBD_ALLOW_DB_RENAME=1`.
+
 ## GitHub body lint
 
 Before posting PR, issue, comment, or review Markdown through `gh`, write the

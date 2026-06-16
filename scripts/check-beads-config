@@ -4,11 +4,13 @@
 set -euo pipefail
 
 QUIET=0
+FIX=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --quiet) QUIET=1; shift;;
+    --fix) FIX=1; shift;;
     -h|--help)
-      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "check-beads-config: unknown arg: $1" >&2; exit 2;;
@@ -20,6 +22,7 @@ BEADS_DIR="$ROOT/.beads"
 CONFIG="$BEADS_DIR/config.yaml"
 METADATA="$BEADS_DIR/metadata.json"
 EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-mybd}"
+EXPECTED_REMOTE="${MYBD_EXPECTED_BEADS_REMOTE:-git+https://github.com/maphew/mybd.git}"
 
 die() { echo "check-beads-config: $*" >&2; exit 1; }
 say() { [[ "$QUIET" == 1 ]] || printf '%s\n' "$*"; }
@@ -44,6 +47,23 @@ count_issues() {
   )
 }
 
+remote_url() {
+  local db_name="$1"
+  local db_dir="$BEADS_DIR/embeddeddolt/$db_name"
+  [[ -d "$db_dir/.dolt" ]] || return 1
+  (
+    cd "$db_dir"
+    dolt remote -v 2>/dev/null | awk '$1 == "origin" { print $2; exit }'
+  )
+}
+
+repair_metadata_database() {
+  local tmp
+  tmp="$(mktemp "${METADATA}.tmp.XXXXXX")"
+  jq --arg db "$EXPECTED_DB" '.dolt_database = $db' "$METADATA" > "$tmp"
+  mv -f "$tmp" "$METADATA"
+}
+
 failures=0
 report_failure() {
   failures=$((failures + 1))
@@ -63,6 +83,7 @@ if grep -Eq '^[[:space:]]*no-db:[[:space:]]*true([[:space:]]*(#.*)?)?$' "$CONFIG
 fi
 
 expected_count="$(count_issues "$EXPECTED_DB" || true)"
+expected_remote="$(remote_url "$EXPECTED_DB" || true)"
 active_count=""
 if [[ -n "$active_db" ]]; then
   active_count="$(count_issues "$active_db" || true)"
@@ -78,8 +99,27 @@ if [[ -n "$active_db" && "$active_db" != "$EXPECTED_DB" && -n "$active_count" &&
   report_failure "active database $active_db is empty while $EXPECTED_DB has $expected_count issues"
 fi
 
+if [[ -n "$expected_remote" && "$expected_remote" != "$EXPECTED_REMOTE" ]]; then
+  report_failure "expected database $EXPECTED_DB origin remote is $expected_remote; expected $EXPECTED_REMOTE"
+fi
+
 if [[ "$failures" -gt 0 ]]; then
+  if [[ "$FIX" == 1 ]]; then
+    if [[ "$metadata_backend" == "dolt" \
+       && "$metadata_database" == "dolt" \
+       && "$active_db" != "$EXPECTED_DB" \
+       && -n "$expected_count" \
+       && "$expected_count" != "0" \
+       && "$expected_remote" == "$EXPECTED_REMOTE" \
+       && ( -z "$active_count" || "$active_count" == "0" ) ]]; then
+      repair_metadata_database
+      say "beads config repaired: .beads/metadata.json dolt_database=$EXPECTED_DB ($expected_count issues, origin $expected_remote)"
+      exit 0
+    fi
+    echo "check-beads-config: --fix refused; database state is ambiguous or canonical remote/count checks failed" >&2
+  fi
   echo "check-beads-config: remedy: keep .beads/metadata.json dolt_database=$EXPECTED_DB, do not restore stale no-db:true config, and do not point at the empty beads bootstrap database" >&2
+  echo "check-beads-config: if both databases contain issues, export both before repair and reconcile manually" >&2
   exit 1
 fi
 

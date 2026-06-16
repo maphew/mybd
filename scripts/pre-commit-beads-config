@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# pre-commit-beads-config - block accidental mybd tracker DB drift.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-mybd}"
+ALLOW_RENAME="${MYBD_ALLOW_DB_RENAME:-0}"
+
+die() { echo "pre-commit-beads-config: $*" >&2; exit 1; }
+
+command -v jq >/dev/null || die "jq not on PATH"
+
+if [[ "$ALLOW_RENAME" == "1" ]]; then
+  exit 0
+fi
+
+if git diff --cached --quiet -- .beads/metadata.json; then
+  scripts/check-beads-config --quiet
+  exit 0
+fi
+
+staged_db="$(
+  git show :'.beads/metadata.json' 2>/dev/null \
+    | jq -r '.dolt_database // empty'
+)"
+
+if [[ "$staged_db" != "$EXPECTED_DB" ]]; then
+  cat >&2 <<EOF
+pre-commit-beads-config: refusing staged .beads/metadata.json drift
+  staged dolt_database: ${staged_db:-<empty>}
+  expected dolt_database: $EXPECTED_DB
+
+This repo's canonical tracker database is .beads/embeddeddolt/$EXPECTED_DB.
+The sibling beads database is an empty bootstrap artifact on normal checkouts.
+
+If this is an intentional database rename, rerun with:
+  MYBD_ALLOW_DB_RENAME=1 git commit ...
+EOF
+  exit 1
+fi
+
+scripts/check-beads-config --quiet

@@ -64,6 +64,13 @@ restore `.beads` blindly. Run `scripts/check-beads-config`; the live local
 database is `.beads/embeddeddolt/mybd` (issue prefix `mybd-`, synced via the
 Dolt remote to maphew/mybd), and stale config can point `bd` at the empty
 `beads` bootstrap database.
+For the narrow known drift case where `.beads/metadata.json` points at empty
+`beads` while `mybd` is populated and has the expected remote, run
+`scripts/check-beads-config --fix`. If both databases contain issues, export
+both and reconcile manually before changing metadata. Use
+`scripts/pre-commit-beads-config` in local commit hooks or CI to reject
+accidental `.beads/metadata.json` changes away from `mybd`; intentional
+database renames require `MYBD_ALLOW_DB_RENAME=1`.
 
 When working on beads, spawn agents according to their metadata hints.
 The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
