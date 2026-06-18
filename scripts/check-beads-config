@@ -22,7 +22,28 @@ BEADS_DIR="$ROOT/.beads"
 CONFIG="$BEADS_DIR/config.yaml"
 METADATA="$BEADS_DIR/metadata.json"
 EXPECTED_DB="${MYBD_EXPECTED_BEADS_DB:-mybd}"
-EXPECTED_REMOTE="${MYBD_EXPECTED_BEADS_REMOTE:-git+https://github.com/maphew/mybd.git}"
+# Canonical remote is maphew/mybd. Both Git transports are accepted because the
+# live embedded Dolt DB uses SSH while older guard text assumed HTTPS; forcing a
+# single string caused repeated dolt_database flip-flops.
+EXPECTED_REMOTE_HTTPS="git+https://github.com/maphew/mybd.git"
+EXPECTED_REMOTE_SSH="git+ssh://git@github.com/maphew/mybd.git"
+
+remote_matches_expected() {
+  local url="$1"
+  if [[ -n "${MYBD_EXPECTED_BEADS_REMOTE:-}" ]]; then
+    [[ "$url" == "$MYBD_EXPECTED_BEADS_REMOTE" ]]
+    return
+  fi
+  [[ "$url" == "$EXPECTED_REMOTE_HTTPS" || "$url" == "$EXPECTED_REMOTE_SSH" ]]
+}
+
+expected_remote_label() {
+  if [[ -n "${MYBD_EXPECTED_BEADS_REMOTE:-}" ]]; then
+    printf '%s' "$MYBD_EXPECTED_BEADS_REMOTE"
+  else
+    printf '%s' "$EXPECTED_REMOTE_HTTPS or $EXPECTED_REMOTE_SSH"
+  fi
+}
 
 die() { echo "check-beads-config: $*" >&2; exit 1; }
 say() { [[ "$QUIET" == 1 ]] || printf '%s\n' "$*"; }
@@ -99,8 +120,13 @@ if [[ -n "$active_db" && "$active_db" != "$EXPECTED_DB" && -n "$active_count" &&
   report_failure "active database $active_db is empty while $EXPECTED_DB has $expected_count issues"
 fi
 
-if [[ -n "$expected_remote" && "$expected_remote" != "$EXPECTED_REMOTE" ]]; then
-  report_failure "expected database $EXPECTED_DB origin remote is $expected_remote; expected $EXPECTED_REMOTE"
+expected_remote_ok=0
+if [[ -n "$expected_remote" ]] && remote_matches_expected "$expected_remote"; then
+  expected_remote_ok=1
+fi
+
+if [[ -n "$expected_remote" && "$expected_remote_ok" != 1 ]]; then
+  report_failure "expected database $EXPECTED_DB origin remote is $expected_remote; expected $(expected_remote_label)"
 fi
 
 if [[ "$failures" -gt 0 ]]; then
@@ -110,7 +136,7 @@ if [[ "$failures" -gt 0 ]]; then
        && "$active_db" != "$EXPECTED_DB" \
        && -n "$expected_count" \
        && "$expected_count" != "0" \
-       && "$expected_remote" == "$EXPECTED_REMOTE" \
+       && "$expected_remote_ok" == "1" \
        && ( -z "$active_count" || "$active_count" == "0" ) ]]; then
       repair_metadata_database
       say "beads config repaired: .beads/metadata.json dolt_database=$EXPECTED_DB ($expected_count issues, origin $expected_remote)"

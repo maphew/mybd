@@ -137,8 +137,12 @@ TRI_UPSTREAM=other/repo scripts/tri-pull
 
 The canonical issue database for this coordination repo is
 `.beads/embeddeddolt/mybd`, with issue prefix `mybd-` and Dolt remote
-`git+https://github.com/maphew/mybd.git`. A sibling database named `beads` may
-exist as an empty bootstrap artifact; do not point `.beads/metadata.json` at it.
+`maphew/mybd` (either `git+ssh://git@github.com/maphew/mybd.git` or
+`git+https://github.com/maphew/mybd.git` is accepted; the live DB uses SSH). A
+sibling database named `beads` may exist as a populated legacy/bootstrap
+artifact; do not point `.beads/metadata.json` at it. If `mybd` is empty but
+`beads` holds the issues, migrate the populated folder into `mybd` rather than
+re-pointing metadata (see thread history) so the guard and data agree.
 
 ```bash
 scripts/check-beads-config          # fail if metadata points at the wrong DB
