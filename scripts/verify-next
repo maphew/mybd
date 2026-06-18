@@ -42,6 +42,31 @@ verify_env=()
 [[ -n "$VERIFY_CC" && -x "$VERIFY_CC" ]] && verify_env+=("CC=$VERIFY_CC")
 [[ -n "$VERIFY_CXX" && -x "$VERIFY_CXX" ]] && verify_env+=("CXX=$VERIFY_CXX")
 
+# Isolate git's global/system config for the verification run so the suite is
+# deterministic and insulated from the runner's real ~/.gitconfig (identity,
+# init.defaultBranch, hooksPath, gpgsign, ...). The full `make test` run reads
+# global git config from concurrent tests; sharing the developer's live config
+# flakes git-touching tests (mybd-icvk). Provide a minimal, valid global config
+# with an identity and a 'main' default branch, and ignore system config. Only
+# GIT_CONFIG_GLOBAL/GIT_CONFIG_NOSYSTEM are set — HOME is left untouched so Go
+# and Dolt caches under $HOME are unaffected. Tests that isolate their own
+# GIT_CONFIG_GLOBAL still override this per-test.
+VERIFY_GITCONFIG="$(mktemp -t verify-gitconfig.XXXXXX)"
+cat >"$VERIFY_GITCONFIG" <<'GITCFG'
+[user]
+	name = beads-verify
+	email = verify@beads.local
+[init]
+	defaultBranch = main
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
+GITCFG
+trap 'rm -f "$VERIFY_GITCONFIG"' EXIT
+verify_env+=("GIT_CONFIG_GLOBAL=$VERIFY_GITCONFIG")
+verify_env+=("GIT_CONFIG_NOSYSTEM=1")
+
 if [[ $# -gt 1 ]]; then
   usage >&2
   exit 2
