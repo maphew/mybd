@@ -4,6 +4,10 @@ Tooling for managing the firehose of issues + PRs on `gastownhall/beads`. Two
 loops: **triage** (decide what to do) and **review** (do the PR work, resumable
 across machines).
 
+On Windows, do not invoke extensionless scripts directly from PowerShell. Use
+the matching `.ps1` wrapper, for example `scripts/tri-daily.ps1`, or run the
+extensionless script through Git Bash.
+
 ## Daily workflow
 
 ```

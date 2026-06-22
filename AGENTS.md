@@ -33,6 +33,14 @@ Bash rather than invoking them directly:
 & 'C:\Program Files\Git\bin\bash.exe' scripts/verify-status
 ```
 
+PowerShell wrappers are also available beside the extensionless scripts. When
+staying in PowerShell, prefer the `.ps1` entrypoint:
+
+```powershell
+scripts/check-beads-config.ps1
+scripts/verify-status.ps1
+```
+
 Run embedded-Dolt `bd`/`dolt` commands serially in this repo. Parallel `bd`
 commands can leave Git helper processes or embedded-Dolt locks behind.
 
@@ -109,7 +117,7 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
 - Sign commits with a trailer:
   `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
 - Generate the line with `<mybd-root>/scripts/agent-sig` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
-- From PowerShell on Windows, do not invoke the extensionless Bash script directly; it can exit successfully with no output. Use the wrapper instead:
+- From PowerShell on Windows, do not invoke extensionless shebang scripts directly; they can exit successfully with no output or hang. Use the `.ps1` wrapper instead:
   ```powershell
   scripts/agent-sig.ps1 --trailer
   ```
