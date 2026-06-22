@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dolt Git Remote Sync Stall in mybd</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; line-height: 1.45; max-width: 980px; margin: 32px auto; padding: 0 20px; color: #1f2933; }
+    h1, h2 { line-height: 1.2; }
+    code, pre { font-family: Consolas, ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { background: #f4f6f8; border: 1px solid #d8dee4; border-radius: 6px; padding: 12px; overflow-x: auto; }
+    .meta { color: #52606d; }
+  </style>
+</head>
+<body>
+  <h1>Dolt Git Remote Sync Stall in mybd</h1>
+  <p class="meta">Date: 2026-06-22. Bead: mybd-l6ms.</p>
+
+  <h2>Summary</h2>
+  <p><code>bd dolt pull</code> stalls because the underlying Dolt Git-remote fetch path stalls. The existing <code>A:\dev\mybd\.beads\embeddeddolt\mybd</code> store is not the trigger: a fresh <code>dolt clone --depth 1 git+https://github.com/maphew/mybd.git</code> also stalls, and so does a clone from a local <code>file://</code> mirror created by plain Git.</p>
+  <p>Plain Git can reach and fetch the same GitHub repo and <code>refs/dolt/data</code> quickly. The failure layer is Dolt's Git-remote data pull/import pipeline.</p>
+
+  <h2>Environment</h2>
+  <ul>
+    <li>Windows host: <code>MATT-DESKTOP</code></li>
+    <li>Coordination repo: <code>A:\dev\mybd</code></li>
+    <li>Active beads DB: <code>.beads\embeddeddolt\mybd</code></li>
+    <li><code>bd</code>: <code>c:\users\matt\.local\bin\bd.exe</code>, <code>bd version 1.0.5 (6a3f515ce)</code></li>
+    <li>Windows Dolt: <code>C:\Users\Matt\scoop\shims\dolt.exe</code>, <code>dolt version 2.1.8</code></li>
+    <li>WSL Dolt: <code>/home/linuxbrew/.linuxbrew/bin/dolt</code>, <code>dolt version 2.1.8</code></li>
+    <li>Current upstream Dolt release: <code>v2.1.8</code>, published <code>2026-06-17T16:46:51Z</code></li>
+  </ul>
+
+  <h2>Key Reproductions</h2>
+  <pre><code>bd dolt pull
+# 30 second watchdog: did not exit
+# stdout: Pulling from Dolt remote...</code></pre>
+
+  <pre><code>dolt fetch origin
+# cwd: A:\dev\mybd\.beads\embeddeddolt\mybd
+# 30 second watchdog: did not exit
+# stdout: - Fetching...</code></pre>
+
+  <pre><code>dolt clone --depth 1 git+https://github.com/maphew/mybd.git C:\Users\Matt\AppData\Local\Temp\mybd-l6ms-clone-test
+# 30 second watchdog: did not exit
+# stdout: cloning git+https://github.com/maphew/mybd.git</code></pre>
+
+  <pre><code>git clone --mirror https://github.com/maphew/mybd.git C:\Users\Matt\AppData\Local\Temp\mybd-l6ms-bare.git
+dolt clone --depth 1 git+file:///C:/Users/Matt/AppData/Local/Temp/mybd-l6ms-bare.git C:\Users\Matt\AppData\Local\Temp\mybd-l6ms-local-dolt-clone
+# Git mirror succeeded; Dolt clone did not exit after 30 seconds.</code></pre>
+
+  <pre><code>timeout 60s dolt clone --depth 1 git+https://github.com/maphew/mybd.git mybd-clone
+# WSL Dolt 2.1.8 also timed out.
+# real 60.01
+# user 51.83
+# sys 7.36</code></pre>
+
+  <h2>Controls</h2>
+  <pre><code>git ls-remote https://github.com/maphew/mybd.git HEAD refs/heads/main
+gh repo view maphew/mybd --json nameWithOwner,visibility,defaultBranchRef,url
+git fetch --depth=1 https://github.com/maphew/mybd.git refs/dolt/data:refs/remotes/origin/dolt-data
+
+# refs/dolt/data = a65e18b6015917b7d0c1cc8ace640c36741df905
+# Git pack size = 22.33 MiB</code></pre>
+
+  <h2>Stack Excerpt</h2>
+  <pre><code>golang.org/x/sync/errgroup.(*Group).Wait
+github.com/dolthub/dolt/go/store/datas/pull.(*Puller).Pull
+github.com/dolthub/dolt/go/libraries/doltcore/doltdb.pullHash
+github.com/dolthub/dolt/go/libraries/doltcore/env/actions.fetchRefSpecsWithDepth
+github.com/dolthub/dolt/go/libraries/doltcore/env/actions.ShallowFetchRefSpec
+github.com/dolthub/dolt/go/libraries/doltcore/env/actions.shallowCloneDataPull
+github.com/dolthub/dolt/go/libraries/doltcore/env/actions.CloneRemote
+github.com/dolthub/dolt/go/cmd/dolt/commands.clone</code></pre>
+
+  <p>The tail includes workers in <code>PullTableFileWriter.uploadFilesAndAccumulateUpdates</code>, <code>PullTableFileWriter.addChunkThread</code>, and <code>BufferedFileByteSink.backgroundWrite</code>.</p>
+
+  <h2>Safe Workaround</h2>
+  <ul>
+    <li>Do not run unbounded <code>bd dolt pull</code>, <code>bd dolt push</code>, <code>dolt fetch</code>, <code>dolt pull</code>, <code>dolt push</code>, or <code>dolt clone</code> against <code>git+https://github.com/maphew/mybd.git</code>.</li>
+    <li>Before and after bounded attempts, check <code>pslist bd</code> and <code>pslist dolt</code>.</li>
+    <li>If a bounded attempt hangs, use <code>pskill bd</code> and <code>pskill dolt</code>.</li>
+    <li>Plain Git commands are safe diagnostics only. Do not manually mutate <code>.dolt</code> state with Git plumbing.</li>
+    <li>Skip remote bead sync only for read-only sessions or when explicitly handing off that <code>bd dolt push</code> is blocked by the upstream Dolt issue.</li>
+  </ul>
+
+  <h2>Conclusion</h2>
+  <p>This is not caused by stale <code>bd</code>, stale local schema, GitHub auth, or the existing local <code>.beads</code> database. It reproduces from a fresh clone and from a local Git mirror with Dolt <code>2.1.8</code>. The minimized upstream repro is:</p>
+  <pre><code>dolt clone --depth 1 git+https://github.com/maphew/mybd.git mybd-clone</code></pre>
+</body>
+</html>
+
