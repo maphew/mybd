@@ -109,6 +109,14 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
 - Sign commits with a trailer:
   `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
 - Generate the line with `<mybd-root>/scripts/agent-sig` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
+- From PowerShell on Windows, do not invoke the extensionless Bash script directly; it can exit successfully with no output. Use the wrapper instead:
+  ```powershell
+  scripts/agent-sig.ps1 --trailer
+  ```
+  or call it through Git Bash:
+  ```powershell
+  & 'C:\Program Files\Git\bin\bash.exe' scripts/agent-sig --trailer
+  ```
 - Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If reliable metadata is unavailable, keep the script's `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
 For Amp, read session metadata from the local Amp state, not from the system prompt or memory. The active thread id is in `AMP_CURRENT_THREAD_ID`.
