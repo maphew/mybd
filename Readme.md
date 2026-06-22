@@ -53,6 +53,7 @@ git -C main worktree prune
 - Each worktree has its own working directory state but shares the repository history
 - Branches checked out in one worktree cannot be checked out in another simultaneously
 - See the [beads repository](https://github.com/maphew/beads) for development guidelines
+- mybd remote sync note: the existing `A:\dev\mybd` clone is repaired; `bd dolt pull` / `bd dolt push` work but are slow (roughly 20-30 seconds) and must be run serially. Do not fresh-bootstrap/clone this repo or run unbounded Dolt remote operations; see [dolthub/dolt#11236](https://github.com/dolthub/dolt/issues/11236) and bead `mybd-iihf`.
 
 ## Current Worktrees
 
