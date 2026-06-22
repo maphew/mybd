@@ -236,9 +236,34 @@ github.com/dolthub/dolt/go/store/nbs.(*BufferedFileByteSink).backgroundWrite
 
 ## Safe Workaround
 
-Until Dolt Git-remote fetch is fixed for this data ref:
+After the initial investigation, the local clone was made usable again by
+running:
 
-- Do not run unbounded `bd dolt pull`, `bd dolt push`, `dolt fetch`, `dolt pull`, `dolt push`, or `dolt clone` against `git+https://github.com/maphew/mybd.git`.
+```powershell
+bd dolt push --force
+```
+
+That completed in about 63 seconds and changed the remote `refs/dolt/data` from
+`a65e18b6015917b7d0c1cc8ace640c36741df905` to
+`a260d364ad2b628757d879c1ee31dd0835554b1c`. A normal `bd dolt pull` then
+completed in about 29 seconds, and a normal `bd dolt push` completed in about
+27 seconds. A later notes update and normal `bd dolt push` advanced the remote
+data ref to `cb890fa28a81e67a878a2ed8b60e7c7cdf2a8b29`.
+
+Important limitation: a fresh clone still timed out after 120 seconds:
+
+```powershell
+dolt clone --depth 1 git+https://github.com/maphew/mybd.git C:\Users\Matt\AppData\Local\Temp\mybd-l6ms-repaired-clone-test
+```
+
+So the force push restored day-to-day sync for the existing local clone, but it
+did not fix the upstream Dolt clone/import bug. New clones or bootstraps should
+still be treated as blocked by dolthub/dolt#11236.
+
+Until Dolt Git-remote clone/import is fixed:
+
+- Do not run unbounded `dolt clone`, `dolt fetch`, or bootstrap operations against `git+https://github.com/maphew/mybd.git`.
+- Existing clone `A:\dev\mybd` can use `bd dolt pull` / `bd dolt push`, but keep bounded watchdogs while dolthub/dolt#11236 is open.
 - Before and after any bounded attempt, confirm there are no lingering processes:
 
 ```powershell
@@ -254,7 +279,7 @@ pskill dolt
 ```
 
 - Plain `git ls-remote` and `git fetch refs/dolt/data` are safe diagnostics only. Do not use Git plumbing to manually mutate `.dolt` state.
-- It is safe to skip remote bead sync only for read-only sessions or when explicitly handing off that `bd dolt push` is blocked by the upstream Dolt issue. Local bead state changes will otherwise remain stranded on this machine.
+- It is safe to skip remote bead sync only for read-only sessions or when explicitly handing off that `bd dolt push` is blocked. Local bead state changes will otherwise remain stranded on this machine.
 
 ## Conclusion
 
@@ -263,4 +288,3 @@ This is not caused by stale `bd`, stale local schema, GitHub auth, or the existi
 ```bash
 dolt clone --depth 1 git+https://github.com/maphew/mybd.git mybd-clone
 ```
-

@@ -75,12 +75,19 @@ github.com/dolthub/dolt/go/cmd/dolt/commands.clone</code></pre>
   <p>The tail includes workers in <code>PullTableFileWriter.uploadFilesAndAccumulateUpdates</code>, <code>PullTableFileWriter.addChunkThread</code>, and <code>BufferedFileByteSink.backgroundWrite</code>.</p>
 
   <h2>Safe Workaround</h2>
+  <p>After the initial investigation, the local clone was made usable again by running:</p>
+  <pre><code>bd dolt push --force</code></pre>
+  <p>That completed in about 63 seconds and changed remote <code>refs/dolt/data</code> from <code>a65e18b6015917b7d0c1cc8ace640c36741df905</code> to <code>a260d364ad2b628757d879c1ee31dd0835554b1c</code>. A normal <code>bd dolt pull</code> then completed in about 29 seconds, and a normal <code>bd dolt push</code> completed in about 27 seconds. A later notes update and normal <code>bd dolt push</code> advanced the remote data ref to <code>cb890fa28a81e67a878a2ed8b60e7c7cdf2a8b29</code>.</p>
+  <p>Important limitation: a fresh clone still timed out after 120 seconds:</p>
+  <pre><code>dolt clone --depth 1 git+https://github.com/maphew/mybd.git C:\Users\Matt\AppData\Local\Temp\mybd-l6ms-repaired-clone-test</code></pre>
+  <p>So the force push restored day-to-day sync for the existing local clone, but it did not fix the upstream Dolt clone/import bug. New clones or bootstraps should still be treated as blocked by dolthub/dolt#11236.</p>
   <ul>
-    <li>Do not run unbounded <code>bd dolt pull</code>, <code>bd dolt push</code>, <code>dolt fetch</code>, <code>dolt pull</code>, <code>dolt push</code>, or <code>dolt clone</code> against <code>git+https://github.com/maphew/mybd.git</code>.</li>
+    <li>Do not run unbounded <code>dolt clone</code>, <code>dolt fetch</code>, or bootstrap operations against <code>git+https://github.com/maphew/mybd.git</code>.</li>
+    <li>Existing clone <code>A:\dev\mybd</code> can use <code>bd dolt pull</code> / <code>bd dolt push</code>, but keep bounded watchdogs while dolthub/dolt#11236 is open.</li>
     <li>Before and after bounded attempts, check <code>pslist bd</code> and <code>pslist dolt</code>.</li>
     <li>If a bounded attempt hangs, use <code>pskill bd</code> and <code>pskill dolt</code>.</li>
     <li>Plain Git commands are safe diagnostics only. Do not manually mutate <code>.dolt</code> state with Git plumbing.</li>
-    <li>Skip remote bead sync only for read-only sessions or when explicitly handing off that <code>bd dolt push</code> is blocked by the upstream Dolt issue.</li>
+    <li>Skip remote bead sync only for read-only sessions or when explicitly handing off that <code>bd dolt push</code> is blocked.</li>
   </ul>
 
   <h2>Conclusion</h2>
@@ -88,4 +95,3 @@ github.com/dolthub/dolt/go/cmd/dolt/commands.clone</code></pre>
   <pre><code>dolt clone --depth 1 git+https://github.com/maphew/mybd.git mybd-clone</code></pre>
 </body>
 </html>
-

@@ -1,0 +1,16 @@
+7acd787246111d57ad5aab3c534e65ff39bf7ba1	HEAD
+a65e18b6015917b7d0c1cc8ace640c36741df905	refs/dolt/data
+5cbbe774afc475eda5e260921de9fa4dbccd8f42	refs/heads/__dolt_remote_info__
+c7fcbc1e0a7cb69703c5a0590c2bf493b4faf4f7	refs/heads/beads-sync
+afecc9b6a4d1eb98fbd5ba7aa39b96f2010b46af	refs/heads/cgo-rootcause-s1-proof
+5dd8e7d467a02105a473dcf491973ab170e0a767	refs/heads/cmd-audit
+119480c87aa6723a29d817e1d687e5593b501ffa	refs/heads/fix-mybd-908
+f30fe1bea54c0637ead6afa2c812a6a6361dceae	refs/heads/fix-mybd-909
+917367572277e140ef82473fd4dc6212f5c8f8db	refs/heads/fix-mybd-910
+917367572277e140ef82473fd4dc6212f5c8f8db	refs/heads/fix-mybd-911
+f347a17e2b0a5305ce7eb592b2711d72d8339a2f	refs/heads/fix-mybd-912
+9406c91c2611de5b411576482fa362e50bf969a7	refs/heads/fix-mybd-914
+74bcccea90feb249fedebfd9abcc3e12ca478257	refs/heads/fix/beads-config-guard
+7acd787246111d57ad5aab3c534e65ff39bf7ba1	refs/heads/main
+30e813646d566f3367a203aa4604f4e2dfc04a74	refs/heads/session/agent_6973f221-b5d1-4425-85a8-3fcb8e442572
+c28fad7c095a12f413d7f887a15e667eb5bec003	refs/heads/work/mk1
