@@ -51,13 +51,23 @@ case "$runtime" in
     effort="${effort:-${CLAUDE_EFFORT:-}}"
     ;;
   codex)
-    # Most recent thread in the state db whose cwd matches; the TUI log
-    # (${CODEX_HOME:-~/.codex}/log/codex-tui.log) is a secondary source with
-    # per-turn model= / codex.turn.reasoning_effort= fields.
+    # Prefer the live thread id when available. On Windows, Codex stores cwd in
+    # extended form (\\?\A:\path) while Git Bash reports /a/path, so cwd-only
+    # matching misses active sessions.
     db="${CODEX_HOME:-$HOME/.codex}/state_5.sqlite"
     if [ -z "$model" ] && [ -f "$db" ]; then
-      row=$(sqlite3 -separator '|' "$db" \
-        "select coalesce(model,''), coalesce(reasoning_effort,'') from threads where cwd='$(pwd)' order by updated_at desc limit 1;" 2>/dev/null || true)
+      row=""
+      if [ -n "${CODEX_THREAD_ID:-}" ]; then
+        thread_id_sql=${CODEX_THREAD_ID//\'/\'\'}
+        row=$(sqlite3 -separator '|' "$db" \
+          "select coalesce(model,''), coalesce(reasoning_effort,'') from threads where id='$thread_id_sql' limit 1;" 2>/dev/null || true)
+      fi
+      if [ -z "$row" ]; then
+        cwd_sql=$(pwd)
+        cwd_sql=${cwd_sql//\'/\'\'}
+        row=$(sqlite3 -separator '|' "$db" \
+          "select coalesce(model,''), coalesce(reasoning_effort,'') from threads where cwd='$cwd_sql' order by updated_at desc limit 1;" 2>/dev/null || true)
+      fi
       model="${row%%|*}"
       [ "$row" != "$model" ] && effort="${effort:-${row#*|}}"
     fi
