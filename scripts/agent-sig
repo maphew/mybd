@@ -44,9 +44,18 @@ case "$runtime" in
     # "claude". CLAUDE_EFFORT tracks /effort; under Fable's `auto` it may
     # report a resolved level rather than the literal "auto" - sign as-is.
     if [ -z "$model" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-      f="$HOME/.claude/projects/$(pwd | sed 's#/#-#g')/$CLAUDE_CODE_SESSION_ID.jsonl"
-      model=$(jq -r 'select(.message.model) | .message.model' "$f" 2>/dev/null | tail -1 || true)
-      model=${model#claude-}
+      # Locate the transcript by its globally-unique session id. Claude Code
+      # stores it under a project dir derived from the launch cwd; rebuilding
+      # that path from $(pwd) breaks when agent-sig runs from a worktree or a
+      # subdirectory, so glob across every project dir and take the newest.
+      f=$(ls -t "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl 2>/dev/null | head -1 || true)
+      if [ -n "$f" ] && [ -r "$f" ]; then
+        # Last real assistant-message model. Skip "<synthetic>" (interrupt and
+        # placeholder messages); it can be the final entry right after a user
+        # interrupt and would otherwise win.
+        model=$(jq -r 'select(.message.model and .message.model != "<synthetic>") | .message.model' "$f" 2>/dev/null | tail -1 || true)
+        model=${model#claude-}
+      fi
     fi
     effort="${effort:-${CLAUDE_EFFORT:-}}"
     ;;
