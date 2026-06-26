@@ -84,6 +84,22 @@ case "$runtime" in
 esac
 
 user=$(git config user.name 2>/dev/null || true)
+
+# Surface unresolved fields loudly so a placeholder signature can't ride out
+# silently onto a commit or comment. The common Windows cause is invoking this
+# via the PowerShell tool, whose subprocess environment lacks CLAUDE_EFFORT (and
+# bash spawned from it inherits that gap); run it via the Bash tool / Git Bash,
+# or pass AGENT_MODEL / AGENT_REASONING explicitly.
+if [ -z "${model:-}" ] || [ -z "${effort:-}" ]; then
+  {
+    printf 'agent-sig: warning: unresolved'
+    [ -z "${model:-}" ] && printf ' model'
+    [ -z "${effort:-}" ] && printf ' reasoning'
+    printf ' - signature uses placeholder(s).\n'
+    printf 'agent-sig: run via the Bash tool / Git Bash (not the PowerShell tool, whose env lacks CLAUDE_EFFORT), or set AGENT_MODEL / AGENT_REASONING.\n'
+  } >&2
+fi
+
 sig="${runtime}-${model:-unknown-model}-${effort:-unknown-reasoning} on behalf of ${user:-$(whoami)}"
 
 if [ "$form" = trailer ]; then

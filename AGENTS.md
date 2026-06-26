@@ -116,15 +116,16 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
   `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
 - Sign commits with a trailer:
   `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
-- Generate the line with `<mybd-root>/scripts/agent-sig` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
-- From PowerShell on Windows, do not invoke extensionless shebang scripts directly; they can exit successfully with no output or hang. Use the `.ps1` wrapper instead:
-  ```powershell
-  scripts/agent-sig.ps1 --trailer
+- Generate the line with `<mybd-root>/scripts/agent-sig.sh` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig.sh kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
+- **Run it via the Bash tool / Git Bash, never the PowerShell tool.** For Claude Code the `{reasoning}` field is read from `CLAUDE_EFFORT`, which is exported only into Bash-tool subprocesses — the PowerShell-tool environment lacks it (and bash spawned from there inherits the gap), so a PowerShell-tool invocation silently produces `unknown-reasoning`. There is intentionally no `.ps1` wrapper for this script for that reason; the `.sh` extension signals "run through bash". Invoke it as:
+  ```bash
+  scripts/agent-sig.sh --trailer
   ```
-  or call it through Git Bash:
+  or explicitly through Git Bash from elsewhere:
   ```powershell
-  & 'C:\Program Files\Git\bin\bash.exe' scripts/agent-sig --trailer
+  & 'C:\Program Files\Git\bin\bash.exe' scripts/agent-sig.sh --trailer
   ```
+  The script warns on stderr when it falls back to a placeholder, so heed that warning rather than posting the signature.
 - Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If reliable metadata is unavailable, keep the script's `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
 For Amp, read session metadata from the local Amp state, not from the system prompt or memory. The active thread id is in `AMP_CURRENT_THREAD_ID`.

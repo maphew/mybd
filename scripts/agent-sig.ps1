@@ -1,3 +1,0 @@
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& (Join-Path $scriptDir '_invoke-shebang.ps1') 'agent-sig' @args
-exit $LASTEXITCODE
