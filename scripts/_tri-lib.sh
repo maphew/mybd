@@ -64,10 +64,11 @@ tri_log_note() {
 
 # Resolve a bd-id (or short pr num) to a bd-id. Accepts:
 #   mybd-XXX           → as-is (validated by bd show)
+#   mybd-XXX.N[.M...]  → child/grandchild ids (dotted numeric suffix)
 #   #NNNN  / NNNN      → searches bd by external_ref gh-pr-NNNN
 tri_resolve_bd_id() {
   local input="$1"
-  if [[ "$input" =~ ^mybd-[a-z0-9]+$ ]]; then
+  if [[ "$input" =~ ^mybd-[a-z0-9]+(\.[0-9]+)*$ ]]; then
     echo "$input"
     return 0
   fi
