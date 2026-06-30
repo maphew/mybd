@@ -175,6 +175,43 @@ git -C bd-main worktree add ../.worktrees/beads/pr-4028-review <branch>
 
 The `mybd/` root should contain only the coordination repo files, the nested `bd-main/` clone, and ignored container directories such as `.worktrees/`.
 
+#### Coordination-repo worktrees
+
+The same rule applies to the coordination repo itself, not just `bd-main/`.
+Coordination-repo work that makes **git commits** must run from a worktree on a
+topic branch, created under the tracked-ignored container parallel to the beads
+pattern:
+
+`<mybd-root>/.worktrees/mybd/<short-purpose>`
+
+```bash
+git worktree add .worktrees/mybd/<short-purpose> -b feat/<short-purpose>
+```
+
+Pure **bead-only** sessions may stay in the root checkout: bead state syncs via
+Dolt (`bd dolt push`/`pull`), not git, and `export.auto=false`/no-git-ops means
+those sessions make no commits to race over.
+
+Why: on 2026-05-29 two agents shared the root checkout (no worktree); one ran
+`git checkout` to a new branch mid-session, racing the other's commits. Working
+from a per-task worktree keeps each agent's index and HEAD isolated.
+
+A tracked, **opt-in** pre-commit guard backs this convention:
+`.githooks/pre-commit`. It fires only in the MAIN checkout (linked worktrees are
+a no-op), warns by default, and points you at the worktree command. It is **not**
+auto-enabled. The owner turns it on with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Once enabled it composes with `scripts/pre-commit-beads-config` (chained when
+the tracker DB is present). Two env knobs tune it:
+
+- `MYBD_ENFORCE_ROOT_GUARD=1` — make a root commit a hard block instead of a warning.
+- `MYBD_ALLOW_ROOT_COMMIT=1` — escape hatch for a deliberate root commit
+  (config/policy, `.beads` tracker state, `reports/`).
+
 ### Local Verification Queue
 
 Long beads source validation must not block implementation agents unless they

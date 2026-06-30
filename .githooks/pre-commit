@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# pre-commit — coordination-repo (mybd) worktree guard. See bead mybd-cw59.
+#
+# Why: on 2026-05-29 two agents shared the mybd ROOT checkout (no worktree);
+# one ran `git checkout` to a new branch mid-session, racing the other's
+# commits. The "use git worktrees by default" rule already existed in AGENTS.md
+# but was prose-only with no mechanical reminder. This hook nudges (default) or
+# blocks (opt-in) commits made from the MAIN coordination-repo checkout, to
+# steer commit-making work onto a topic branch under
+# <mybd-root>/.worktrees/mybd/<short-purpose>.
+#
+# Scope: fires ONLY in the MAIN worktree. A linked worktree is the desired
+# place to work, so the entire hook is a no-op there (this also avoids running
+# the beads tracker-DB guard in worktrees, where the embedded Dolt DB
+# .beads/embeddeddolt/ is absent).
+#
+# Composition: in the MAIN worktree this is the umbrella pre-commit hook. It
+# first chains to the existing beads-config guard (scripts/pre-commit-beads-config)
+# when the tracker DB is present, then applies the root-worktree check. It does
+# not clobber that guard.
+#
+# Behavior in MAIN:
+#   * Default is WARN: the commit still proceeds, so legitimate root commits
+#     (.beads tracker state, reports/, config/policy changes) keep working.
+#   * MYBD_ENFORCE_ROOT_GUARD=1 -> hard-block root commits.
+#   * MYBD_ALLOW_ROOT_COMMIT=1  -> escape hatch: allow + silence the warning,
+#     for deliberate owner commits in root.
+#
+# Activation is opt-in and left to the repo owner:
+#     git config core.hooksPath .githooks
+# This change does NOT enable the hook for anyone.
+
+set -euo pipefail
+
+# --- main vs linked worktree detection (do this first) ---
+# A linked worktree's git-dir lives under <common>/worktrees/<name>, so its
+# git-dir differs from the common git-dir. In the MAIN worktree they are equal.
+abs_path() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *)  ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1" ;;
+  esac
+}
+
+git_dir="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null \
+  || abs_path "$(git rev-parse --git-dir)")"
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null \
+  || abs_path "$(git rev-parse --git-common-dir)")"
+
+if [ "$git_dir" != "$common_dir" ]; then
+  exit 0   # linked worktree — the desired place to work; allow silently
+fi
+
+# --- here: committing from the MAIN coordination-repo checkout ---
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+# Chain to the existing beads tracker-DB guard (compose, do not clobber).
+# Only when the live embedded Dolt DB is present, so we never introduce a new
+# failure mode on checkouts that have not initialized the tracker yet. Its
+# non-zero exit blocks the commit exactly as it would if wired directly.
+if [ -d "$ROOT/.beads/embeddeddolt" ] && [ -x "$ROOT/scripts/pre-commit-beads-config" ]; then
+  "$ROOT/scripts/pre-commit-beads-config"
+fi
+
+# --- escape hatch: deliberate root commit ---
+if [ "${MYBD_ALLOW_ROOT_COMMIT:-0}" = "1" ]; then
+  exit 0
+fi
+
+branch="$(git symbolic-ref --short -q HEAD || echo DETACHED)"
+
+msg() { printf '%s\n' "$*" >&2; }
+
+msg "pre-commit: committing from the mybd ROOT checkout (branch: $branch)."
+msg ""
+msg "  Coordination-repo work that makes git commits should use a worktree on a"
+msg "  topic branch, to avoid racing a parallel agent that shares this checkout"
+msg "  (2026-05-29 shared-root incident, bead mybd-cw59):"
+msg ""
+msg "    git worktree add .worktrees/mybd/<short-purpose> -b feat/<short-purpose>"
+msg ""
+msg "  Pure bead-only sessions may stay in root (bead state syncs via Dolt, not git)."
+msg ""
+msg "  Deliberate root commit (config/policy, .beads tracker state, reports/)?"
+msg "  Re-run with the escape hatch:"
+msg "    MYBD_ALLOW_ROOT_COMMIT=1 git commit ..."
+
+if [ "${MYBD_ENFORCE_ROOT_GUARD:-0}" = "1" ]; then
+  msg ""
+  msg "  MYBD_ENFORCE_ROOT_GUARD=1 is set -> blocking this root commit."
+  exit 1
+fi
+
+msg ""
+msg "  (warn-only; commit proceeds. Set MYBD_ENFORCE_ROOT_GUARD=1 to hard-block.)"
+exit 0
