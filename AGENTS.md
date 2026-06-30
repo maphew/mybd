@@ -246,6 +246,10 @@ cp -rf source dest          # NOT: cp -r source dest
 
 When triaging, reviewing, landing, closing, or otherwise maintaining pull requests, read and apply [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md). The maintainer policy is to maximize community throughput: find useful contributor value, absorb or transform it locally when practical, preserve attribution, and use request-changes only as a last resort.
 
+## Documentation Regeneration
+
+When regenerating beads CLI doc artifacts, build `bd` with `CGO_ENABLED=0 -tags gms_pure_go` (or let `scripts/generate-cli-docs.sh` build its own pinned binary). A default CGO build emits the full `bd federation` help tree and produces ~500 lines of spurious federation churn versus CI, which stubs federation. Set `BD_DOCS_ALLOW_CGO=1` only for a deliberate full-federation regen.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
