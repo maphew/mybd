@@ -9,6 +9,7 @@
 #   VERIFY_WORKTREE_BASE=/var/home/matt/dev/mybd/.worktrees/beads
 #   VERIFY_LOG_DIR=/var/home/matt/dev/mybd/.worktrees/beads/.verify-logs
 #   VERIFY_KEEP_WORKTREE=failed   # always | failed | never
+#   VERIFY_MARK_STALE=1           # 1 = mark unreachable-HEAD jobs stale; 0 = just skip
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
@@ -27,6 +28,11 @@ VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-45m}"
 VERIFY_WORKTREE_BASE="${VERIFY_WORKTREE_BASE:-$TRI_PROJECT_ROOT/.worktrees/beads}"
 VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$VERIFY_WORKTREE_BASE/.verify-logs}"
 VERIFY_KEEP_WORKTREE="${VERIFY_KEEP_WORKTREE:-failed}"
+# When a queued job's recorded HEAD is no longer reachable from the bd-main
+# clone (branch deleted/rebased after enqueue), mark it stale and move on rather
+# than aborting the whole run, so newer valid jobs behind it still get a turn
+# (mybd-l7tp). Set VERIFY_MARK_STALE=0 to skip such jobs without mutating bd.
+VERIFY_MARK_STALE="${VERIFY_MARK_STALE:-1}"
 
 # cgo link fix (mybd-4sw1): the verify command runs under a login shell, whose
 # profile can put linuxbrew gcc ahead of system gcc. That gcc cannot find
@@ -47,34 +53,87 @@ if [[ $# -gt 1 ]]; then
   exit 2
 fi
 
+# Load a queued job's verify_* metadata into the shared globals.
+load_job() {
+  local bd_id="$1"
+  issue_json="$(bd show "$bd_id" --json)"
+  state="$(jq -r '.[0].metadata.verify_state // empty' <<<"$issue_json")"
+  head_sha="$(jq -r '.[0].metadata.verify_head // empty' <<<"$issue_json")"
+  verify_cmd="$(jq -r '.[0].metadata.verify_cmd | if . == null or . == "" then "make test" else tostring end' <<<"$issue_json")"
+  branch="$(jq -r '.[0].metadata.verify_branch | if . == null or . == "" then "unknown" else tostring end' <<<"$issue_json")"
+  [[ -n "$verify_cmd" ]] || verify_cmd="make test"
+}
+
+# True when $1 names a commit object reachable from the bd-main clone.
+head_reachable() {
+  local sha="$1"
+  [[ -n "$sha" ]] || return 1
+  git -C "$TRI_BD_MAIN" cat-file -e "$sha^{commit}" 2>/dev/null
+}
+
+# Mark a job whose recorded HEAD is unreachable as stale (same bd-write
+# mechanism as finish()), so the FIFO loop can move past it. With
+# VERIFY_MARK_STALE=0 the bd record is left untouched and the job is only
+# skipped for this run.
+mark_stale() {
+  local bd_id="$1" sha="$2" reason
+  reason="head-unreachable: ${sha:-<none>} not visible from $TRI_BD_MAIN"
+  if [[ "$VERIFY_MARK_STALE" != "1" ]]; then
+    echo "Skipping $bd_id: $reason (not marking; VERIFY_MARK_STALE=$VERIFY_MARK_STALE)." >&2
+    return 0
+  fi
+  local finished_at
+  finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  bd update "$bd_id" \
+    --set-metadata verify_state=stale \
+    --set-metadata "verify_result=$reason" \
+    --set-metadata "verify_finished_at=$finished_at" \
+    >/dev/null
+  tri_log_note "$bd_id" "verification skipped (stale): $reason"
+  echo "Skipped $bd_id: $reason (marked stale)." >&2
+}
+
 if [[ $# -eq 1 ]]; then
   BD_ID="$(tri_resolve_bd_id "$1")"
+  load_job "$BD_ID"
+  [[ "$state" == "queued" ]] || tri_die "$BD_ID verify_state is '$state', not queued"
+  [[ -n "$head_sha" ]] || tri_die "$BD_ID has no verify_head metadata"
+  if ! head_reachable "$head_sha"; then
+    mark_stale "$BD_ID" "$head_sha"
+    exit 0
+  fi
 else
-  BD_ID="$(
+  # FIFO auto-select. Skip (and mark stale) jobs whose recorded HEAD is no
+  # longer reachable from bd-main so they cannot jam newer valid jobs behind
+  # them in the queue (mybd-l7tp).
+  mapfile -t queued_ids < <(
     bd list --limit 0 --json \
       | jq -r '[.[] | select((.metadata.verify_state // "") == "queued")]
                | sort_by((.priority // 99), (.updated_at // ""))
-               | .[0].id // empty'
-  )"
+               | .[].id'
+  )
+  if [[ ${#queued_ids[@]} -eq 0 ]]; then
+    echo "No queued verification jobs."
+    exit 0
+  fi
+  BD_ID=""
+  for cand in "${queued_ids[@]}"; do
+    load_job "$cand"
+    # State may have changed between listing and load (another runner); requeue
+    # check keeps us honest.
+    [[ "$state" == "queued" ]] || continue
+    if ! head_reachable "$head_sha"; then
+      mark_stale "$cand" "$head_sha"
+      continue
+    fi
+    BD_ID="$cand"
+    break
+  done
+  if [[ -z "$BD_ID" ]]; then
+    echo "No queued verification jobs with a reachable HEAD."
+    exit 0
+  fi
 fi
-
-if [[ -z "$BD_ID" ]]; then
-  echo "No queued verification jobs."
-  exit 0
-fi
-
-issue_json="$(bd show "$BD_ID" --json)"
-state="$(jq -r '.[0].metadata.verify_state // empty' <<<"$issue_json")"
-head_sha="$(jq -r '.[0].metadata.verify_head // empty' <<<"$issue_json")"
-verify_cmd="$(jq -r '.[0].metadata.verify_cmd | if . == null or . == "" then "make test" else tostring end' <<<"$issue_json")"
-branch="$(jq -r '.[0].metadata.verify_branch | if . == null or . == "" then "unknown" else tostring end' <<<"$issue_json")"
-
-[[ "$state" == "queued" ]] || tri_die "$BD_ID verify_state is '$state', not queued"
-[[ -n "$head_sha" ]] || tri_die "$BD_ID has no verify_head metadata"
-[[ -n "$verify_cmd" ]] || verify_cmd="make test"
-
-git -C "$TRI_BD_MAIN" cat-file -e "$head_sha^{commit}" 2>/dev/null \
-  || tri_die "commit $head_sha is not visible from $TRI_BD_MAIN"
 
 mkdir -p "$VERIFY_WORKTREE_BASE" "$VERIFY_LOG_DIR"
 
