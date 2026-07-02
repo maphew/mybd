@@ -156,4 +156,26 @@ is open, nice-to-have for 1.1.</li>
 <li>Local verify queue: two queued jobs (mybd-qagg, mybd-zijx) are unrelated
 to the release; eight stale head-unreachable entries could use a sweep.</li>
 </ul>
+<hr>
+<h2>Outcome addendum (2026-07-02)</h2>
+<p>Executed. Both blockers fixed and shipped in <strong>v1.1.0-rc.2</strong>:</p>
+<ul>
+<li>gastownhall/beads#4538 (merged <code>5589e3f6d</code>): runner pre-repair for the v53
+rig-column drift (#4502, closed) + clone-local <code>ignored/0011</code> orphaned
+child_counters cleanup (#4534, closed). Reporters credited; <code>bd doctor</code>
+follow-up filed as gastownhall/beads#4539.</li>
+<li>#4527, #4530, #4531, #4532 merged. Docs gaps closed (backup step in the
+upgrade recipes, README upgrade pointer, CHANGELOG rc.2 section).</li>
+<li>rc.2 prep merged (#4540, <code>bc9f10a5b</code>); <code>v1.1.0-rc.2</code> tagged and published
+as a GitHub prerelease (10 assets). Release, Migration Test Harness, and
+Cross-Version Smoke workflows all green; CI upgrade-smoke matrix (including
+v1.1.0-rc.1 → candidate and v1.0.4 → candidate) passed. The #4530 fix is
+confirmed live: the rc.2 release page shows RC-specific install
+instructions automatically. rc.1 release notes now carry a superseded
+warning.</li>
+</ul>
+<p>Remaining for stable v1.1.0: soak rc.2, then promotion
+(<code>update-versions.sh 1.1.0</code>, docs snapshot, info.go, tag) and the retargeted
+un-gate checklist (mybd-qb0c): homebrew-core bump (#4533), mark Latest,
+unpin/close #4259 referencing #4266. Tracked in mybd-86as.</p>
 </body></html>
