@@ -88,44 +88,47 @@ The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-pl
 **Owner directive (maphew, 2026-07-03).** Sessions start on a smart model to
 understand the problem and build the plan; execution is then delegated to
 subagents on the cheapest model adequate for each piece. When spawning
-subagents, pick the tier deliberately — do not default everything to the
+subagents, pick the tier deliberately - do not default everything to the
 session model. This is a separate axis from the bead metadata hints above:
 those hints say *which bead work* to delegate, this says *which model tier* to
 run it on.
 
-Named tiers live in `.claude/agents/` — prefer them over ad-hoc spawns:
+Named tiers live in `.claude/agents/` - prefer them over ad-hoc spawns:
 
-- **scout** (haiku, read-only) — searches, file inventories, "where is X",
+- **scout** (haiku, read-only) - searches, file inventories, "where is X",
   summarizing files, running read-only bd/git commands or tests and reporting
   output verbatim.
-- **builder** (sonnet, can edit) — well-scoped implementation with a clear
+- **builder** (sonnet, can edit) - well-scoped implementation with a clear
   spec: exact files named, acceptance criteria stated. Give it a spec, not
   a problem.
-- **reviewer** (opus, read-only) — correctness review of diffs and designs
+- **reviewer** (opus, read-only) - correctness review of diffs and designs
   before integration, especially builder output.
 
 Keep in the orchestrator session (no delegation, or `inherit`): design
 decisions, ambiguous debugging, anything where the spec doesn't exist yet.
 
 Rules of thumb:
-- Prefer several precisely-scoped delegations over one vague one — a
+- Prefer several precisely-scoped delegations over one vague one - a
   subagent that must rediscover context you already hold wastes more than
   its model tier saves.
 - Escalate rather than retry: if a scout/builder result is wrong or the
   task proved harder than scoped, redo it at a higher tier or in-session
   instead of re-spawning the same tier.
-- Do **not** set `CLAUDE_CODE_SUBAGENT_MODEL` — it overrides per-spawn
+- Do **not** set `CLAUDE_CODE_SUBAGENT_MODEL` - it overrides per-spawn
   model choice and flattens this tiering.
-- Subagents share the cwd unless spawned with `isolation=worktree`. When
-  more than one edits files in parallel, isolate them — and remember
-  coordination-repo commits belong in a worktree, never the root checkout.
+- Subagents share the cwd unless spawned with `isolation=worktree`. Spawn any
+  subagent that will commit (e.g. builder) with `isolation=worktree` by
+  default, and always isolate when more than one edits files in parallel:
+  coordination-repo commits belong in a worktree, never the root checkout. A
+  committing subagent that finds itself in the root checkout must stop and
+  report rather than commit.
 
 ## Workflow Orchestration: standing opt-in
 
 **Owner directive (maphew, 2026-07-03): multi-agent Workflow orchestration
 is pre-authorized for every substantive task in this repo.** Treat this
 section as the explicit, durable user opt-in that the Workflow tool
-requires — do not wait for "use a workflow" or the `ultracode` keyword in
+requires - do not wait for "use a workflow" or the `ultracode` keyword in
 a prompt.
 
 - Reach for a workflow whenever a task fans out (multiple files, beads,
@@ -137,13 +140,13 @@ a prompt.
   in the current prompt overrides it. The harness only sets a hard
   `budget.total` from an in-prompt directive, so workflow scripts must
   self-enforce the default:
-  `const TARGET = budget.total ?? 200_000` — check `budget.spent()`
+  `const TARGET = budget.total ?? 200_000` - check `budget.spent()`
   between stages, stop spawning as the target nears, and `log()` any
   coverage dropped because of it.
 - Inside workflows, tier `agent()` calls per the delegation policy above:
   `model: 'haiku', effort: 'low'` for mechanical stages; omit overrides
   (inherit) for design, judge, and verify stages.
-- Run bd/dolt operations serially inside workflows — parallel bd commands
+- Run bd/dolt operations serially inside workflows - parallel bd commands
   can leave Git helper processes or embedded-Dolt locks behind.
 - A *current* prompt saying "no workflow" / "keep it cheap" wins for that
   turn.
