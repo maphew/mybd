@@ -106,11 +106,15 @@ else
   # FIFO auto-select. Skip (and mark stale) jobs whose recorded HEAD is no
   # longer reachable from bd-main so they cannot jam newer valid jobs behind
   # them in the queue (mybd-l7tp).
+  # Strip any trailing CR: on Windows the bd/jq pipeline can emit CRLF
+  # line terminators, and mapfile -t only strips LF, leaving a trailing \r
+  # on each id that makes bd reject it (mybd-5tz0 papercut).
   mapfile -t queued_ids < <(
     bd list --limit 0 --json \
       | jq -r '[.[] | select((.metadata.verify_state // "") == "queued")]
                | sort_by((.priority // 99), (.updated_at // ""))
-               | .[].id'
+               | .[].id' \
+      | tr -d '\r'
   )
   if [[ ${#queued_ids[@]} -eq 0 ]]; then
     echo "No queued verification jobs."
