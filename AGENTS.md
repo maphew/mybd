@@ -185,7 +185,7 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
 - Sign commits with a trailer:
   `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
 - Generate the line with `<mybd-root>/scripts/agent-sig.sh` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig.sh kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
-- **Run it via the Bash tool / Git Bash, never the PowerShell tool.** For Claude Code the `{reasoning}` field is read from `CLAUDE_EFFORT`, which is exported only into Bash-tool subprocesses — the PowerShell-tool environment lacks it (and bash spawned from there inherits the gap), so a PowerShell-tool invocation silently produces `unknown-reasoning`. There is intentionally no `.ps1` wrapper for this script for that reason; the `.sh` extension signals "run through bash". Invoke it as:
+- **Run it via the Bash tool / Git Bash, never the PowerShell tool.** For Claude Code the `{reasoning}` field is read from `CLAUDE_EFFORT`, which is exported only into Bash-tool subprocesses - the PowerShell-tool environment lacks it (and bash spawned from there inherits the gap), so a PowerShell-tool invocation silently produces `unknown-reasoning`. There is intentionally no `.ps1` wrapper for this script for that reason; the `.sh` extension signals "run through bash". Invoke it as:
   ```bash
   scripts/agent-sig.sh --trailer
   ```
@@ -222,8 +222,8 @@ The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **n
 
 | Path | `origin` | `upstream` | Purpose |
 |------|----------|------------|---------|
-| `~/dev/mybd/` | `maphew/mybd` | — | Coordination: beads issues, notes, agent config |
-| `~/dev/mybd/bd-main/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads source — code edits, builds, PRs happen here |
+| `~/dev/mybd/` | `maphew/mybd` | - | Coordination: beads issues, notes, agent config |
+| `~/dev/mybd/bd-main/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads source - code edits, builds, PRs happen here |
 
 In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo.
 
@@ -276,8 +276,8 @@ git config core.hooksPath .githooks
 Once enabled it composes with `scripts/pre-commit-beads-config` (chained when
 the tracker DB is present). Two env knobs tune it:
 
-- `MYBD_ENFORCE_ROOT_GUARD=1` — make a root commit a hard block instead of a warning.
-- `MYBD_ALLOW_ROOT_COMMIT=1` — escape hatch for a deliberate root commit
+- `MYBD_ENFORCE_ROOT_GUARD=1` - make a root commit a hard block instead of a warning.
+- `MYBD_ALLOW_ROOT_COMMIT=1` - escape hatch for a deliberate root commit
   (config/policy, `.beads` tracker state, `reports/`).
 
 ### Local Verification Queue
@@ -371,9 +371,9 @@ bd close <id>         # Complete work
 
 ### Rules
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- Use `bd` for ALL task tracking - do NOT use TodoWrite, TaskCreate, or markdown TODO lists
 - Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Use `bd remember` for persistent knowledge - do NOT use MEMORY.md files
 
 ## Session Completion
 
