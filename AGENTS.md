@@ -123,6 +123,61 @@ Rules of thumb:
   committing subagent that finds itself in the root checkout must stop and
   report rather than commit.
 
+### Cross-runtime delegation: Codex CLI
+
+OpenAI Codex CLI is installed and authenticated on this machine (repo
+trusted in `~/.codex/config.toml`; `bd prime` fires via `.codex/hooks.json`
+in Codex sessions too). `codex exec` is a fourth executor alongside the
+Claude subagent tiers, invoked from any runtime via the shell. Use
+`scripts/codex-agent`, which maps the same tier names onto Codex
+model/sandbox/reasoning defaults:
+
+```bash
+scripts/codex-agent scout    "where is X handled?"          # gpt-5.4-mini, low, read-only, ephemeral
+scripts/codex-agent builder  -C .worktrees/mybd/foo "..."   # gpt-5.4, medium, workspace-write
+scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.5, high, read-only
+scripts/codex-agent reviewer --diff --base main             # structured `codex review` of a branch diff
+```
+
+When to route to Codex instead of a Claude subagent:
+
+- **Second opinion across model vendors** - reviews, design assessments, and
+  bug hunts where an independent model family catches what same-family
+  agents miss. This is the highest-value use: pair `codex-agent reviewer`
+  with the Claude `reviewer` agent on the same diff and compare.
+- **Quota relief** - Codex bills to the ChatGPT plan, a separate pool from
+  Claude. Its tokens do NOT count toward workflow `budget.spent()` or a
+  "+Nk" directive, so `log()` Codex delegations in workflows instead of
+  assuming the budget captured them.
+- **Long mechanical work** that would otherwise burn session context.
+- **Bead routing hints** - when a bead's `execution_suggested_model`
+  metadata names an OpenAI model (e.g. `gpt-5.5`), route that bead's work
+  through `codex-agent` at the tier implied by `execution_agent_type` and
+  `execution_reasoning_effort` (see `.codex/skills/beads-delegation-planner/`).
+
+Rules (the wrapper enforces the first two):
+
+- Non-interactive Codex never prompts for approval; the sandbox mode must
+  always be set explicitly (`read-only` / `workspace-write` /
+  `danger-full-access` - never the last in this repo).
+- `builder` must target a linked worktree via `-C`; the wrapper exits 3 on
+  a main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
+- Close stdin (`</dev/null`) when scripting - `codex exec` appends piped
+  stdin to the prompt. Capture results with `-o <file>` (final message),
+  `--json` (JSONL events incl. token usage), or `--output-schema <file>`
+  (structured output, analogous to workflow `agent()` schemas).
+- Continue a Codex session with `codex exec resume <session-id>` (id is
+  printed in the run header) rather than re-explaining context.
+- Commits made by a Codex delegate follow the same signing convention;
+  from an orchestrating runtime generate the trailer with
+  `AGENT_MODEL=<model> AGENT_REASONING=<effort> scripts/agent-sig.sh codex --trailer`.
+- The escalation rule above applies across runtimes: a wrong Codex scout or
+  builder result gets redone at a higher tier (either vendor) or
+  in-session, not re-spawned at the same tier.
+- Codex runs in this repo trigger `bd prime` on session start, and bd/dolt
+  must stay serial: do not fan out parallel Codex runs against the
+  coordination repo; parallelize in beads source worktrees instead.
+
 ## Workflow Orchestration: standing opt-in
 
 **Owner directive (maphew, 2026-07-03): multi-agent Workflow orchestration
@@ -146,6 +201,10 @@ a prompt.
 - Inside workflows, tier `agent()` calls per the delegation policy above:
   `model: 'haiku', effort: 'low'` for mechanical stages; omit overrides
   (inherit) for design, judge, and verify stages.
+- For verify/judge stages that benefit from vendor diversity, one agent may
+  shell out to `scripts/codex-agent reviewer ... </dev/null` (see
+  Cross-runtime delegation above). Codex tokens bypass `budget.spent()`,
+  so `log()` each Codex call and keep such runs serial in this repo.
 - Run bd/dolt operations serially inside workflows - parallel bd commands
   can leave Git helper processes or embedded-Dolt locks behind.
 - A *current* prompt saying "no workflow" / "keep it cheap" wins for that
