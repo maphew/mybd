@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# codex-agent - run OpenAI Codex CLI non-interactively at a named delegation tier.
+#
+# Maps the repo's subagent tiers (AGENTS.md "Agent Delegation") onto
+# `codex exec` model/sandbox/reasoning defaults so Claude Code, Codex, and
+# humans all delegate to Codex the same way:
+#
+#   scout    read-only recon        gpt-5.4-mini, low reasoning, ephemeral
+#   builder  scoped implementation  gpt-5.4, medium reasoning, workspace-write
+#   reviewer correctness review     gpt-5.5, high reasoning, read-only
+#
+# Usage:
+#   scripts/codex-agent <scout|builder|reviewer> [-C <dir>] [extra codex flags] "<prompt>"
+#   scripts/codex-agent reviewer --diff [--base <branch> | --uncommitted | --commit <sha>]
+#     (a custom focus prompt is only accepted without those range flags)
+#   echo "<prompt>" | scripts/codex-agent scout -
+#
+# Extra flags are passed through to codex verbatim (e.g. -o FILE to capture
+# the final message, --json for JSONL events, --output-schema FILE for
+# structured output, -m/-c to override the tier defaults).
+#
+# Guard rails:
+#   - builder must target a linked worktree, never a main checkout
+#     (CODEX_AGENT_ALLOW_ROOT=1 overrides, mirroring MYBD_ALLOW_ROOT_COMMIT).
+#   - non-interactive codex never prompts for approval, so the sandbox mode
+#     is always set explicitly here.
+
+set -euo pipefail
+
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+tier="${1:-}"
+case "$tier" in
+  scout|builder|reviewer) shift ;;
+  -h|--help|"") usage; exit 0 ;;
+  *) echo "codex-agent: unknown tier '$tier' (scout|builder|reviewer)" >&2; exit 2 ;;
+esac
+
+workdir="$PWD"
+args=("$@")
+for i in "${!args[@]}"; do
+  case "${args[$i]}" in
+    -C|--cd) workdir="${args[$((i+1))]:-$workdir}" ;;
+    --cd=?*) workdir="${args[$i]#--cd=}" ;;
+    -C?*)    workdir="${args[$i]#-C}" ;;
+  esac
+done
+
+# reviewer --diff routes to `codex review` (structured diff review) instead
+# of a free-form exec prompt. `codex review` takes no -C/--cd flag, so the
+# wrapper strips it and cd's to the target worktree itself.
+diff_mode=0
+if [ "$tier" = reviewer ]; then
+  for a in "$@"; do [ "$a" = "--diff" ] && diff_mode=1; done
+fi
+if [ "$diff_mode" = 1 ]; then
+  pass=(); skip=0
+  for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in
+      -C|--cd) skip=1 ;;
+      --cd=?*|-C?*) ;;
+      --diff) ;;
+      *) pass+=("$a") ;;
+    esac
+  done
+  cd "$workdir"
+  exec codex review -c model='"gpt-5.5"' \
+    -c model_reasoning_effort='"high"' ${pass[@]+"${pass[@]}"}
+fi
+
+if [ "$tier" = builder ] && [ "${CODEX_AGENT_ALLOW_ROOT:-0}" != "1" ]; then
+  gitdir=$(git -C "$workdir" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+  common=$(git -C "$workdir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$gitdir" ] && [ "$gitdir" = "$common" ]; then
+    echo "codex-agent: builder targets a MAIN checkout ($workdir)." >&2
+    echo "  Point it at a worktree: -C <mybd-root>/.worktrees/{mybd,beads}/<purpose>" >&2
+    echo "  (CODEX_AGENT_ALLOW_ROOT=1 to override deliberately.)" >&2
+    exit 3
+  fi
+fi
+
+case "$tier" in
+  scout)
+    exec codex exec -s read-only -m gpt-5.4-mini \
+      -c model_reasoning_effort='"low"' --ephemeral "$@" ;;
+  builder)
+    exec codex exec -s workspace-write -m gpt-5.4 \
+      -c model_reasoning_effort='"medium"' "$@" ;;
+  reviewer)
+    exec codex exec -s read-only -m gpt-5.5 \
+      -c model_reasoning_effort='"high"' "$@" ;;
+esac
