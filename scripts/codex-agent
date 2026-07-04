@@ -67,8 +67,8 @@ if [ "$diff_mode" = 1 ]; then
 fi
 
 if [ "$tier" = builder ] && [ "${CODEX_AGENT_ALLOW_ROOT:-0}" != "1" ]; then
-  gitdir=$(git -C "$workdir" rev-parse --git-dir 2>/dev/null || true)
-  common=$(git -C "$workdir" rev-parse --git-common-dir 2>/dev/null || true)
+  gitdir=$(git -C "$workdir" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+  common=$(git -C "$workdir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   if [ -n "$gitdir" ] && [ "$gitdir" = "$common" ]; then
     echo "codex-agent: builder targets a MAIN checkout ($workdir)." >&2
     echo "  Point it at a worktree: -C <mybd-root>/.worktrees/{mybd,beads}/<purpose>" >&2
