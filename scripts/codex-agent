@@ -47,13 +47,17 @@ done
 # reviewer --diff routes to `codex review` (structured diff review) instead
 # of a free-form exec prompt. `codex review` takes no -C/--cd flag, so the
 # wrapper strips it and cd's to the target worktree itself.
-if [ "$tier" = reviewer ] && [ "${1:-}" = "--diff" ]; then
-  shift
+diff_mode=0
+if [ "$tier" = reviewer ]; then
+  for a in "$@"; do [ "$a" = "--diff" ] && diff_mode=1; done
+fi
+if [ "$diff_mode" = 1 ]; then
   pass=(); skip=0
   for a in "$@"; do
     if [ "$skip" = 1 ]; then skip=0; continue; fi
     case "$a" in
       -C|--cd) skip=1 ;;
+      --diff) ;;
       *) pass+=("$a") ;;
     esac
   done
