@@ -162,12 +162,15 @@ Rules (the wrapper enforces the first two):
   `danger-full-access` - never the last in this repo).
 - `builder` must target a linked worktree via `-C`; the wrapper exits 3 on
   a main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
-- Close stdin (`</dev/null`) when scripting - `codex exec` appends piped
-  stdin to the prompt. Capture results with `-o <file>` (final message),
+- Close stdin (`</dev/null`) when scripting - with no prompt argument
+  `codex exec` reads the prompt from piped stdin, and with one it appends
+  stdin as an extra block. Capture results with `-o <file>` (final message),
   `--json` (JSONL events incl. token usage), or `--output-schema <file>`
   (structured output, analogous to workflow `agent()` schemas).
-- Continue a Codex session with `codex exec resume <session-id>` (id is
-  printed in the run header) rather than re-explaining context.
+- Continue a builder or reviewer Codex session with
+  `codex exec resume <session-id>` (id is printed in the run header) rather
+  than re-explaining context. Scout runs are `--ephemeral` and cannot be
+  resumed.
 - Commits made by a Codex delegate follow the same signing convention;
   from an orchestrating runtime generate the trailer with
   `AGENT_MODEL=<model> AGENT_REASONING=<effort> scripts/agent-sig.sh codex --trailer`.
