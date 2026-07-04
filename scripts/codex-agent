@@ -39,9 +39,11 @@ esac
 workdir="$PWD"
 args=("$@")
 for i in "${!args[@]}"; do
-  if [ "${args[$i]}" = "-C" ] || [ "${args[$i]}" = "--cd" ]; then
-    workdir="${args[$((i+1))]:-$workdir}"
-  fi
+  case "${args[$i]}" in
+    -C|--cd) workdir="${args[$((i+1))]:-$workdir}" ;;
+    --cd=?*) workdir="${args[$i]#--cd=}" ;;
+    -C?*)    workdir="${args[$i]#-C}" ;;
+  esac
 done
 
 # reviewer --diff routes to `codex review` (structured diff review) instead
@@ -57,6 +59,7 @@ if [ "$diff_mode" = 1 ]; then
     if [ "$skip" = 1 ]; then skip=0; continue; fi
     case "$a" in
       -C|--cd) skip=1 ;;
+      --cd=?*|-C?*) ;;
       --diff) ;;
       *) pass+=("$a") ;;
     esac
