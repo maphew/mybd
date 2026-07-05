@@ -1,5 +1,14 @@
 # Orphaned-PR inventory: the pre-re-root backlog - 2026-07-05
 
+> **ERRATUM (2026-07-05, mybd-q1c9):** The "re-root" premise of this inventory is **false**. The
+> late-May-2026 history rewrite never happened; the parentless commits and missing merge-bases were
+> artifacts of a **shallow local clone** (`bd-main/.git/shallow`). All 70 PRs below were re-checked
+> against GitHub's server via the compare API on 2026-07-05: **all 70 have valid merge-bases**
+> (status `diverged`, behind by 411-1006 commits). They are ordinary stale PRs that can be rebased
+> normally - none require reimplementation. The per-PR *classifications* (superseded / stale / live)
+> were verified against main's content and remain useful; the "cannot be rebased" framing does not.
+> See [reroot-investigation-2026-07-05.md](reroot-investigation-2026-07-05.md).
+
 Full triage of **70 open PRs** on gastownhall/beads that are **orphaned by the late-May-2026 re-root of `main`** (no common ancestor; cannot be rebased, only reimplemented or `rebase --onto`). Advisory only - **nothing was closed, merged, or commented** on these PRs. Beads: mybd-bys5 (this inventory), mybd-q1c9 (re-root cause investigation), mybd-y7u0 / mybd-w15y (the two review sweeps that classified 19 of these in depth).
 
 ## Headline

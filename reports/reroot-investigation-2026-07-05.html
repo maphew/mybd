@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The "late-May-2026 re-root" of beads main never happened - 2026-07-05</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+  .verdict { background:#e6f4ea; border:1px solid #34a853; border-radius:6px; padding:12px 16px; }
+</style>
+</head>
+<body>
+<h1>The "late-May-2026 re-root" of beads main never happened - 2026-07-05</h1>
+<p class="verdict"><strong>Verdict: false alarm.</strong> There was no history rewrite, no force-push, no severed ancestry on
+<code>gastownhall/beads</code> <code>main</code>. The "re-root" was an artifact of running forensics inside a <strong>shallow
+clone</strong>: the local <code>bd-main</code> checkout on this machine was cloned around 2026-05-28 with limited
+depth, and its shallow boundary - commits that git deliberately records as parentless in
+<code>.git/shallow</code> - was misread as three parentless "root" commits proving a server-side rewrite.</p>
+<p>Bead: mybd-q1c9. Supersedes the "re-root" framing in mybd-bys5 (orphan inventory) and the
+premise of mybd-ufzk (orphan disposition).</p>
+
+<h2>What the earlier forensics claimed vs what is actually true</h2>
+<table>
+<tr><th>Claim (mybd-q1c9 comment, 2026-07-05)</th><th>Server-side reality (GitHub API, 2026-07-05)</th></tr>
+<tr><td><code>main</code> has THREE parentless root commits (e49bc9185, d7469d5ab, 0a61a566b)</td>
+<td>All three have parents on GitHub: <code>e49bc9185</code> → <code>f8b9400165</code>; <code>d7469d5ab</code> → <code>f8b9400165</code> + <code>e898babbe6</code>; <code>0a61a566b</code> → <code>fc0679b8cc</code> + <code>3068bc4280</code></td></tr>
+<tr><td>Oldest reachable commit is 2026-05-25; ~7 months of history severed</td>
+<td>Genesis <code>704515125</code> (2025-10-11) IS an ancestor of <code>main</code>; <code>main</code> is 9,441 commits ahead of it, 0 behind (<code>compare</code> API status: "ahead")</td></tr>
+<tr><td>A batch history rewrite ran ~2026-05-25 16:26 PDT (same-second committer restamps)</td>
+<td>The restamps are on Jim Wordelman's feature-branch commits, re-stamped by an ordinary <code>git rebase</code> onto <code>f8b9400165</code> before merge. Normal contributor workflow, not a repo-wide rewrite</td></tr>
+<tr><td>69-70 open PRs are true orphans (no merge-base with main)</td>
+<td><strong>All 70 have valid merge-bases</strong> via the compare API (status <code>diverged</code>, behind_by 411-1006). They are ordinary stale PRs that can be rebased/merged normally</td></tr>
+<tr><td>Mechanism: rebase/graft/filter-repo class rewrite, force-pushed</td>
+<td>GitHub activity API: <strong>zero force-pushes to <code>main</code> since 2026-04-06</strong>. The <code>main</code> ref chain is contiguous through 2026-05-25..28 (every event's <code>before</code> equals the previous event's <code>after</code>)</td></tr>
+</table>
+
+<h2>The decisive evidence</h2>
+<ol>
+<li><strong>Activity API</strong> (<code>repos/gastownhall/beads/activity?ref=refs/heads/main&amp;time_period=year</code>):
+continuous <code>pr_merge</code>/<code>push</code> chain across the suspect window. Force-push events on <code>main</code> in the
+last year: 2026-04-06 (maphew, x2), 2026-02-19 (steveyegge), and earlier - nothing in May.</li>
+<li><strong>Commits API</strong>: every "root" commit has parents server-side (see table above).</li>
+<li><strong>Compare API</strong>: <code>704515125...main</code> → <code>ahead_by: 9441, behind_by: 0</code>. History intact back to genesis.</li>
+<li><strong>Local clone inspection</strong>: <code>bd-main/.git/shallow</code> exists and lists exactly the "root" commits
+(e49bc9185, d7469d5ab, 0a61a566b, fc0679b8cc, ...). <code>git rev-parse --is-shallow-repository</code> → <code>true</code>.
+The clone reflog shows <code>clone: from https://github.com/maphew/beads.git</code> at <code>e1e97e6c5</code>, which was
+<code>main</code>'s head on 2026-05-28 - a depth-limited clone made that day puts the shallow boundary
+precisely at commits merged 2026-05-25..28. That is why the "roots" all date to that window.</li>
+<li><strong>All 70 "orphaned" PRs re-checked</strong> against the server one by one: 70/70 <code>diverged</code> with a real
+merge-base. Zero orphans. (Raw results: 70-row TSV, PR → status/merge-base/behind-by, archived in
+the bead comment.)</li>
+</ol>
+
+<h2>Answers to the bead's questions</h2>
+<ol>
+<li><strong>Intentional or accidental?</strong> Neither - no re-root occurred. The repo's history was never rewritten.</li>
+<li><strong>Who/what performed it?</strong> Nobody. The "operation" was a <code>git clone --depth=N</code> (or equivalent) of
+the fork on ~2026-05-28 creating this machine's <code>bd-main</code>.</li>
+<li><strong>Why three roots on three dates?</strong> They are shallow-boundary commits. A depth cutoff lands on
+whatever commits sit N deep on each merged lineage; three lineages crossed the boundary.</li>
+<li><strong>Is another re-root likely?</strong> The question dissolves. There is no instability in upstream <code>main</code>;
+it has only ever fast-forwarded since April. Long-lived PR intake does not need to be frozen.</li>
+<li><strong>What practice would have prevented the misdiagnosis?</strong>
+<ul>
+<li>Before concluding "history rewrite", check <code>git rev-parse --is-shallow-repository</code> and
+<code>.git/shallow</code>. Parentless commits + shallow file = clone artifact, full stop.</li>
+<li>Verify ancestry claims against the server (<code>gh api .../compare/A...B</code>), not only a local clone.</li>
+<li>The GitHub <strong>activity API</strong> answers "was main force-pushed, when, by whom" directly and is
+available with plain read access - use it first, not last.</li>
+</ul></li>
+</ol>
+
+<h2>Remediation done in this session</h2>
+<ul>
+<li><code>bd-main</code> unshallowed via <code>git fetch --unshallow upstream</code> (full history restored locally).</li>
+<li>Erratum notice added to <code>reports/orphaned-pr-inventory-2026-07-05.md</code>.</li>
+<li>mybd-q1c9 closed with these findings; correction comment added to mybd-ufzk.</li>
+</ul>
+
+<h2>Impact on related work</h2>
+<ul>
+<li><strong>mybd-ufzk (disposition of "70 orphaned PRs")</strong>: the <em>classifications</em> in the inventory
+(superseded / stale / live) were verified against main's actual content and remain useful. But the
+framing changes completely: the 55 "salvage" PRs do <strong>not</strong> need reimplementation - they are
+normal diverged PRs (behind by 400-1000 commits) that contributors can rebase, or maintainers can
+merge after a routine update. The "close 13 superseded/stale" batch remains valid as-is.</li>
+<li><strong>No upstream issue should be opened about a "schism"</strong>: there is nothing wrong with the upstream
+repo. Opening one would report a defect that does not exist.</li>
+<li>The "cutover-protocol gap" noted in the 2026-07-05 review sweeps, insofar as it rested on the
+re-root, is likewise moot.</li>
+</ul>
+
+<hr>
+<p class="sig">claude-code-fable-5 investigation, 2026-07-05. Evidence gathered via GitHub REST API (activity,
+commits, compare endpoints) and local clone inspection; no repo state was modified other than
+unshallowing <code>bd-main</code>.</p>
+</body>
+</html>
