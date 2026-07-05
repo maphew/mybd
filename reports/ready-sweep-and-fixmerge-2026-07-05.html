@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ready-queue freshness sweep + fix-merge execution — 2026-07-05</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Ready-queue freshness sweep + fix-merge execution — 2026-07-05</h1>
+<p>Session: claude-code-fable-5 (orchestrator) with delegated haiku scouts, sonnet builders, opus reviewers. Method: workflow fan-out (16 freshness scouts vs GitHub) -&gt; claim -&gt; parallel builder worktrees -&gt; independent opus review -&gt; act.</p>
+<h2>Freshness sweep (16 ready beads checked against gastownhall/beads)</h2>
+<table>
+<thead><tr>
+<th>Bead</th>
+<th>Verdict</th>
+<th>Action taken</th>
+</tr></thead>
+<tbody>
+<tr><td>mybd-c0r4</td><td>close</td><td>Closed: #3055 rescope decision (2026-05-09) complete and stable; routing hardening continues upstream</td></tr>
+<tr><td>mybd-s5nq</td><td>close</td><td>Closed: v1.1.0 shipped 2026-07-04; second-batch window closed (3 of 15 PRs merged via credited cherry-picks, 9 closed)</td></tr>
+<tr><td>mybd-ozgv</td><td>close</td><td>Closed: #4259 closed 2026-07-04, resolved via deterministic-PK fix + release; gate follow-up moot</td></tr>
+<tr><td>mybd-ufzk</td><td>update + <code>human</code></td><td>Re-root premise falsified (shallow-clone artifact); 55 live PRs need ordinary rebases, not reimplementation. Owner must re-approve disposition framework</td></tr>
+<tr><td>mybd-fry6</td><td>update + <code>human</code></td><td>johnzook crisis resolved (4/5 PRs merged 2026-07-04); tri-pull automation re-enable decision pending</td></tr>
+<tr><td>mybd-t7mk.7</td><td>update</td><td>#4203 closed via #4474+#4532; #4243 superseded; draft #4408 stalled since 2026-06-23</td></tr>
+<tr><td>mybd-9vjz</td><td><strong>work now</strong></td><td>Executed below</td></tr>
+<tr><td>mybd-ae1i</td><td><strong>work now</strong></td><td>Executed below</td></tr>
+<tr><td>mybd-9k2a.4 (P0)</td><td>blocked upstream</td><td>#4372 contributor silent since 2026-06-18 review; stay deferred</td></tr>
+<tr><td>mybd-psis</td><td>blocked upstream</td><td>#4480 waits for johnzook ptr-helper until ~2026-07-07, then credited follow-up</td></tr>
+<tr><td>mybd-3br1, mybd-9222, mybd-zahk, mybd-h9w5, mybd-z2lm, mybd-mlik</td><td>blocked upstream</td><td>No change since last drift checks; left as-is</td></tr>
+</tbody>
+</table>
+<h2>Work executed</h2>
+<h3>mybd-9vjz: fix-merge rebases for PR #3914 and #4023</h3>
+<ul><li><strong>#3914</strong> (quad341, migration-UX rewrite of <code>runMigrations</code>): rebased 3 commits onto main (<code>cb33b566a</code>), authorship preserved. Main&#x27;s <code>preMigrationRepair</code> (v53 wisp/rig repair) correctly threaded through the extracted function via the <code>src</code> receiver — required, not just equivalent, since it gives <code>ignoredSource</code> its no-op dispatch. Opus review caught a real flaw in the builder&#x27;s test fixup: asymmetric <code>upTo</code> caps defanged <code>TestRunMigrationsUsesProvidedSource</code> (the regression it guards would have passed). Fixed (both calls cap at 52). Force-pushed to <code>quad341/fix/be-drsfc2-migration-progress</code> (<code>e3adc4544</code>), signed comment posted.</li><li><strong>#4023</strong> (quad341, reference-aware prune, 24 commits): rebased onto main + doc-regen fixup. The PR&#x27;s <code>buildReferencedSet</code>/<code>--ignore-references</code> logic layered onto main&#x27;s newer <code>RunE</code>/pinned-safety skeleton; reviewer verified the two skip mechanisms operate on disjoint sets and pinned beads still protect closed beads they cite. Interface drift (<code>GetCustomStatusesDetailed</code> on the bench mock) caught and fixed. Review verdict: MERGE pending CI, zero blockers. Force-pushed to <code>quad341/feat/be-jewoem-be-u2mw2x-reference-aware-prune</code> (<code>49601be1b</code>), signed comment posted.</li><li>Merge order: #3914 before #3919 (prior decision). #3985 close still held on #4023 landing.</li><li>At session close both PRs had ~27 checks green, ~25 pending (embedded-Dolt test matrix — the coverage that cannot build locally).</li></ul>
+<h3>mybd-ae1i: piece 2 (adopt-ff detection) + upstream PR #4586</h3>
+<ul><li><code>smartAdoptFastForward</code> (Decision <code>adopt-ff</code>) implemented as a strict refinement of <code>smartAdopt</code>: fires only on remote-ahead + no-skew + strict ancestor + clean working set; every failure/nil/error path falls back to today&#x27;s behavior. Callback injection at both store sites; existing exported entry points byte-identical.</li><li>Opus review: READY-TO-PUSH, all safety invariants verified. Its one should-fix (missing <code>WorkingSetClean</code>-error subtest) addressed pre-push; 7 subtests now cover the fallback matrix.</li><li>Pushed <code>feat/ae1i-ff-detect</code> (pieces 1+2) to fork; <strong>opened gastownhall/beads#4586</strong> (preflight: no competing PRs). Piece 3 (AUTO fast-forward) deliberately out of scope.</li></ul>
+<h2>Incident: bd binary vs shared DB schema (new bead mybd-awlo, <code>human</code>)</h2>
+<p>Mid-session another agent migrated the shared mybd DB to schema v54 (<code>0054_add_lease_columns</code>); this machine&#x27;s PATH bd (1.1.0 release) knows v53 and tripped the skew gate. Rebuild attempts failed: pure-Go build has no embedded-Dolt support; CGO build needs <code>libicu-dev</code> (absent, no passwordless sudo). Continued with <code>BD_IGNORE_SCHEMA_SKEW=1</code> — 0054 is additive-only; residual risk is v53 writers not rewriting <code>row_lock</code> (weakened concurrent-write conflict detection), kept mutations minimal and on claimed rows. Owner action: install <code>libicu-dev</code> and rebuild, or wait for a v54-aware release. Backup at <code>~/.local/bin/bd-1.1.0-8e4e59d39.bak</code>. Fresh motivation for mybd-t7mk (pure-Go embedded Dolt).</p>
+<h2>Handoff / next session</h2>
+<ol><li><strong>Merge #3914 then #4023</strong> once the embedded-Dolt matrix is green (squash, GitHub credits quad341 as squash author). The <code>release-gates/*.md</code> internal artifacts ride along — 8 such files already exist on upstream main, drop-at-merge was not possible without restarting CI.</li><li>After #4023 lands: close #3985 with credit (retire held on it), then close mybd-9vjz.</li><li>Shepherd #4586 review; piece 3 of mybd-ae1i (AUTO fast-forward + real embedded-Dolt integration tests) is the follow-on; carry the reviewer nit (option lists <code>bd bootstrap</code>, piece 3 should wire real <code>FastForward</code>).</li><li>Owner decisions queued under <code>bd human list</code>: mybd-ufzk (disposition re-approval), mybd-fry6 (tri-pull re-enable), mybd-awlo (libicu-dev install).</li></ol>
+<p>Token spend: freshness workflow ~452k (haiku, 16 agents); builders+reviewers ~552k (sonnet/opus). The sweep overshot the 200k-per-task default — for future sweeps of this size, cap the scout fan-out or split into two batches.</p>
+</body>
+</html>
