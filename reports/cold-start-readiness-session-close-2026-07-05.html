@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cold-start-readiness check for session-close — design</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Cold-start-readiness check for session-close — design</h1>
+<p><strong>Bead:</strong> mybd-bz6i · <strong>Date:</strong> 2026-07-05 · <strong>Status:</strong> design proposal (owner review required before adoption)</p>
+<h2>Why</h2>
+<p>On 2026-07-05 (session <code>mybd-y7u0</code> and siblings), making sure a <em>fresh</em> agent would be oriented was not part of any close procedure. It took a human-triggered question (&quot;will a fresh agent know what to do?&quot;) plus manual poking (<code>bd ready</code>, <code>bd prime</code> memories, walking the bead link graph) plus fixes (updated the <code>upstream-history-rewrite-2026-06</code> memory in place, created the entry-point bead <code>mybd-ufzk</code>, linked its dependency to <code>mybd-q1c9</code>). None of that was mechanized or prompted; it happened only because a human noticed.</p>
+<p>The gap is specifically the <strong>cold</strong> handoff. The existing Session Completion protocol (AGENTS.md, and the bd SESSION CLOSE PROTOCOL) already covers the <strong>warm</strong> handoff — step 7 &quot;Hand off: provide context for next session&quot; produces prose that <em>someone reads</em>. A cold start is different: the next actor is an agent that reads only <code>bd prime</code> + <code>bd ready</code> and starts pulling work. Prose in a closed bead or a session summary is invisible to it.</p>
+<h2>Core principle: hybrid, not mechanical</h2>
+<p>The load-bearing step on 2026-07-05 was <strong>judgment</strong> — recognizing that &quot;the late-May re-root is the one fact a cold agent must know.&quot; That is not mechanizable. A purely mechanical &quot;context captured?&quot; gate would rubber-stamp: it would pass as long as <em>some</em> memory was written, giving false confidence while missing the fact that actually mattered.</p>
+<p>So the design is a <strong>hybrid</strong>: a short judgment checklist the closing agent self-asks (the real work), backed by a few high-signal mechanical checks that catch the cheap, common omissions (the backstop). The mechanical part must stay small; every low-signal check trains agents to ignore the output.</p>
+<h2>Part A — Judgment checklist (the real work)</h2>
+<p>Three self-ask prompts, added to the close protocol. The agent answers them in prose in the handoff, not just ticks them:</p>
+<ol><li><strong>What did this session learn that changes how a future agent works — and is it in <code>bd remember</code> (so it surfaces at <code>bd prime</code>), not only in a report?</strong> Reports are not on the cold-start path; memories are.</li><li><strong>Is every deliverable/report this session produced reachable from an OPEN bead or a memory?</strong> A pointer that lives only in a <em>closed</em> bead is a smell — a cold agent runs <code>bd ready</code>, not <code>bd list --status=closed</code>.</li><li><strong>Does any bead I touched say &quot;after / gated-on / once X lands&quot; in prose but lack a dependency edge?</strong> Prose ordering is invisible to <code>bd ready</code>; encode it as a dependency or the cold agent will pick blocked work.</li></ol>
+<p>These map directly to the three failure modes the 2026-07-05 episode exhibited (learning stranded in a report; entry point missing; ordering implicit).</p>
+<h2>Part B — Mechanical backstop: <code>scripts/session-close-check</code></h2>
+<p>A warn-not-block script, style-matched to <code>scripts/verify-status</code> (bash + <code>_tri-lib.sh</code>, <code>tri_require bd jq git</code>). It emits warnings and exits 0 by default so it never blocks a close; <code>--strict</code> returns non-zero for a Stop-hook that wants a hard gate.</p>
+<p>Three checks, each mapping to one judgment prompt:</p>
+<table>
+<thead><tr>
+<th>#</th>
+<th>Check</th>
+<th>Warns when</th>
+<th>Maps to</th>
+</tr></thead>
+<tbody>
+<tr><td>1</td><td>Unreferenced reports</td><td>a new <code>reports/</code> file this session is referenced by no OPEN bead and no memory</td><td>A.2</td></tr>
+<tr><td>2</td><td>Thin new beads</td><td>a bead created this session has an empty/near-empty (&lt;N char) description</td><td>A.1</td></tr>
+<tr><td>3</td><td>Left in_progress</td><td>a bead is still <code>in_progress</code> and was <code>started</code>/touched by this session</td><td>A.3 (and hygiene)</td></tr>
+</tbody>
+</table>
+<p>Deliberately <strong>excluded</strong> (low signal / high noise): &quot;did you write a memory&quot; (rubber-stampable), &quot;is the handoff long enough&quot; (unmeasurable), test/lint status (already covered by step 2 of the existing protocol).</p>
+<h3>The hard part: what is &quot;this session&quot;?</h3>
+<p>A script cannot know what <em>this session</em> did unless given a boundary. Do not guess it — make it explicit and fail loud when absent:</p>
+<ul><li><strong>Preferred:</strong> a session-start stamp. Have the <code>bd prime</code> session-start hook (already wired in Claude Code and Codex via <code>.codex/hooks.json</code>) write <code>.beads/.session-start</code> containing the wall-clock time and <code>git rev-parse HEAD</code> at open. <code>session-close-check</code> reads it:</li><li>new reports: <code>git diff --name-only &lt;stamp-sha&gt;..HEAD -- reports/</code> plus untracked files under <code>reports/</code>;</li><li>beads created this session: <code>bd list --json</code> filtered to <code>created_at &gt;= &lt;stamp-time&gt;</code>;</li><li>left in_progress: <code>bd list --status=in_progress --json</code> filtered to <code>started_at &gt;= &lt;stamp-time&gt;</code> (optionally <code>assignee == current user</code>).</li><li><strong>Fallback:</strong> accept <code>--since &lt;git-ref|RFC3339&gt;</code>; if neither a stamp nor <code>--since</code> is present, emit one warning (&quot;no session boundary; pass --since or enable the session-start stamp&quot;) and skip the session-scoped checks rather than silently passing. Honesty over a green checkmark.</li></ul>
+<p>A stamp also lets the check work across compaction/<code>/clear</code> within one wall-clock session, which prose-based &quot;this session&quot; cannot.</p>
+<h3>Reference prototype (illustrative, not final)</h3>
+<pre><code>#!/usr/bin/env bash
+# session-close-check - cold-start-readiness backstop (warn, don&#x27;t block).
+#   scripts/session-close-check [--since &lt;ref|timestamp&gt;] [--strict]
+set -euo pipefail
+. &quot;$(dirname &quot;$0&quot;)/_tri-lib.sh&quot;
+tri_require bd jq git
+
+strict=0; since=&quot;&quot;
+while [[ $# -gt 0 ]]; do case &quot;$1&quot; in
+  --strict) strict=1; shift;;
+  --since)  since=&quot;$2&quot;; shift 2;;
+  *) tri_die &quot;usage: session-close-check [--since &lt;ref|ts&gt;] [--strict]&quot;;;
+esac; done
+
+stamp=&quot;.beads/.session-start&quot;
+[[ -z &quot;$since&quot; &amp;&amp; -f &quot;$stamp&quot; ]] &amp;&amp; since=&quot;$(cut -f1 &quot;$stamp&quot;)&quot;   # RFC3339 time
+warns=0
+warn() { printf &#x27;WARN: %s\n&#x27; &quot;$*&quot; &gt;&amp;2; warns=$((warns+1)); }
+
+if [[ -z &quot;$since&quot; ]]; then
+  warn &quot;no session boundary (no --since, no $stamp); session-scoped checks skipped&quot;
+else
+  # 1. new reports not referenced by an open bead or a memory
+  #    (git diff since boundary + untracked) X-checked against bd + bd memories
+  # 2. beads created since boundary with near-empty description
+  # 3. beads in_progress started since boundary
+  :   # full implementation per the table above
+fi
+
+[[ $warns -gt 0 ]] &amp;&amp; echo &quot;session-close-check: $warns warning(s)&quot; &gt;&amp;2 || echo &quot;session-close-check: clean&quot;
+[[ $strict -eq 1 &amp;&amp; $warns -gt 0 ]] &amp;&amp; exit 1 || exit 0</code></pre>
+<p>The full script is intentionally left for the implementation bead once the owner decides placement and warn-vs-gate (below), because those decisions change the exit-code contract and the hook wiring.</p>
+<h2>Part C — Placement problem (new finding)</h2>
+<p>The bead proposes &quot;extend the EXISTING Session Completion protocol (AGENTS.md step 7).&quot; <strong>That section is a bd-managed block</strong>, not free text:</p>
+<pre><code>&lt;!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f --&gt;  (AGENTS.md:420)
+...  Session Completion, steps 1-7 ...
+&lt;!-- END BEADS INTEGRATION --&gt;                                       (AGENTS.md:465)</code></pre>
+<p>Editing steps 1-7 in place would be overwritten the next time the block is regenerated. So the extension has to go somewhere durable. Three options:</p>
+<ol><li><strong>Upstream template PR</strong> (<code>internal/templates/agents/defaults/*.md</code> + <code>internal/recipes/template.go</code>). Correct if the cold-start step should ship to <em>all</em> beads users. Heaviest path; couples this to the agent.profile template work already in flight (<code>mybd-44me</code> / PR gastownhall/beads#4585, still open; <code>mybd-d8q0</code>). The block here is <code>profile:minimal</code>, so any template change must respect the profile knob.</li><li><strong>mybd-local section outside the managed block</strong> — a &quot;Cold-start handoff&quot; subsection in AGENTS.md <em>below</em> <code>END BEADS INTEGRATION</code>, plus one pointer line <em>inside</em> step 7 is not possible (managed), so instead reference it from the un-managed &quot;Session Completion&quot; prose the coordination repo owns. Lightest; keeps the policy local where PROJECT_CHARTER says orchestration policy belongs (outside beads core).</li><li><strong>A <code>/session-close</code> skill</strong> that runs the checklist + script. Most discoverable for agents, invocable on demand; still needs the prose to say &quot;run it.&quot;</li></ol>
+<p><strong>Recommendation:</strong> start with <strong>(2) + (3)</strong> — a mybd-local &quot;Cold-start handoff&quot; subsection that houses the three judgment prompts and calls <code>scripts/session-close-check</code>, optionally surfaced as a <code>/session-close</code> skill. Defer <strong>(1)</strong> until it is clear the step generalizes beyond this coordination repo; if it does, upstream it through the profile-aware template path so it composes with <code>mybd-44me</code>/<code>mybd-d8q0</code> rather than fighting the managed block.</p>
+<h2>Part D — Warn vs gate, and the Stop hook</h2>
+<ul><li><strong>Warn, do not gate, by default.</strong> The judgment step is the real check; a hard mechanical gate would either block on false positives (unreferenced report that is genuinely throwaway) or get an escape-hatch env var that becomes reflexive. Ship <code>--strict</code> for anyone who wants CI/hook enforcement, but the default close path stays warn.</li><li><strong>Stop hook: optional, opt-in.</strong> A <code>Stop</code> hook that auto-runs <code>session-close-check</code> is reasonable <em>as a reminder</em> (its output reaches the agent as feedback), but only in warn mode. Do not wire a blocking Stop hook — it would fire on every stop, including mid-task pauses, and train dismissal. Model it on the existing opt-in <code>.githooks/pre-commit</code> root-guard: tracked, documented, enabled by the owner with a single <code>git config</code>, not auto-on.</li></ul>
+<h2>Part E — Risks</h2>
+<ul><li><strong>Nag fatigue / rubber-stamping.</strong> Mitigated by keeping mechanical checks to the three high-signal ones and defaulting to warn. If agents start ignoring the output, cut a check rather than adding more.</li><li><strong>False sense of safety.</strong> The check cannot catch &quot;the agent failed to realize X matters&quot; — the exact 2026-07-05 failure mode. The judgment checklist is the only defense there; the script is a backstop for the <em>cheap</em> misses, and the docs must say so explicitly so nobody treats a clean run as &quot;cold-start proven.&quot;</li></ul>
+<h2>Part F — Decisions needed from maphew</h2>
+<ol><li>Placement: confirm option (2)+(3) (mybd-local section + skill) vs upstream template PR now.</li><li>Session boundary: approve adding a <code>.beads/.session-start</code> stamp to the <code>bd prime</code> session-start hook (vs relying on <code>--since</code> only).</li><li>Stop hook: opt-in warn-only reminder — yes/no.</li><li><code>--strict</code> exit contract: is there any place we want a hard gate (e.g. a CI job), or warn-everywhere?</li></ol>
+<h2>Part G — Recommended landing sequence (post-approval)</h2>
+<ol><li>Implement <code>scripts/session-close-check</code> (+ <code>.ps1</code> wrapper per repo convention) with checks 1-3 and the <code>--since</code>/stamp boundary — warn default, <code>--strict</code> opt-in. (Builder-scoped; spec is Part B.)</li><li>Add the <code>.beads/.session-start</code> stamp to the session-start hook.</li><li>Add the mybd-local &quot;Cold-start handoff&quot; subsection (3 judgment prompts + call the script) outside the managed block; optionally a <code>/session-close</code> skill.</li><li>Leave the upstream template PR as a follow-up bead, gated on the outcome of <code>mybd-44me</code>/PR #4585 so it lands profile-aware.</li></ol>
+<p>Steps 1-3 are the minimum viable cold-start check; step 4 is optional generalization.</p>
+</body>
+</html>
