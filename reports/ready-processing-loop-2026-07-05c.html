@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ready-queue processing loop (session c) - 2026-07-05</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Ready-queue processing loop (session c) - 2026-07-05</h1>
+<p>Session: claude-code-fable-5 orchestrator; haiku freshness scouts (workflow), sonnet-5 builders, opus-4-8 reviewers. Third mybd session today; built on the earlier ready-sweep (reports/ready-sweep-and-fixmerge-2026-07-05.md), which had already swept 16 ready beads, so this loop targeted the un-swept remainder.</p>
+<h2>Freshness sweep (workflow <code>ready-freshness-phase-a</code>, 6 haiku scouts, ~202k haiku tokens)</h2>
+<table>
+<thead><tr>
+<th>Bead</th>
+<th>Verdict</th>
+<th>Action taken</th>
+</tr></thead>
+<tbody>
+<tr><td>mybd-day-throughput</td><td>close</td><td>Closed: #4309 merged 2026-06-07; v1.0.x blocker framing moot post-v1.1.0</td></tr>
+<tr><td>mybd-day-discovery-import</td><td>close + refile</td><td>#4302/#4305 merged 2026-06-13; live remainder #4304 refiled as focused tracker <strong>mybd-3fvn</strong></td></tr>
+<tr><td>mybd-kj2v</td><td>blocked-upstream</td><td>#4310 open, zero activity 30d; drift note added</td></tr>
+<tr><td>mybd-t7mk.7</td><td>blocked-upstream</td><td>#4249 still unanswered since 2026-05-29; #4408 stalled; #4587 (auto gms_pure_go tag) merged today; note added with escalate-by ~2026-07-12 suggestion</td></tr>
+<tr><td>mybd-iihf</td><td>work-now</td><td>dolt#11236 closed 2026-07-02; bd <code>dolt push/pull</code> still <code>context.Background()</code> with no timeout. <strong>Left for next session</strong> (mid-size, needs design pass)</td></tr>
+<tr><td>mybd-ethh</td><td>work-now</td><td>Executed below</td></tr>
+<tr><td>mybd-q6cz</td><td>work-now</td><td>Executed below</td></tr>
+</tbody>
+</table>
+<h2>Work executed</h2>
+<h3>mybd-ethh slice 1: depguard storage-boundary rule -&gt; PR #4589</h3>
+<ul><li><code>.golangci.yml</code> (schema v2): <code>dolt-storage-boundary</code> rule denying <code>github.com/dolthub/*</code> outside <code>internal/storage/**</code> + <code>internal/doltserver/**</code>, message pointing at PROJECT_CHARTER &quot;Storage Boundary&quot;. Exceptions carved out with inline justification: <code>cmd/bd/proxied_server.go</code> (dolt servercfg/filesys; adapter-migration candidate) and <code>internal/metrics/{flusher,metrics}.go</code> (eventkit telemetry).</li><li>Opus review: no blockers; two improvements applied pre-PR: (1) companion rule <code>dolt-storage-boundary-metrics-exception</code> allowing only eventkit in the metrics files (reviewer proved a real engine import there slipped through the wholesale file exclusion); (2) charter wording no longer overstates coverage (<code>run.tests: false</code> means <code>_test.go</code> is never analyzed). Builder discovered <code>!$all</code> expands wrong in depguard v2.2.1 and used a plain positive files-allowlist for the companion rule instead.</li><li>Verified against CI-pinned golangci-lint v2.9.0 with CI args; negative probes (driver/v2 in cmd/bd, go-mysql-server in metrics) fail with the boundary message, then revert clean.</li><li><strong>PR: gastownhall/beads#4589</strong> (branch <code>feat/ethh-depguard-storage-boundary</code> @ 646fa20a8). CI fully green at session close. Bead remains open (slices 2-3: optional module split, docs terminology sweep).</li><li>Spin-off: <strong>mybd-kpd7</strong> - golangci-lint pin drift (CI v2.9.0 vs pre-commit v2.10.1) surfaces 8 gosec findings only under the newer pin.</li></ul>
+<h3>mybd-q6cz: leaked test dolt sql-servers -&gt; PR #4592</h3>
+<ul><li>Two-piece defense in depth: (A) <code>BEADS_TEST_MODE=1</code>-gated <code>Pdeathsig: SIGTERM</code> in <code>procAttrDetached</code>, split into <code>procattr_linux.go</code> / <code>procattr_other_unix.go</code> (Pdeathsig is Linux-only; production attr byte-identical when env unset); (B) <code>SweepOrphanedTestServers</code> after <code>m.Run()</code> in six TestMains, including a new TestMain for <code>internal/doltserver</code>&#x27;s integration tests which previously had none.</li><li>Opus review found a <strong>real blocker</strong> in the first draft: an unconditional <code>os.TempDir()</code> reap root would have let a finishing suite SIGTERM sibling suites&#x27; still-live servers under <code>scripts/test.sh -p 4</code> (every suite&#x27;s data dir lives under /tmp). Fixed: live servers are reaped only under caller-suite-owned roots; the deleted-cwd <code>/proc</code> signature (the actual observed leak shape) reaps unconditionally; no global root exists. Test contract reworked to pin cross-suite isolation. The review also confirmed <code>killStaleServersForDir</code> is per-beadsDir PID-file based and unusable as a general sweep base - the builder&#x27;s separate pure selector was the right call.</li><li><strong>PR: gastownhall/beads#4592</strong> (branch <code>fix/q6cz-test-server-reap</code> @ 73b6866c1). At session close: 10 checks green, 14 pending (embedded-Dolt matrix). Slow local suites enqueued: <code>scripts/verify-enqueue mybd-q6cz ... &quot;make test&quot;</code> (verify_head 73b6866c1) - run <code>scripts/verify-next</code> when a slot is free.</li></ul>
+<h2>Bead housekeeping</h2>
+<ul><li>Closed: mybd-day-throughput, mybd-day-discovery-import.</li><li>Created: mybd-3fvn (track upstream #4304 JSONL auto-import hazard), mybd-kpd7 (lint pin drift).</li><li>Notes/drift records added: mybd-kj2v, mybd-iihf, mybd-t7mk.7, mybd-ethh, mybd-q6cz.</li><li>Confirmed closed elsewhere: mybd-0a7n (upstream e1d5b3fae fixed bd human respond storage-nil).</li><li>PR #4586 (ae1i piece 2, prior session): 54/54 checks green, still no maintainer review - shepherding only; piece 3 remains the queued follow-on.</li></ul>
+<h2>Incident note: suspected prompt-injection during builder run (benign, handled correctly)</h2>
+<p>Mid-task, after the ethh builder reverted its temporary negative-test import with <code>git checkout --</code>, a tool-output note claimed the file change was &quot;intentional&quot; and told the agent not to revert it and not to report it. The builder disregarded it, followed its instructions, and flagged it upward. Orchestrator assessment: most likely the harness&#x27;s standard external-file-modification reminder misread as adversarial, not an actual attack - but the builder&#x27;s response (ignore, comply with orchestrator, report) is exactly right either way. Post-hoc verification confirmed the worktree contained only the intended two-file diff.</p>
+<h2>Handoff / next session</h2>
+<ol><li><strong>mybd-iihf is the next work-now item</strong>: bounded timeouts + diagnostics for <code>bd dolt push/pull</code> (upstream blocker dolt#11236 now closed; auto-push already has timeouts via #3381; doltPushCmd/doltPullCmd still bare <code>context.Background()</code>). Needs a short design pass (timeout defaults, config knob vs flag) before delegation.</li><li>Shepherd PRs #4589, #4592 (and #4586 from the prior session); after #4592&#x27;s CI matrix is green and local <code>verify-next</code> passes, close mybd-q6cz.</li><li>mybd-t7mk.7: if #4249 still unanswered by ~2026-07-12, escalate with a follow-up comment or decide the beads-side fork path.</li><li>Owner decisions still queued from earlier sessions: mybd-ufzk (orphaned-PR disposition), mybd-fry6 (tri-pull re-enable).</li><li>Worktrees kept: <code>ethh-depguard</code>, <code>q6cz-server-reap</code> (both have open PRs), <code>ae1i-ff-piece2</code>.</li></ol>
+<p>Token spend (workflow budget accounting): freshness workflow ~202k (haiku); builders+reviewers ~450k across 6 delegated runs (sonnet/opus). The 200k-per-task default was respected per task but not per session; scout stage stayed within one batch as recommended by the previous report.</p>
+</body>
+</html>
