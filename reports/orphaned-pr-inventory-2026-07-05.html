@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orphaned-PR inventory: the pre-re-root backlog - 2026-07-05</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Orphaned-PR inventory: the pre-re-root backlog - 2026-07-05</h1>
+<p>Full triage of <strong>70 open PRs</strong> on gastownhall/beads that are <strong>orphaned by the late-May-2026 re-root of <code>main</code></strong> (no common ancestor; cannot be rebased, only reimplemented or <code>rebase --onto</code>). Advisory only - <strong>nothing was closed, merged, or commented</strong> on these PRs. Beads: mybd-bys5 (this inventory), mybd-q1c9 (re-root cause investigation), mybd-y7u0 / mybd-w15y (the two review sweeps that classified 19 of these in depth).</p>
+<h2>Headline</h2>
+<ul><li><strong>57 of 70 (81%) are still-live, still-valid work</strong> stranded by the re-root - not abandoned cruft.</li><li>Only <strong>13 are safely closeable</strong> (11 superseded, 2 stale).</li><li>So the orphaning destroyed <strong>access to real contributor value at scale</strong>, which is the core of the &#x27;disconnected work&#x27; concern. The cheap-batch win (close the 13 superseded/stale) is small; the bulk needs a salvage decision.</li></ul>
+<h2>Disposition breakdown</h2>
+<table>
+<thead><tr>
+<th>Disposition</th>
+<th>Count</th>
+<th>Meaning</th>
+</tr></thead>
+<tbody>
+<tr><td>Retire — close with credit (superseded)</td><td>11</td><td></td></tr>
+<tr><td>Close — stale / low-value</td><td>2</td><td></td></tr>
+<tr><td>Salvage — small, land after reimplement onto main</td><td>36</td><td></td></tr>
+<tr><td>Salvage — reimplement onto main (feature / larger)</td><td>19</td><td></td></tr>
+<tr><td>Escalate — needs human review</td><td>2</td><td></td></tr>
+</tbody>
+</table>
+<h2>Recommended batch actions (biased to cheap, since more re-roots may come)</h2>
+<ol><li><strong>Cheap &amp; safe now:</strong> mass-close the <strong>11 superseded</strong> PRs with a templated thank-you + the superseding commit/path, and the <strong>2 stale</strong> ones. Removes 13 from the pile with near-zero risk. (Spot-verify the 0 med-confidence superseded first.)</li><li><strong>Do NOT hand-reimplement 55 PRs one-by-one</strong> - if <code>main</code> re-roots again they re-orphan. Instead: (a) decide whether the re-root is now stable (bead mybd-q1c9), and only then (b) batch the <strong>36 small &#x27;merge-if-rebased&#x27;</strong> fixes - most are 1-2 file, self-contained, and several cluster by area (Linear sync, Windows test-hardening, dolt-tx) so they can be carried in a few grouped commits with attribution rather than 36 separate efforts.</li><li><strong>19 &#x27;reimplement&#x27; items</strong> are features/larger fixes - file a bead per cluster, prioritize by open linked-issue.</li><li><strong>2 escalate</strong> items need a human look before disposition.</li></ol>
+<h2>Full inventory (grouped by disposition, then PR)</h2>
+<h3>Retire — close with credit (superseded) (11)</h3>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Class</th>
+<th>Conf</th>
+<th>Linked</th>
+<th>Note</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3590">#3590</a></td><td>jozefizso</td><td>superseded</td><td>high</td><td>none</td><td>Fixes lychee link-check for Docusaurus extensionless routes via file-copy-with-aliases, but upstream main (commit 87e698ad9) already resolved it with a simpler --fallback-extensions html flag.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3690">#3690</a></td><td>realies</td><td>superseded</td><td>high</td><td>none</td><td>The proposed top-level GetStatistics/TotalIssues&gt;0 guard for the non-embedded fallback path in maybeAutoImportJSONL already exists on upstream/main (cmd/bd/auto_import_upgrade.go, landed via 1f82e00fb / #3960).</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3699">#3699</a> <em>(reviewed)</em></td><td>sabotenhanmer-bot</td><td>superseded</td><td>high</td><td>none</td><td>plugin.json agents validation already fixed on main (v1.1.0) via file relocation.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3773">#3773</a></td><td>kevglynn</td><td>superseded</td><td>high</td><td>#3722 closed (COMPLETED, fixed by #4192)</td><td>Fixes bd init corrupting symlinked CLAUDE.md/AGENTS.md via ResolveForWrite in updateAgentFile, but linked issue #3722 was already fixed and closed by PR #4192 (merged 955dc0fcd, &quot;fix setup injection for symlinked agent files&quot;), a different implementation approach at the setup-injection layer.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3785">#3785</a> <em>(reviewed)</em></td><td>jjgarzella</td><td>superseded</td><td>high</td><td>#3784</td><td>cloneSubgraph label persistence already fixed on main via shared PersistLabels path.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3808">#3808</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>superseded</td><td>high</td><td>none</td><td>DeleteIssue cascade already delegated to issueops.DeleteIssueInTx on main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3836">#3836</a></td><td>ckumar1</td><td>superseded</td><td>high</td><td>none</td><td>Main&#x27;s DoltStore.Commit (internal/storage/dolt/store.go ~L1621-1626) already checks SELECT COUNT(*) FROM dolt_status WHERE staged=1 and skips DOLT_COMMIT when nothing is staged, plus a separate &quot;nothing to commit&quot;/&quot;no changes&quot; error-swallow at L2073 — the exact fix this PR proposes is already present.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3846">#3846</a></td><td>jjjjguevara</td><td>superseded</td><td>high</td><td>none</td><td>PR widens 12 TEXT columns to MEDIUMTEXT (migration 0033) to fix truncation on large content; main already solved this more thoroughly via migrations 0048_widen_event_value_columns.up.sql (events.old_value/new_value to LONGTEXT) and 0049_longtext_large_content_columns.up.sql (issues/wisps description/design/acceptance_criteria/notes/close_reason and comments.text to LONGTEXT), which is strictly wider than MEDIUMTEXT.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3867">#3867</a> <em>(reviewed)</em></td><td>scotthamilton77</td><td>superseded</td><td>high</td><td>none</td><td>one-hop bd ready fix superseded by main materialized is_blocked column.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4053">#4053</a></td><td>quad341</td><td>superseded</td><td>high</td><td>none</td><td>PR adds checkOrphanedChildren/OrphanedChildren to cmd/bd/doctor/deep.go for bd-3852; already landed on upstream/main via commit 94298a169 &quot;feat(doctor): detect orphaned child issues in deep validation (bd-3852)&quot; plus follow-up a09a1258c &quot;fix(doctor): honest orphan count + add TestCheckOrphanedChildren&quot;.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4059">#4059</a></td><td>quad341</td><td>superseded</td><td>high</td><td>none</td><td>Docs section for <code>bd doctor --check=pollution</code> test pollution detection already exists on main (cc27209d9); PR is superseded by post-re-root commit with identical content from same date.</td></tr>
+</tbody>
+</table>
+<h3>Close — stale / low-value (2)</h3>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Class</th>
+<th>Conf</th>
+<th>Linked</th>
+<th>Note</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3584">#3584</a></td><td>TheCTD</td><td>stale</td><td>high</td><td>none</td><td>Fixes a deadlock in internal/storage/dolt/migrations/010_uuid_primary_keys.go, but that entire migrations directory has been deleted from upstream/main (confirmed via git log path-not-found) and maintainer @coffeegoddd already commented the PR can be closed.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3627">#3627</a></td><td>livlign</td><td>stale</td><td>high</td><td>none</td><td>Animated README hero is unmaintained for 2+ months on an orphan branch with no maintainer engagement; polite closure avoids maintenance cost as repo evolves.</td></tr>
+</tbody>
+</table>
+<h3>Salvage — small, land after reimplement onto main (36)</h3>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Class</th>
+<th>Conf</th>
+<th>Linked</th>
+<th>Note</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3564">#3564</a> <em>(reviewed)</em></td><td>shaunc</td><td>live</td><td>high</td><td>#3516 open</td><td>Docker/external-server hint on port-conflict errors; small, absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3618">#3618</a> <em>(reviewed)</em></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Converge dolt clean-databases prefix list with SQL firewall; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3640">#3640</a></td><td>kevglynn</td><td>live</td><td>high</td><td>#3593 open</td><td>Adds a FixBeadsDirPermissions repair call after <code>git worktree add</code> in cmd/bd/worktree_cmd.go so a worktree&#x27;s .beads/ gets 0700 instead of umask-default 0755; confirmed absent on upstream/main (runWorktreeCreate has no such call/chmod) and issue #3593 remains open, so this small self-contained fix (2 files) is still worth landing if rebased.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3734">#3734</a> <em>(reviewed)</em></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>bd close silent actor/assignee mismatch data-loss fix; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3744">#3744</a></td><td>scotthamilton77</td><td>live</td><td>high</td><td>none</td><td>molReadyGatedCmd in cmd/bd/mol_ready_gated.go still lacks its own --gated flag registration on upstream/main (comment falsely claims it&#x27;s handled in ready.go, which only registers it on the sibling readyCmd), so bd mol ready --gated still errors; the PR&#x27;s one-line fix plus regression test is small, valid, and worth landing after rebase.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3770">#3770</a> <em>(reviewed)</em></td><td>idvorkin-ai-tools</td><td>live</td><td>high</td><td>#3769</td><td>close --continue last-touched update; 8-line fix, absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3771">#3771</a></td><td>kevglynn</td><td>live</td><td>high</td><td>#3681 open</td><td>Main&#x27;s close guard (cmd/bd/close.go ~line 122) still only blocks epic parents with open children and is silent on --force; PR #3771 extends the guard to any parent-child dependents and adds a stderr warning on --force, which is a small self-contained fix not yet on main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3772">#3772</a></td><td>kevglynn</td><td>live</td><td>med</td><td>#3754 open</td><td>Core false-match bug in stateMapMatchesStatus is already fixed on main, but ValidatePushStateMappings (internal/linear/tracker.go, upstream/main) still only pre-checks Open/InProgress/Blocked/Closed, not deferred/pinned/hooked/custom, so the PR&#x27;s remaining validation-extension is still absent and issue #3754 is still open; small self-contained fix worth landing after rebase.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3777">#3777</a></td><td>iuyua9</td><td>live</td><td>high</td><td>none</td><td>readyWorkFilterFromIssueFilter in cmd/bd/list.go still drops filter.Deferred instead of setting wf.IncludeDeferred, so <code>bd list --ready --deferred</code> doesn&#x27;t work via the ready-list path on current main; the fix is small and self-contained, still valid.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3786">#3786</a></td><td>scotthamilton77</td><td>live</td><td>high</td><td>none</td><td>upstream/main&#x27;s cmd/bd/human.go still lacks ensureStoreActive() in humanRespondCmd/humanDismissCmd RunE (only humanListCmd/humanStatsCmd have it) while &quot;human&quot; stays in main.go&#x27;s noDbCommands, so bd human respond/dismiss still panics/errors with &quot;storage is nil&quot; - a small self-contained fix worth rebasing and landing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3789">#3789</a> <em>(reviewed)</em></td><td>jmdaly</td><td>live</td><td>high</td><td>#3788</td><td>Jira JQL UTC-suffix one-line fix; bug still live at tracker.go:210.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3797">#3797</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>#3796</td><td>Windows release-script test path canonicalization; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3801">#3801</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>#3798</td><td>Windows file-lock in doltserver test cleanup; bug still live.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3802">#3802</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>#3800</td><td>Skip TestUpdateCloseHookFiring on Windows; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3806">#3806</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>#3800</td><td>Skip 5 POSIX-shebang hook tests on Windows; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3812">#3812</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>none</td><td>Tolerate timeout-killed processes in TestEmbeddedInitConcurrent; test-only.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3837">#3837</a></td><td>ckumar1</td><td>live</td><td>med</td><td>none</td><td>Adds isAuthFailureErr in cmd/bd/dolt.go giving SSH/auth-specific guidance instead of misleading remote-URL-scheme message; confirmed absent on upstream/main (no isAuthFailureErr/publickey refs there), small self-contained diff (2 files) with tests already, low risk to land.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3858">#3858</a></td><td>GraemeF</td><td>live</td><td>high</td><td>none</td><td>WrapStorage/InstrumentedStorage exists in internal/telemetry/storage.go on main but is never invoked from cmd/bd/main.go, so bd.storage.* telemetry still never reaches an exporter - the bug this PR fixes is still present, and the fix (wire WrapStorage into the decorator chain, rename Inner()-&gt;Unwrap()) is small and self-contained.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3874">#3874</a></td><td>jjgarzella</td><td>live</td><td>high</td><td>#3873 open</td><td>looksLikeFormulaName still gates the formula-registry fallback in cmd/bd/mol_bond.go (lines 575/619/635) on upstream/main, so the fix is not superseded; small self-contained change worth landing once rebased, though maintainer&#x27;s repro request on the linked issue is unanswered.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3875">#3875</a></td><td>jjgarzella</td><td>live</td><td>high</td><td>#3783 open</td><td>Fixes real dep-type collision (needs+waits_for inferring same target emits duplicate DepBlocks/DepWaitsFor edges) in cmd/bd/cook.go&#x27;s collectDependencies; confirmed current upstream/main still lacks the waitsForSpawnerStepID dedup guard, and linked issue #3783 remains open — small, self-contained, well-tested fix worth landing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3904">#3904</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Adds BEADS_TEST_IGNORE_REPO_CONFIG=1 as default opt-out inside initConfigForTest (cmd/bd/test_helpers_pure_test.go) so all 7 callers get repo-config isolation for free; confirmed absent on upstream/main (helper still lacks the env-var line) though the env var itself is already used ad-hoc across many other test files, so this is a small self-contained +5 LOC test-only consolidation still worth landing if rebased.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3910">#3910</a></td><td>harry-miller-trimble</td><td>live</td><td>high</td><td>none</td><td>Adds overlay.nix exposing beads-unwrapped/beads via callPackage .override pattern for downstream nixpkgs consumers; no overlay.nix exists on current upstream/main, diff is small (~30 lines, 5 files) and self-contained with positive contributor feedback, so worth landing after a rebase.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3987">#3987</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>listenWait is still 2*time.Second on upstream/main (internal/storage/dbproxy/proxy/server_test.go:26), so this one-line flaky-test timeout bump (2s→10s) is not superseded and is trivially small/self-contained, worth landing if rebased onto current main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4022">#4022</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Adds <code>bd status --no-blocked</code> (skip computeBlockedIDs traversal via new FastStatisticsStore/GetStatisticsNoBlocked) and fixes Blocked:0 rendering red; grep of upstream/main cmd/bd/status.go, internal/storage/storage.go, internal/types/types.go shows no NoBlocked/FastStatisticsStore symbols, so it&#x27;s not superseded - small self-contained change with multiple positive reviews (including a &quot;merge as-is once CI is green&quot; decision) that just needs rebasing onto the re-rooted history.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4029">#4029</a></td><td>quad341</td><td>live</td><td>med</td><td>none</td><td>Small, self-contained fix syncing issue_prefix from config.yaml into Dolt after bd import (via CommitWithConfig) is confirmed absent on upstream/main (no CommitWithConfig/prefix-sync logic in cmd/bd/import.go) and still addresses a real PG-to-Dolt migration bug, but a maintainer already asked for a concrete repro that was never supplied, so it needs a quick repro/rebase check before landing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4030">#4030</a></td><td>shiminshen</td><td>live</td><td>high</td><td>GH#3851 (closes, referenced in body but not in closingIssuesReferences field)</td><td>Two-line fix removing the nonexistent &quot;bd sync&quot; entry and renaming &quot;Setup &amp; Sync:&quot; to &quot;Setup &amp; Maintenance:&quot; in cmd/bd/human.go is still present verbatim on upstream/main (lines 70-73), so the bug remains live and this tiny, already-reviewed fix is cheap to land after a rebase.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4056">#4056</a></td><td>Dev-KVN</td><td>live</td><td>high</td><td>none (duplicate PR #4081 open, unmerged, also claims to carry this fix)</td><td>Adds <code>Intent string</code> field (json/toml <code>intent,omitempty</code>) to Formula struct in internal/formula/types.go so bd formula show --json surfaces TOML-declared intent instead of silently dropping it; confirmed absent from upstream/main (no Intent field, no relevant commit history) despite thread comments claiming closure/supersession by #4081 - both #4056 and #4081 are still OPEN/unmerged, and the thread contains conflicting/likely-fake bot comments (one admits an earlier review was &quot;posted in error by an automated agent&quot;), so treat the supersession claim as unverified noise; the fix itself is small and self-contained.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4057">#4057</a></td><td>quad341</td><td>live</td><td>high</td><td>be-xfxi (bead, not gh issue) - referenced as closing in PR body, no gh issue link</td><td>One-line text fix in cmd/bd/promote.go changing the promotion comment from &quot;Promoted from wisp to permanent bead&quot; to spec-aligned &quot;Promoted from Level 0&quot; is still absent on upstream/main (confirmed via grep), so this small self-contained change is worth landing if rebased onto the re-rooted main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4058">#4058</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Wires --quiet into bd create/close/update via exported debug.PrintNormal/PrintlnNormal; main still uses raw fmt.Printf/Println in these commands and debug.go&#x27;s printNormal is still unexported, so the fix is absent from main and still valid - small self-contained change worth landing if rebased onto post-re-root main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4081">#4081</a></td><td>quad341</td><td>live</td><td>high</td><td>closes #4056 (contributor Dev-KVN&#x27;s original PR, cherry-picked here by a maintainer)</td><td>Adds <code>Intent string</code> field (json/toml omitempty) to Formula struct plus a round-trip test; confirmed absent from current upstream/main types.go (old commit 33f056635 with this change is not an ancestor of upstream/main) so it&#x27;s still needed and is small/self-contained enough to just rebase and land.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4095">#4095</a></td><td>quad341</td><td>live</td><td>high</td><td>#4065 closed (predecessor PR, same fix, apparently superseded/closed unmerged), #4043 open (root bug report)</td><td>Bug confirmed still present on upstream/main: sqlbuild.BuildReadyWorkOrder&#x27;s SortPolicyPriority case (internal/storage/sqlbuild/ready.go) still emits &quot;ORDER BY priority ASC, created_at DESC, id ASC&quot;, so newest-first-within-tier starvation persists; this is a small self-contained ordering fix worth landing after rebase onto the current issueops/sqlbuild architecture.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4100">#4100</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Fixes a real test-isolation bug in beads_test.go (BEADS_DOLT_SERVER_PORT not cleared, and BEADS_TEST_MODE unset which re-enables auto-start) that is still present on upstream/main - configfile_test.go already clears BEADS_DOLT_SERVER_PORT there, but beads_test.go (lines ~152-154, 240-242) still unsets BEADS_TEST_MODE instead of keeping it set, so the core fix is missing; small, self-contained, worth landing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4104">#4104</a></td><td>fishgills</td><td>live</td><td>high</td><td>#4102 open</td><td>Parallelizes ScanIssueCounts and computeBlockedIDs in GetStatistics via errgroup to remove a serial Dolt roundtrip; main&#x27;s current GetStatistics (internal/storage/dolt/queries.go:99) has no errgroup/parallelization, so the fix is not yet on main, is small (2 files), and remains valid.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4117">#4117</a></td><td>A3Ackerman</td><td>live</td><td>high</td><td>none</td><td>Scopes the graph-viewer CSS (<code>svg { width:100vw... }</code>) to #graph and adds a real fitToView() instead of the fixed translate/scale; confirmed both bugs still present on upstream/main (graph_export.go:217, no fitToView symbol) and the fix is a small (54-line) single-file template-only diff, worth landing once rebased.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4119">#4119</a></td><td>A3Ackerman</td><td>live</td><td>high</td><td>none</td><td>Adds opt-in linear.outbound_state_map to disambiguate push-side Linear state resolution when multiple states share a type (e.g. In Progress vs In Review); confirmed absent on upstream/main (no OutboundStateMap symbol in internal/linear/mapping.go), small self-contained 2-file/160-line diff with new tests, worth landing if rebased onto current main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4133">#4133</a></td><td>Zireael</td><td>live</td><td>med</td><td>#4132 open</td><td>Windows dolt sql-server crash fix (disables event_scheduler/auto_gc_behavior, drains MySQL handshake before TCP close) targets open issue #4132; grep for event_scheduler/auto_gc_behavior/dolt-server-config finds nothing on upstream/main so it is not superseded, and the change is small and self-contained (internal/doltserver + circuit.go).</td></tr>
+</tbody>
+</table>
+<h3>Salvage — reimplement onto main (feature / larger) (19)</h3>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Class</th>
+<th>Conf</th>
+<th>Linked</th>
+<th>Note</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3548">#3548</a></td><td>kingfly55</td><td>live</td><td>med</td><td>none</td><td>Adds a suppress_history update key threaded through update planning/Dolt/embedded transactions/bd update to skip durable history events for high-frequency metadata writes; confirmed absent on upstream/main (no suppress_history/SuppressHistory hits anywhere) and is a small, self-contained, test-backed primitive worth reimplementing since it cannot merge as an orphan branch.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3563">#3563</a> <em>(reviewed)</em></td><td>shaunc</td><td>live</td><td>high</td><td>#3545/#3518 open</td><td>Dolt host-config server-mode inference; absent from main, reconcile with merged #3533.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3612">#3612</a></td><td>gt-rm-0306</td><td>live</td><td>high</td><td>none</td><td>upstream/main&#x27;s GetDependenciesWithMetadataInTx still silently <code>continue</code>s past cross-rig dep targets not found in issueMap (internal/storage/issueops/dependencies.go ~line 899), so this fix (emit placeholder IssueWithDependencyMetadata) is not superseded; but it touches multi-rig/gastown semantics the author (maphew) flagged as possibly leaking orchestration-layer concepts into beads core, so treat as a feature needing a small reimplementation/design check rather than a blind rebase-merge.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3694">#3694</a> <em>(reviewed)</em></td><td>abnersajr</td><td>live</td><td>high</td><td>#3693</td><td>bd unclaim command; fully tested feature, absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3758">#3758</a></td><td>daniel-jasinski</td><td>live</td><td>high</td><td>#3597 open</td><td>Restructures bd doctor dispatch so --check=artifacts\</td><td>conventions\</td><td>pollution work in embedded mode instead of hitting the still-present &quot;not yet supported in embedded mode&quot; stub on upstream/main (cmd/bd/doctor.go:198); issue #3597 remains open and unaddressed.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3759">#3759</a> <em>(reviewed)</em></td><td>aphexcx</td><td>live</td><td>high</td><td>none</td><td>linear.exclude_id_prefix/patterns union filter; absent from main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3774">#3774</a></td><td>kevglynn</td><td>live</td><td>med</td><td>#3686 open</td><td>Fixes <code>bd create --repo</code> failing when cwd lacks a .beads/ workspace by resolving the target .beads/ during PersistentPreRun in cmd/bd/main.go; linked issue #3686 is still open and current main&#x27;s PersistentPreRunE/create.go routing logic has drifted heavily (metrics, uow, proxiedServerMode, query-readonly additions) so this diff cannot be cherry-picked and would need fresh reimplementation against current main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3776">#3776</a></td><td>kevglynn</td><td>live</td><td>high</td><td>#3753 open</td><td>Adds Linear label push support (GetTeamLabels + label_type_map inversion + labelIds resolution) across 7 files; main still passes nil/unpopulated labelIds on CreateIssue (tracker.go:221,347) so the bug is unfixed and linked issue #3753 is open.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3781">#3781</a></td><td>jjgarzella</td><td>live</td><td>high</td><td>#3621 open</td><td>Adds a reflection-driven &#x27;bd formula schema/primitives&#x27; subcommand, CLI help pointers, and a smoke-tested examples/formulas/primitives/ directory to make formula primitives discoverable to agents; none of internal/formula/schema.go, cmd/bd/formula_schema.go, or examples/formulas/primitives exist on upstream/main, and a maintainer (maphew) already pushed a follow-up commit (6f040386b) refining the design, so this is a substantive, still-wanted feature worth carrying forward via reimplementation rather than closing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3803">#3803</a> <em>(reviewed)</em></td><td>seanmartinsmith</td><td>live</td><td>high</td><td>none</td><td>dolt tx CloseIssue/AddLabel/RemoveLabel skip event rows; still true on main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3838">#3838</a> <em>(reviewed)</em></td><td>ckumar1</td><td>live</td><td>high</td><td>none</td><td>Staged export-file deletion re-staged as modification; no diff-filter=D guard on main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3859">#3859</a></td><td>GraemeF</td><td>live</td><td>med</td><td>#3475 closed (parent tracking issue); sibling PR #3858 open</td><td>Adopts standard OTel SDK env vars (BD_OTEL_ENABLED master switch, OTEL_* endpoints, legacy back-compat translation) plus extracts cmd/bd/command_telemetry.go, but main&#x27;s internal/telemetry/telemetry.go still only has the old BD_OTEL_METRICS_URL/BD_OTEL_STDOUT vars with no command_telemetry.go file — feature is absent and still valid (PR 2 of 3, sibling #3858 still open/unmerged).</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3913">#3913</a></td><td>quad341</td><td>live</td><td>high</td><td>none</td><td>Small docs-only PR (CONTRIBUTING_PR_GUIDELINES.md) that passed review but is orphaned with no common ancestor to main; content is still absent and valid, needs reimplementation on current main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3922">#3922</a></td><td>boardthatpowder</td><td>live</td><td>high</td><td>none</td><td>Valid documentation addition for real tool (BeadSpec with OpenSpec integration), but PR is on orphan branch with no common ancestor to current main; carry the value forward by reimplementing on current HEAD.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3930">#3930</a></td><td>aphexcx</td><td>live</td><td>high</td><td>none (references bd-2og internally, no GH issue)</td><td>Adds a post-sync ReconcileParents pass (internal/linear/parent_reconcile.go) to wire bead parent-child links into Linear&#x27;s parentId field, which upstream/main still never sends (confirmed absent: no parent_reconcile.go, no ReconcileParents/parentId wiring in tracker.go/client.go/fieldmapper.go on main); non-trivial feature with 9 unit tests, worth reimplementing after re-root rather than closing.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4034">#4034</a></td><td>Ethee</td><td>live</td><td>high</td><td>none</td><td>Narrows the #2292 same-type blocking ban to only reject blocks-edges between issues already in a parent-child relationship (new parentChildLinkedQuery recursive CTE in internal/storage/issueops/dependencies.go); upstream/main still has the old broad sourceIsEpic!=targetIsEpic ban with no parentChildLinkedQuery, so the fix is not superseded and remains valid/useful.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4054">#4054</a></td><td>quad341</td><td>live</td><td>high</td><td>none (mentions be-xra8, be-roho as closing but no GitHub closingIssuesReferences)</td><td>Implements bd preflight --fix (vendorHash sentinel-hash auto-fix + version.go sync from default.nix); confirmed main still has the &quot;not yet implemented&quot; stub at cmd/bd/preflight.go:63/84, so it&#x27;s not superseded but is a real, moderately-sized feature worth carrying forward on the re-rooted history rather than a trivial rebase-merge.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4101">#4101</a></td><td>prmichaelsen</td><td>live</td><td>high</td><td>none</td><td>Adds docs/RELATED_PROJECTS.md with scry entry (valid, distinct from COMMUNITY_TOOLS) — absent from main but identical change exists as dangling commit 4ca114976; cherry-pick that to a proper branch instead of merging orphan PR.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4129">#4129</a></td><td>Zireael</td><td>live</td><td>high</td><td>none (no closingIssuesReferences; has-repro label added via PR discussion comments by maphew)</td><td>Fixes real CLI help/docs drift (bd lint --help, bd lint --type, bd create --type missing spike/story/milestone/decision) and adds a new <code>bd types --sections</code> introspection flag; confirmed upstream/main&#x27;s cmd/bd/lint.go still only lists bug/task/feature/epic/chore and cmd/bd/create.go&#x27;s --type flag description still lacks spike/story/milestone, so none of this is superseded.</td></tr>
+</tbody>
+</table>
+<h3>Escalate — needs human review (2)</h3>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Class</th>
+<th>Conf</th>
+<th>Linked</th>
+<th>Note</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3876">#3876</a></td><td>jjgarzella</td><td>live</td><td>high</td><td>#3782 open</td><td>Implements on_complete runtime fanout executor (cmd/bd/on_complete.go, cook/close/update wiring) fixing issue #3782; absent from upstream/main but author flagged disposition blocked on an unresolved cross-repo design decision (on_complete vs Gas City&#x27;s drain primitive), so it needs human judgment rather than a cheap reimplement/close.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/4035">#4035</a></td><td>Ethee</td><td>live</td><td>med</td><td>none (references GH#1495 as background context only, no closingIssuesReferences)</td><td>Extends cycle detection to walk parent-child edges (not just blocks/conditional-blocks) closing a livelock opened by stacked PR #4034; upstream/main:internal/storage/issueops/dependencies.go still only filters type IN (&#x27;blocks&#x27;,&#x27;conditional-blocks&#x27;) so the fix is genuinely absent, but the PR is stacked on unmerged #4034, has a disputed/retracted schema-column review (depends_on_id vs DepTargetExpr) in the thread, and is an orphan branch needing rebase - not a cheap drop-in.</td></tr>
+</tbody>
+</table>
+<h2>Method &amp; caveats</h2>
+<ul><li>Orphan set = open, non-draft, non-bot PRs with <strong>no <code>git merge-base</code></strong> against current <code>upstream/main</code> (confirmed by fetching every head; 69-70 of the 88 pre-2026-05-25 PRs - the other ~18 share ancestry and are normal-triage, not listed here).</li><li>51 classified by a one-agent-per-PR workflow (sonnet/haiku, low effort): read PR + linked issue + <code>grep</code> main for supersession. 19 carry the deeper batch-1/2 review verdicts (marked <em>(reviewed)</em>).</li><li><strong>Confidence is self-reported</strong>; the 8 med-confidence rows should be re-checked before any close. This inventory is a decision aid, not an instruction to act - per the &#x27;triage-then-decide&#x27; directive.</li></ul>
+</body>
+</html>
