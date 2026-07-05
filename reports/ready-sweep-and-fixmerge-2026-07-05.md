@@ -78,3 +78,20 @@ mybd-t7mk (pure-Go embedded Dolt).
 Token spend: freshness workflow ~452k (haiku, 16 agents); builders+reviewers ~552k
 (sonnet/opus). The sweep overshot the 200k-per-task default — for future sweeps of this size,
 cap the scout fan-out or split into two batches.
+
+## Addendum (same session, post-CI)
+
+- **#3914 MERGED** (squash `5b6b494407`, 54/54 checks green). Author credit Jim Wordelman,
+  Co-authored-by trailers preserved.
+- **#4023**: first CI run failed PR Core — `TestMaybeAutoExportExportsOnStateHashChange`
+  nil-pointer panic. Test-double gap, not a production bug: the PR's owner-exclude auto-export
+  path calls `store.GetConfig`, which `fakeStateHashStore` never implemented. Fixed with a stub
+  matching existing fake conventions (`12ce4901d`), CI re-run fully green,
+  **MERGED** (squash `c4e51986b`, credit preserved). #3985 retire now fully consistent.
+- **mybd-9vjz CLOSED**: all maintainer-executable sweep follow-through done; remainder waits on
+  contributors (#3919, #3906, #4055, #3458, #3610/3813/3920/3971).
+- **bd binary**: owner upgraded PATH bd to a v54-aware dev build mid-session; skew workaround
+  dropped, mybd-awlo closed. New bug filed: **mybd-0a7n** — `bd human respond` errors
+  `storage is nil` on the dev build (comment+close worked as workaround).
+- Worktrees `pr-3914-rebase`/`pr-4023-rebase` removed; `ae1i-ff-piece2` kept (PR #4586 open,
+  piece 3 pending). mybd-ae1i claim released for the next agent.
