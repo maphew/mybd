@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upstream PR review sweep (oldest band #3563-3759) - 2026-07-05</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Upstream PR review sweep (oldest band #3563-3759) - 2026-07-05</h1>
+<p>10 signed review comments posted to gastownhall/beads (session: claude-opus-4-8-high, bead: mybd-y7u0). Selection: the <strong>oldest</strong> open contributor PRs waiting for review (per the user&#x27;s &quot;start with the oldest&quot; directive), from the <code>#3395-4133</code> pre-rewrite backlog that the two earlier 2026-07-05 sweeps (batches A/B, covering <code>#4150+</code>) deliberately skipped. Filtered to PRs with no maphew feedback (plus a few with only a <code>coffeegoddd</code> review), excluding drafts and dependabot/flake bots.</p>
+<h2>Key finding: the oldest band is dominated by pre-rewrite orphan branches</h2>
+<p>The beads history was rewritten, so most of these old branches share <strong>no common ancestor</strong> with current <code>upstream/main</code> (<code>git merge-base</code> returns nothing). They cannot be rebased normally. For each orphan the review&#x27;s primary job was to determine whether the fix/feature <strong>already landed on main</strong> (retire if superseded) or is still absent (reimplement / <code>git rebase --onto</code>, with full contributor credit) - not a normal rebase-conflict review.</p>
+<ul><li><strong>Orphans</strong> (no common ancestor): #3563, #3564, #3618, #3694, #3699, #3734, #3759</li><li><strong>Based</strong> (normal correctness + rebase-scope review): #3632, #3710, #3717</li></ul>
+<h2>Method</h2>
+<p>Workflow fan-out, one reviewer per PR (sonnet; haiku for the 1-line #3699), each doing its own supersession search against <code>upstream/main</code> and the PR head fetched at <code>refs/prtmp/&lt;pr&gt;</code>. Adversarial verify (opus, high effort) on every retire/reject/request-changes recommendation and every blocker/major supersession claim. Concurrent-safety gate before posting: re-checked each PR was still open, head SHA unchanged since review, and no new maphew feedback had landed. ~410k workflow tokens for the reviews + verify pass. All comments posted as <strong>plain comments, not blocking formal reviews</strong>, per the maintainer policy that treats request-changes as a last resort.</p>
+<h2>Results</h2>
+<table>
+<thead><tr>
+<th>PR</th>
+<th>Author</th>
+<th>Kind</th>
+<th>Triage</th>
+<th>Recommendation</th>
+<th>Verify</th>
+<th>Summary</th>
+</tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3563">#3563</a></td><td>shaunc</td><td>orphan</td><td>needs-review</td><td><strong>cherry-pick</strong></td><td>CONFIRMED</td><td>Dolt host-config server-mode inference (#3545/#3518) confirmed absent from main; reimplement onto a fresh branch reconciled with merged #3533 dolt.mode fallback.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3564">#3564</a></td><td>shaunc</td><td>orphan</td><td>fix-merge</td><td><strong>cherry-pick</strong></td><td>-</td><td>Docker/external-server hint on port-conflict errors (#3516); absent from main, small and well-tested, sibling to merged #3568.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3618">#3618</a></td><td>quad341</td><td>orphan</td><td>easy-win</td><td><strong>cherry-pick</strong></td><td>-</td><td>Converges <code>bd dolt clean-databases</code> prefix list with the SQL firewall (adds beads_test, benchdb_; drops overbroad beads_t); absent from main, trivial line-drift.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3632">#3632</a></td><td>quad341</td><td>based</td><td>easy-win</td><td><strong>merge</strong></td><td>-</td><td>AD-01 defense-in-depth (isProductionPort + DB-name firewall); CI green, exactly one mechanical merge-tree conflict, resolved by taking the PR&#x27;s <code>isProductionPort(cfg)</code>.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3694">#3694</a></td><td>abnersajr</td><td>orphan</td><td>fix-merge</td><td><strong>cherry-pick</strong></td><td>-</td><td><code>bd unclaim</code> command (#3693), well-designed and fully tested; confirmed missing from main, needs reimplement onto current main.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3699">#3699</a></td><td>sabotenhanmer-bot</td><td>orphan</td><td>easy-win</td><td><strong>retire</strong></td><td>UNCERTAIN→corrected</td><td>plugin.json <code>agents</code> validation fix already resolved on main (v1.1.0) via file relocation + auto-discovery. Verify caught a false commit attribution in the draft; corrected before posting (end-state retire stands, specific commit ref removed).</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3710">#3710</a></td><td>quad341</td><td>based</td><td>fix-merge</td><td><strong>merge-fix</strong></td><td>CONFIRMED</td><td>Real 2-line perf fix (timeout + RO probe); the PR narrative&#x27;s third &quot;Layer 1&quot; federation.go change isn&#x27;t in the diff and its target funcs no longer exist on main (12s path already closed by #4259 work). Merge the real diff, ignore the stale narrative.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3717">#3717</a></td><td>kevglynn</td><td>based</td><td>needs-review</td><td><strong>hold (fix-merge)</strong></td><td>CONFIRMED</td><td>Sync-audit-log feature; coffeegoddd asked to defer until the storage-layer reimpl lands (#3894 open, main at migration 0054). Real CI fixes listed (migration collision, nondeterministic uuid() default, 3 errcheck). Framed as hold-then-rebase, not a blocking request-changes.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3734">#3734</a></td><td>quad341</td><td>orphan</td><td>easy-win</td><td><strong>merge</strong></td><td>-</td><td>Silent-data-loss fix (<code>bd close</code> ignored actor/assignee mismatch); absent from main, well tested, applies cleanly despite orphan flag.</td></tr>
+<tr><td><a href="https://github.com/gastownhall/beads/pull/3759">#3759</a></td><td>aphexcx</td><td>orphan</td><td>needs-review</td><td><strong>cherry-pick</strong></td><td>-</td><td><code>linear.exclude_id_prefix</code> / <code>exclude_id_patterns</code> union filter; absent from main, core diff applies cleanly aside from stale generated docs.</td></tr>
+</tbody>
+</table>
+<h2>Verify highlights</h2>
+<ul><li><strong>#3699</strong>: verify confirmed the retire end-state (main&#x27;s plugin.json has no <code>agents</code> key, task-agent.md at conventional path) but <strong>refuted</strong> the draft&#x27;s cited superseding commit <code>1cfb6e5d9</code> (not in v1.1.0/main). Body corrected to describe the end-state without the false attribution before posting.</li><li><strong>#3710</strong>: verify confirmed <code>syncCLIRemotesToSQL</code>/<code>migrateServerRootRemotes</code> exist nowhere on main - the PR&#x27;s &quot;Layer 1&quot; narrative targets already-removed code; the actual 2-file diff still merges and adds value.</li><li><strong>#3717</strong>: verify confirmed coffeegoddd&#x27;s defer request, the 0033 migration collision, #3894 still open, and the active storage reimpl (#4414 merged 2026-07-02).</li></ul>
+<h2>Follow-through</h2>
+<ul><li>Bead <strong>mybd-y7u0</strong>.</li><li>Cherry-pick / reimplement candidates worth a maintainer follow-up (contributor value confirmed present and absent from main): #3563, #3564, #3618, #3694, #3759, plus #3632 (near-direct merge) and #3734 (clean merge).</li><li>Remaining oldest-band PRs beyond this batch of 10 are still unreviewed - next sweep should continue forward from ~#3770.</li></ul>
+</body>
+</html>
