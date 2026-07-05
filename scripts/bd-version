@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# bd-version - run a specific released `bd` binary, downloading + caching it.
+#
+# Use case: open a beads DB (embedded-Dolt mode) with the exact `bd` version
+# that wrote it, WITHOUT triggering a schema migration. A newer `bd` on PATH
+# may refuse to touch an older on-disk DB, or may auto-migrate it forward and
+# make it unreadable by the version that produced it. The matching prior
+# release binary reads the DB as originally written and never migrates it.
+#
+# Usage:
+#   scripts/bd-version <version> [args...]
+#
+# Example:
+#   scripts/bd-version 1.0.4 version
+#   scripts/bd-version v1.0.4 --help
+#
+# Binaries are fetched from gastownhall/beads GitHub releases via `gh` and
+# cached under $BD_VERSION_CACHE (default: XDG data dir), so repeat runs for
+# the same version are instant and do not re-download.
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: bd-version <version> [args...]" >&2
+  echo "example: bd-version 1.0.4 version" >&2
+  exit 1
+fi
+
+raw_version="$1"
+shift
+
+# Accept both "1.0.4" and "v1.0.4"; the release tag is always "v<version>".
+version="${raw_version#v}"
+tag="v${version}"
+
+repo="gastownhall/beads"
+cache_root="${BD_VERSION_CACHE:-${XDG_DATA_HOME:-$HOME/.local/share}/beads/bin}"
+cache_dir="${cache_root}/${version}"
+cached_bin="${cache_dir}/bd"
+
+if [ ! -x "$cached_bin" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "bd-version: 'gh' CLI is required to download bd ${tag} but was not found on PATH" >&2
+    exit 1
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "bd-version: 'gh' is not authenticated; run 'gh auth login' first" >&2
+    exit 1
+  fi
+
+  case "$(uname -s)" in
+    Linux) os=linux ;;
+    Darwin) os=darwin ;;
+    *)
+      echo "bd-version: unsupported OS '$(uname -s)' (expected Linux or Darwin)" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *)
+      echo "bd-version: unsupported architecture '$(uname -m)' (expected x86_64/amd64 or aarch64/arm64)" >&2
+      exit 1
+      ;;
+  esac
+
+  asset="beads_${version}_${os}_${arch}.tar.gz"
+
+  if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+    echo "bd-version: release '$tag' not found in $repo (checked via 'gh release view')" >&2
+    exit 1
+  fi
+
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  if ! gh release download "$tag" --repo "$repo" --pattern "$asset" --dir "$tmpdir" 2>"${tmpdir}/dl-err.log"; then
+    echo "bd-version: failed to download asset '$asset' from release '$tag' in $repo" >&2
+    cat "${tmpdir}/dl-err.log" >&2 2>/dev/null || true
+    exit 1
+  fi
+
+  archive="${tmpdir}/${asset}"
+  if [ ! -f "$archive" ]; then
+    echo "bd-version: expected downloaded file '$archive' not found" >&2
+    exit 1
+  fi
+
+  if ! tar -xzf "$archive" -C "$tmpdir" bd; then
+    echo "bd-version: could not extract 'bd' binary from '$archive'" >&2
+    exit 1
+  fi
+
+  mkdir -p "$cache_dir"
+  mv -f "${tmpdir}/bd" "$cached_bin"
+  chmod +x "$cached_bin"
+
+  # The EXIT trap does NOT fire on the success path below: the final `exec`
+  # replaces this shell's process image, so clean up the temp dir explicitly
+  # here and disarm the trap. The trap still covers the error/exit paths above.
+  rm -rf "$tmpdir"
+  trap - EXIT
+fi
+
+exec "$cached_bin" "$@"

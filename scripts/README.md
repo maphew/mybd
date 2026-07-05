@@ -329,6 +329,20 @@ scripts/tri-report --weekly-metrics --out /tmp/tri-weekly.md
 - `_working_on/upstream_pr_triage.md` — manual T1–T5 ranking with scoring rubric
 - `_working_on/pr-reviews/NNNN.md` — per-PR detailed review notes (now scaffolded by tri-review)
 
+## bd-version (pinned-release runner)
+
+```bash
+scripts/bd-version 1.0.4 version   # downloads + caches bd v1.0.4, then runs it
+scripts/bd-version v1.0.4 show mybd-123
+```
+
+Fetches a specific released `bd` binary from `gastownhall/beads` GitHub
+releases (via `gh`), caches it under `${BD_VERSION_CACHE:-~/.local/share/beads/bin}/<version>/`
+(outside any repo, shared across worktrees), and `exec`s it. Use this to open
+a beads DB with the exact version that wrote it, so a newer `bd` on PATH
+doesn't trigger an unwanted schema migration. Repeat runs for a version
+already cached skip the download.
+
 ## Generic beads stealth setup
 
 `bd-stealth-init` initializes beads for any project without putting `.beads`,
