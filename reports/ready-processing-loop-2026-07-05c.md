@@ -79,6 +79,19 @@ external-file-modification reminder misread as adversarial, not an actual attack
 builder's response (ignore, comply with orchestrator, report) is exactly right either way.
 Post-hoc verification confirmed the worktree contained only the intended two-file diff.
 
+## Addendum: cross-session PR race on mybd-q6cz (consolidated)
+
+At session-close sync, `bd dolt push` was rejected and the pull hit a merge conflict on the
+mybd-q6cz issues row: a parallel agent session (other machine) had ALSO implemented the bead and
+opened **gastownhall/beads#4591** (Pdeathsig-only, opened 23:37Z - after this session's preflight
+scouts ran, so preflight showed no competing PR). Resolution per PR_MAINTAINER_GUIDELINES +
+prefer-consolidated-PRs: #4592 is a strict superset (identical test-gated Pdeathsig design plus
+the reviewed suite-exit sweep #4591's own body deferred as follow-up), so #4591 was closed with a
+signed pointer comment and #4592 carries a supersedes cross-reference. Dolt conflict resolved
+`--ours` with the notes rewritten as the union of both sessions' records plus the decision.
+Lesson captured via `bd remember` (cross-machine-bead-claim-races-observed-2026-07): push claims
+immediately, pull right before opening PRs; preflight cannot see in-flight sibling sessions.
+
 ## Handoff / next session
 
 1. **mybd-iihf is the next work-now item**: bounded timeouts + diagnostics for `bd dolt
