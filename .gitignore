@@ -13,6 +13,7 @@ scratch/cleanroom/
 .beads/embeddeddolt/
 .beads/interactions.jsonl
 .beads/last-touched
+.beads/.session-start
 
 # Git worktrees managed outside the repo
 .worktrees/

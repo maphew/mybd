@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# session-close-check - cold-start-readiness backstop (warn, don't block).
+#
+# Usage:
+#   scripts/session-close-check [--since <git-ref|RFC3339>] [--strict]
+#
+# Checks that a FRESH agent - one that reads only `bd prime` + `bd ready` - will
+# be oriented after this session. Warn-not-block: exits 0 by default so it never
+# blocks a close. --strict exits non-zero when any warning fired (for a Stop hook
+# or CI job that wants a hard gate).
+#
+# Session boundary (what "this session" means): read from .beads/.session-start
+# (written by the session-start hook) or --since. If neither is present, the
+# session-scoped checks are skipped with a warning - honesty over a green tick.
+#
+# Three checks, each backing one judgment prompt from the close protocol:
+#   1. Unreferenced reports - a new reports/*.md file referenced by no OPEN bead
+#      and no memory (learning stranded off the cold-start path).
+#   2. Thin new beads - a bead created this session with a near-empty description.
+#   3. Left in_progress - a bead still in_progress that this session started.
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd jq git
+
+THIN_DESC_CHARS=30
+
+strict=0
+since=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict) strict=1; shift ;;
+    --since) since="$2"; shift 2 ;;
+    --since=*) since="${1#--since=}"; shift ;;
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) tri_die "usage: session-close-check [--since <git-ref|RFC3339>] [--strict]" ;;
+  esac
+done
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || tri_die "not inside a git repository"
+cd "$root"
+stamp=".beads/.session-start"
+
+warns=0
+warn() { printf 'WARN: %s\n' "$*" >&2; warns=$((warns + 1)); }
+
+# Resolve the boundary into an epoch (since_epoch) and a git base sha
+# (since_sha). Either input source may be missing.
+since_epoch=""
+since_sha=""
+resolve_boundary() {
+  local raw="$1"
+  # A git ref resolves; otherwise treat as a timestamp.
+  if git rev-parse --verify --quiet "${raw}^{commit}" >/dev/null 2>&1; then
+    since_sha="$(git rev-parse "${raw}^{commit}")"
+    since_epoch="$(git show -s --format=%ct "$since_sha")"
+  else
+    since_epoch="$(date -d "$raw" +%s 2>/dev/null || true)"
+    [[ -n "$since_epoch" ]] || return 1
+    # Best-effort git base: last commit at or before the boundary time.
+    since_sha="$(git rev-list -1 --before="@$since_epoch" HEAD 2>/dev/null || true)"
+  fi
+  return 0
+}
+
+if [[ -z "$since" && -f "$stamp" ]]; then
+  since="$(cut -f1 "$stamp")"
+  since_sha="$(cut -f2 "$stamp")"
+  since_epoch="$(date -d "$since" +%s 2>/dev/null || true)"
+  # If the stamped sha is unusable, fall back to time-based base.
+  if ! git rev-parse --verify --quiet "${since_sha}^{commit}" >/dev/null 2>&1; then
+    since_sha="$(git rev-list -1 --before="@${since_epoch:-0}" HEAD 2>/dev/null || true)"
+  fi
+elif [[ -n "$since" ]]; then
+  resolve_boundary "$since" || tri_die "could not parse --since value: $since"
+fi
+
+if [[ -z "${since_epoch:-}" ]]; then
+  warn "no session boundary (no --since, no $stamp); session-scoped checks skipped"
+  [[ "$warns" -gt 0 ]] && echo "session-close-check: $warns warning(s)" >&2
+  [[ "$strict" -eq 1 && "$warns" -gt 0 ]] && exit 1 || exit 0
+fi
+
+echo "session-close-check: boundary $(date -u -d "@$since_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "@$since_epoch")${since_sha:+ (base ${since_sha:0:9})}" >&2
+
+# --- Check 1: new reports not referenced by an open bead or a memory ----------
+# Build a haystack once: open/in_progress bead descriptions+notes + all memories.
+haystack="$(
+  { bd list --status=open --status=in_progress --limit 0 --json 2>/dev/null \
+      | jq -r '.[] | [.title, .description, (.notes // "")] | @tsv' ;
+    bd memories 2>/dev/null || true ; } 2>/dev/null
+)"
+
+new_reports=()
+if [[ -n "${since_sha:-}" ]]; then
+  while IFS= read -r f; do [[ -n "$f" ]] && new_reports+=("$f"); done < <(
+    git diff --name-only --diff-filter=A "$since_sha"..HEAD -- 'reports/*.md' 2>/dev/null || true
+  )
+fi
+# Untracked reports (not yet committed this session).
+while IFS= read -r f; do [[ -n "$f" ]] && new_reports+=("$f"); done < <(
+  git ls-files --others --exclude-standard -- 'reports/*.md' 2>/dev/null || true
+)
+
+if [[ "${#new_reports[@]}" -gt 0 ]]; then
+  # de-dup
+  mapfile -t new_reports < <(printf '%s\n' "${new_reports[@]}" | sort -u)
+  for rep in "${new_reports[@]}"; do
+    base="$(basename "$rep" .md)"
+    if ! grep -qF "$base" <<<"$haystack"; then
+      warn "new report not referenced by any open bead or memory: $rep (a cold agent runs 'bd ready', not 'bd list --status=closed')"
+    fi
+  done
+fi
+
+# --- Checks 2 & 3: beads created / left in_progress this session --------------
+# Emit id, created_at, started_at, status, desc-length, title as TSV; filter by
+# time in bash so any timezone format parses via GNU date.
+while IFS=$'\t' read -r id created started status desclen title; do
+  [[ -z "$id" ]] && continue
+  # Check 2: thin new bead
+  if [[ -n "$created" ]]; then
+    c_epoch="$(date -d "$created" +%s 2>/dev/null || echo 0)"
+    if [[ "$c_epoch" -ge "$since_epoch" && "${desclen:-0}" -lt "$THIN_DESC_CHARS" ]]; then
+      warn "bead created this session has a thin (<${THIN_DESC_CHARS} char) description: $id \"$title\""
+    fi
+  fi
+  # Check 3: left in_progress, started this session
+  if [[ "$status" == "in_progress" && -n "$started" ]]; then
+    s_epoch="$(date -d "$started" +%s 2>/dev/null || echo 0)"
+    if [[ "$s_epoch" -ge "$since_epoch" ]]; then
+      warn "bead left in_progress (started this session): $id \"$title\" - close it or hand it off in an open bead"
+    fi
+  fi
+done < <(
+  bd list --limit 0 --json 2>/dev/null \
+    | jq -r '.[] | [.id, (.created_at // ""), (.started_at // ""), (.status // ""), ((.description // "") | length), .title] | @tsv'
+)
+
+if [[ "$warns" -eq 0 ]]; then
+  echo "session-close-check: clean" >&2
+else
+  echo "session-close-check: $warns warning(s)" >&2
+fi
+[[ "$strict" -eq 1 && "$warns" -gt 0 ]] && exit 1 || exit 0
