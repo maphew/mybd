@@ -9,6 +9,14 @@
 #   tri-pull --prs-only
 #   tri-pull --dry-run     # show what would be created, no writes
 #
+# Window controls (the default fetch is newest-first, so a limit smaller than
+# the open backlog silently misses OLDER items). Move the window to reach them:
+#   tri-pull --oldest                     # sweep oldest-first (tail of backlog)
+#   tri-pull --search 'created:<2026-06-01'   # only items created before a date
+#   tri-pull --oldest --limit 50          # oldest 50 not yet mirrored
+# Every run reports coverage ("fetched X of Y open upstream") and warns when
+# the limit truncated the set, so a capped sweep can never look complete.
+#
 # Each stub:
 #   external-ref: gh-pr-NNNN / gh-iss-NNNN  (machine-readable upstream link)
 #   title:        "<upstream title>"        (kind+number visible via show)
@@ -26,6 +34,8 @@ LIMIT=100
 DO_ISSUES=1
 DO_PRS=1
 DRY_RUN=0
+ORDER=""          # empty => gh default (newest-first); set to a sort: qualifier
+SEARCH_QUERY=""   # extra gh search qualifiers to move the window
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,10 +44,46 @@ while [[ $# -gt 0 ]]; do
     --issues-only) DO_PRS=0; shift;;
     --prs-only) DO_ISSUES=0; shift;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --oldest) ORDER="sort:created-asc"; shift;;
+    --newest) ORDER="sort:created-desc"; shift;;
+    --search) SEARCH_QUERY="$2"; shift 2;;
+    --search=*) SEARCH_QUERY="${1#--search=}"; shift;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "tri-pull: unknown flag: $1" >&2; exit 2;;
   esac
 done
+
+# Combined gh --search string (ordering + caller qualifiers). Empty => omit.
+build_search() {
+  local q="$ORDER"
+  [[ -n "$SEARCH_QUERY" ]] && q="${q:+$q }$SEARCH_QUERY"
+  printf '%s' "$q"
+}
+
+# Total OPEN count of a kind upstream, window-independent, for coverage reports.
+# Prints an integer, or "?" if the count could not be determined.
+upstream_open_count() {
+  local kind="$1" q="repo:$UPSTREAM is:open"
+  case "$kind" in
+    pr)  q="$q is:pr" ;;
+    iss) q="$q is:issue" ;;
+  esac
+  gh api -X GET search/issues --raw-field q="$q" --jq '.total_count' 2>/dev/null || echo "?"
+}
+
+# One coverage line + a truncation warning when the fetch could not see the
+# whole open backlog for that stream.
+report_coverage() {
+  local label="$1" fetched="$2" total="$3" created="$4" skipped="$5"
+  printf '  %-8s fetched %s of %s open upstream; mirrored %s new, %s already mirrored\n' \
+    "$label:" "$fetched" "$total" "$created" "$skipped"
+  if [[ "$total" =~ ^[0-9]+$ && "$fetched" =~ ^[0-9]+$ && "$fetched" -lt "$total" ]]; then
+    local order_label="${ORDER#sort:}"
+    [[ -z "$order_label" ]] && order_label="newest-first"
+    printf '           [!] %s of %s open NOT seen this sweep (limit=%s, order=%s). Move the window: --oldest or --search "created:<YYYY-MM-DD".\n' \
+      "$((total - fetched))" "$total" "$LIMIT" "$order_label"
+  fi
+}
 
 command -v bd >/dev/null || { echo "tri-pull: bd not on PATH" >&2; exit 127; }
 command -v gh >/dev/null || { echo "tri-pull: gh not on PATH" >&2; exit 127; }
@@ -332,26 +378,37 @@ warn_closed_without_label() {
 
 refresh_ref_cache
 
+search_q="$(build_search)"
+window_desc="newest-first"
+[[ -n "$ORDER" ]] && window_desc="${ORDER#sort:}"
+[[ -n "$SEARCH_QUERY" ]] && window_desc="$window_desc, search=\"$SEARCH_QUERY\""
+
+iss_total=0 iss_fetched=0 iss_created=0 iss_skipped=0
+pr_total=0 pr_fetched=0 pr_created=0 pr_skipped=0
+
 if [[ "$DO_ISSUES" == 1 ]]; then
-  gh issue list --repo "$UPSTREAM" --state open --limit "$LIMIT" \
-    --json number,title,url,author,createdAt,labels,body \
-    >"$issues_json"
+  iss_total="$(upstream_open_count iss)"
+  gh_issue_args=(--repo "$UPSTREAM" --state open --limit "$LIMIT"
+    --json "number,title,url,author,createdAt,labels,body")
+  [[ -n "$search_q" ]] && gh_issue_args+=(--search "$search_q")
+  gh issue list "${gh_issue_args[@]}" >"$issues_json"
+  iss_fetched="$(jq 'length' "$issues_json" 2>/dev/null || echo 0)"
   register_json_refs "iss" "$issues_json"
 fi
 
 if [[ "$DO_PRS" == 1 ]]; then
-  gh pr list --repo "$UPSTREAM" --state open --limit "$LIMIT" \
-    --json number,title,url,author,createdAt,labels,isDraft,body,additions,deletions,reviewDecision,mergeStateStatus,closingIssuesReferences \
-    >"$prs_json"
+  pr_total="$(upstream_open_count pr)"
+  gh_pr_args=(--repo "$UPSTREAM" --state open --limit "$LIMIT"
+    --json "number,title,url,author,createdAt,labels,isDraft,body,additions,deletions,reviewDecision,mergeStateStatus,closingIssuesReferences")
+  [[ -n "$search_q" ]] && gh_pr_args+=(--search "$search_q")
+  gh pr list "${gh_pr_args[@]}" >"$prs_json"
+  pr_fetched="$(jq 'length' "$prs_json" 2>/dev/null || echo 0)"
   register_json_refs "pr" "$prs_json"
 fi
 
-count_created=0
-count_skipped=0
-
 if [[ "$DO_ISSUES" == 1 ]]; then
   local_item=""
-  echo "Pulling open issues from $UPSTREAM (no 'triaged' label, limit $LIMIT)..."
+  echo "Pulling open issues from $UPSTREAM (no 'triaged' label, limit $LIMIT, window: $window_desc)..."
   while IFS= read -r local_item; do
     [[ -z "${local_item:-}" ]] && continue
     num="$(jq -r '.number' <<<"$local_item")"
@@ -364,18 +421,18 @@ if [[ "$DO_ISSUES" == 1 ]]; then
     [[ -z "${num:-}" ]] && continue
     ref="gh-iss-${num}"
     if is_mirrored "$ref"; then
-      count_skipped=$((count_skipped + 1))
+      iss_skipped=$((iss_skipped + 1))
       continue
     fi
     if mirror_one "iss" "$num" "$title" "$body" "$url" "$author" "$created" "$labels" "false" 0 0 "" ""; then
-      count_created=$((count_created + 1))
+      iss_created=$((iss_created + 1))
     fi
   done < <(jq -c '.[] | select((([.labels[].name] | index("triaged")) | not))' "$issues_json")
 fi
 
 if [[ "$DO_PRS" == 1 ]]; then
   local_item=""
-  echo "Pulling open PRs from $UPSTREAM (no 'triaged' label, limit $LIMIT)..."
+  echo "Pulling open PRs from $UPSTREAM (no 'triaged' label, limit $LIMIT, window: $window_desc)..."
   while IFS= read -r local_item; do
     [[ -z "${local_item:-}" ]] && continue
     num="$(jq -r '.number' <<<"$local_item")"
@@ -393,11 +450,11 @@ if [[ "$DO_PRS" == 1 ]]; then
     [[ -z "${num:-}" ]] && continue
     ref="gh-pr-${num}"
     if is_mirrored "$ref"; then
-      count_skipped=$((count_skipped + 1))
+      pr_skipped=$((pr_skipped + 1))
       continue
     fi
     if mirror_one "pr" "$num" "$title" "$body" "$url" "$author" "$created" "$labels" "$is_draft" "$additions" "$deletions" "$review" "$merge_state"; then
-      count_created=$((count_created + 1))
+      pr_created=$((pr_created + 1))
     fi
   done < <(jq -c '.[] | select((([.labels[].name] | index("triaged")) | not))' "$prs_json")
 fi
@@ -407,5 +464,9 @@ link_relationships
 warn_closed_without_label
 
 echo
-echo "Done. Created: $count_created, skipped (already mirrored): $count_skipped"
+echo "Coverage (this sweep; window: $window_desc):"
+[[ "$DO_ISSUES" == 1 ]] && report_coverage "Issues" "$iss_fetched" "$iss_total" "$iss_created" "$iss_skipped"
+[[ "$DO_PRS" == 1 ]] && report_coverage "PRs" "$pr_fetched" "$pr_total" "$pr_created" "$pr_skipped"
+echo
+echo "Done. Created: $((iss_created + pr_created)), skipped (already mirrored): $((iss_skipped + pr_skipped))"
 echo "Next: bd list --status=open --type=bug,feature,task | grep -E 'gh-(pr|iss)-' or run 'bd ready'"
