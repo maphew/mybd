@@ -446,9 +446,13 @@ scripts/session-close-check --since <git-ref|RFC3339>   # explicit boundary
 
 The session boundary comes from `.beads/.session-start` (written at open by the
 `bd prime` SessionStart hook) or `--since`; with neither, the session-scoped
-checks are skipped with a warning rather than passing silently. The judgment
-prompts above are the real work; the script is only a backstop. `/session-close`
-runs the prompts and the script together.
+checks are skipped with a warning rather than passing silently. The stamp is a
+single file, so concurrent sessions in one checkout share a coarse boundary (the
+writer keeps the earlier one within a TTL, erring toward more warnings); pass
+`--since <git-ref|RFC3339>` when you need precise scoping. If bd is unavailable
+(migration gate / lock) the bd-backed checks warn-skip. The judgment prompts
+above are the real work; the script is only a backstop. `/session-close` runs the
+prompts and the script together.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
