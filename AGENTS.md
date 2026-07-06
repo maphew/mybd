@@ -417,6 +417,43 @@ When triaging, reviewing, landing, closing, or otherwise maintaining pull reques
 
 When regenerating beads CLI doc artifacts, build `bd` with `CGO_ENABLED=0 -tags gms_pure_go` (or let `scripts/generate-cli-docs.sh` build its own pinned binary). A default CGO build emits the full `bd federation` help tree and produces ~500 lines of spurious federation churn versus CI, which stubs federation. Set `BD_DOCS_ALLOW_CGO=1` only for a deliberate full-federation regen.
 
+## Cold-start handoff
+
+The Session Completion protocol below covers the **warm** handoff (prose a human
+reads). This section covers the **cold** handoff: the next actor is often a fresh
+agent that reads only `bd prime` + `bd ready` and starts pulling work. Prose in a
+closed bead or a report is invisible to it. Before you close a session, self-ask
+these three (answer in the handoff, do not just tick them):
+
+1. **What did this session learn that changes how a future agent works - and is
+   it in `bd remember` (surfaced at `bd prime`), not only in a report?** Reports
+   are not on the cold-start path; memories are.
+2. **Is every deliverable/report this session produced reachable from an OPEN
+   bead or a memory?** A pointer that lives only in a *closed* bead is a smell -
+   a cold agent runs `bd ready`, not `bd list --status=closed`.
+3. **Does any bead I touched say "after / gated-on / once X lands" in prose but
+   lack a dependency edge?** Prose ordering is invisible to `bd ready`; encode it
+   as a `bd dep` edge or the cold agent will pick blocked work.
+
+A warn-only mechanical backstop catches the cheap omissions (unreferenced new
+reports, thin new beads, beads left `in_progress`). It never blocks a close:
+
+```bash
+scripts/session-close-check            # warn, exit 0 (Windows: scripts/session-close-check.ps1)
+scripts/session-close-check --strict   # exit non-zero if any warning fired
+scripts/session-close-check --since <git-ref|RFC3339>   # explicit boundary
+```
+
+The session boundary comes from `.beads/.session-start` (written at open by the
+`bd prime` SessionStart hook) or `--since`; with neither, the session-scoped
+checks are skipped with a warning rather than passing silently. The stamp is a
+single file, so concurrent sessions in one checkout share a coarse boundary (the
+writer keeps the earlier one within a TTL, erring toward more warnings); pass
+`--since <git-ref|RFC3339>` when you need precise scoping. If bd is unavailable
+(migration gate / lock) the bd-backed checks warn-skip. The judgment prompts
+above are the real work; the script is only a backstop. `/session-close` runs the
+prompts and the script together.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

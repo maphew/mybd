@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# session-start-stamp - record a session boundary for session-close-check.
+#
+# Fired by the `bd prime` SessionStart hook (see .claude/settings.json and
+# .codex/hooks.json). Writes .beads/.session-start with a single line:
+#     <RFC3339 UTC time>\t<HEAD sha>
+# captured at session open, so session-close-check knows what "this session"
+# changed. Idempotent: overwrites on every session start. Best-effort - it must
+# never fail the hook, so every path exits 0.
+set -uo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0   # not a git repo
+[[ -n "$root" && -d "$root/.beads" ]] || exit 0                  # not a beads workspace
+
+stamp="$root/.beads/.session-start"
+
+# Do not clobber a still-fresh boundary from a concurrent session in the same
+# checkout: if a stamp exists and is younger than the TTL, keep it. session-
+# close-check then compares against the EARLIER boundary - the safe direction,
+# erring toward more warnings, never fewer. A stale stamp (or none) is
+# (re)written. Tune the window with MYBD_SESSION_STAMP_TTL (seconds).
+ttl="${MYBD_SESSION_STAMP_TTL:-14400}"   # 4h
+if [[ -f "$stamp" ]]; then
+  prev_epoch="$(date -d "$(cut -f1 "$stamp" 2>/dev/null)" +%s 2>/dev/null || echo 0)"
+  now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  if [[ "$prev_epoch" -gt 0 && "$now_epoch" -gt 0 && $((now_epoch - prev_epoch)) -lt "$ttl" ]]; then
+    exit 0
+  fi
+fi
+
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+head="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
+printf '%s\t%s\n' "$now" "$head" >"$stamp" 2>/dev/null || true
+exit 0

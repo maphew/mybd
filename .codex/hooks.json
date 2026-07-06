@@ -18,6 +18,10 @@
           {
             "type": "command",
             "command": "bd prime"
+          },
+          {
+            "type": "command",
+            "command": "scripts/session-start-stamp"
           }
         ]
       }
