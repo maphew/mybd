@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orphan-band disposition decision - 2026-07-05 (bead mybd-ufzk)</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>Orphan-band disposition decision - 2026-07-05 (bead mybd-ufzk)</h1>
+<p>The shed-vs-salvage decision on the 54 still-open PRs from the former "orphaned" band
+(inventory: <a href="orphaned-pr-inventory-2026-07-05.md">orphaned-pr-inventory-2026-07-05.md</a>, premise
+corrected by <a href="reroot-investigation-2026-07-05.md">reroot-investigation-2026-07-05.md</a>: these are
+ordinary stale PRs, 411-1006 commits behind, all with valid merge-bases).</p>
+
+<h2>Decision: salvage the band. Zero new closes.</h2>
+<p>Of the original 70, 13 were closed-with-credit on 2026-07-05, #3786 has since <strong>merged on its
+own</strong>, and #3838 closed in favor of reimplementation #4579. All 54 still open carry live,
+verified contributor value. A fresh 54-agent thread-state triage (this session) found <strong>no new
+close candidates</strong>: the one agent recommendation to close (#3922) was an artifact of the void
+re-root framing and was overridden to absorb.</p>
+
+<p>Disposition is by queue:</p>
+
+<table>
+<thead>
+<tr>
+<th>Queue</th>
+<th>Count</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A - merge now (demoted to fix-merge chain, see below)</td>
+<td>3</td>
+<td>MERGEABLE, green CI, favorable posted verdict - but local stacked validation found semantic drift; land serially via branch updates (mybd-8chd.11)</td>
+</tr>
+<tr>
+<td>B - maintainer absorb</td>
+<td>44</td>
+<td>fix-merge on the contributor branch (maintainerCanModify) or cherry-pick with Co-authored-by; includes 1 reimplement-fresh (#3774) and 1 sequenced-behind-#4034 (#4035)</td>
+</tr>
+<tr>
+<td>C - contributor rebase</td>
+<td>1</td>
+<td>author demonstrably active; offer the rebase before absorbing</td>
+</tr>
+<tr>
+<td>D - await deadline 2026-07-19</td>
+<td>4</td>
+<td>unanswered maintainer ask; absorb or close after the deadline</td>
+</tr>
+<tr>
+<td>E - owner decision</td>
+<td>2</td>
+<td>genuine design calls, routed to a human bead</td>
+</tr>
+</tbody>
+</table>
+
+<p>Plus #3803, already dispositioned: closes with credit when maphew's reimplementation #4580
+(open, MERGEABLE) merges - tracked by mybd-r0n1.</p>
+
+<h2>Execution structure (epic mybd-8chd)</h2>
+
+<table>
+<thead>
+<tr>
+<th>Bead</th>
+<th>Cluster</th>
+<th>PRs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mybd-8chd.1</td>
+<td>Windows test-hardening</td>
+<td>#3797 #3801 #3802 #3806 #3812</td>
+</tr>
+<tr>
+<td>mybd-8chd.2</td>
+<td>Linear sync</td>
+<td>#3759 #3772 #3776(C) #3789 #3930 #4119</td>
+</tr>
+<tr>
+<td>mybd-8chd.3</td>
+<td>dolt/storage</td>
+<td>#3548 #3563 #3564 #3618 #3875 #4022 #4034(+#4035) #4095 #4104 #4133; D: #3837 #4029</td>
+</tr>
+<tr>
+<td>mybd-8chd.4</td>
+<td>CLI/UX</td>
+<td>#3694 #3744 #4030 #4057 #4058 #4129; #3774 reimplement; D: #3777</td>
+</tr>
+<tr>
+<td>mybd-8chd.5</td>
+<td>formula</td>
+<td>#4081 then close #4056 with credit; #3781; D: #3874</td>
+</tr>
+<tr>
+<td>mybd-8chd.6</td>
+<td>docs + nix</td>
+<td>#3913 #3922 #4101 #3910 #4054</td>
+</tr>
+<tr>
+<td>mybd-8chd.7</td>
+<td>tests-infra</td>
+<td>#3904 #3987 #4100</td>
+</tr>
+<tr>
+<td>mybd-8chd.8</td>
+<td>telemetry pair</td>
+<td>#3858 then #3859</td>
+</tr>
+<tr>
+<td>mybd-8chd.9</td>
+<td>doctor + graph-viewer</td>
+<td>#3758 #4117</td>
+</tr>
+<tr>
+<td>mybd-8chd.10</td>
+<td>owner decisions (human)</td>
+<td>#3612, #3876</td>
+</tr>
+<tr>
+<td>mybd-8chd.11</td>
+<td>Queue A serial fix-merge chain</td>
+<td>#3734 then #3770 then #3771</td>
+</tr>
+</tbody>
+</table>
+
+<p>#3640 stays with pre-existing bead mybd-abd; #3803 with mybd-r0n1.</p>
+
+<h2>Queue A outcome (this session)</h2>
+
+<p>Local stacked-merge validation (all three touch <code>cmd/bd/close.go</code>) <strong>vetoed the blind merges</strong>
+and demoted Queue A to a serial fix-merge chain, now tracked by mybd-8chd.11:</p>
+
+<ul>
+<li><strong>#3734</strong>: merges textually clean, but the build breaks against current main - upstream
+commit <code>0c0039b02</code> added <code>cmd/bd/close_proxied_server.go</code> after the PR's base, and it still
+calls the 3-arg <code>validateIssueClosable</code> that the PR widens to 4 args. GitHub's MERGEABLE flag
+and green (May-era) CI hide this entirely. Action this session: maintainer branch-update +
+call-site fix pushed to quad341's branch (maintainerCanModify) - merge commit <code>7589c68</code> plus
+fix <code>109773084</code>, build + targeted Close/validation tests green locally, explanation comment
+posted and signed. Merge (squash) when the refreshed CI is green.</li>
+<li><strong>#3770 / #3771</strong>: merge cleanly and introduce no breakage of their own, but inherit #3734's
+break when stacked and share the same stale base. They follow serially after #3734 lands,
+each with a branch update + local validation first.</li>
+<li>Baseline sanity: clean <code>upstream/main</code> (c4e51986b) builds fine with the same flags, so the
+breakage is purely merge-induced.</li>
+</ul>
+
+<p><strong>Band-wide lesson</strong>: for PRs 400-1000 commits behind, MERGEABLE + green CI is necessary but
+not sufficient - every absorb in epic mybd-8chd gets a local merge-build-test gate before any
+upstream action.</p>
+
+<h2>Notable per-PR facts surfaced by the triage</h2>
+
+<ul>
+<li><strong>#3786 merged upstream on 2026-07-05</strong> without any local action - evidence that the band is
+live and rebaseable, exactly as the corrected premise predicts.</li>
+<li><strong>#4056 vs #4081</strong>: same fix (Formula <code>Intent</code> field). #4081 is quad341's cherry-pick of
+Dev-KVN's #4056 and is MERGEABLE with green CI. The #4056 thread contains fake/retracted bot
+supersession comments (one admits it was "posted in error by an automated agent"); the
+disposition ignores that noise. Land #4081, then close #4056 crediting Dev-KVN.</li>
+<li><strong>#4035</strong>'s disputed REQUEST-CHANGES review was formally retracted by its poster (quad341) as
+an unauthorized automated post; the real gate is sequencing behind stacked #4034.</li>
+<li><strong>#3876</strong> is self-blocked by its author on the cross-repo design decision
+gastownhall/gascity#2947 (on_complete vs Gas City drain primitive).</li>
+<li><strong>#3612</strong> is blocked on maphew's own 2026-05-10 design question: do cross-rig dependency
+placeholders leak orchestration-layer concepts into beads core? (Charter: route orchestration
+policy outside core.)</li>
+<li>Six kevglynn PRs benefit from an active, responsive author (full repros supplied same-day or
+within days on #3771 #3772 #3774 #3776 #3744-adjacent asks); #3776 is the one where asking for
+a rebase is cheaper than absorbing.</li>
+<li>The 2026-06-16 codex repro-request sweep misfired on some feature-style PRs (#4056, #4035):
+templated bug-repro asks that don't apply to the content. Those asks were treated as noise,
+not as open gates.</li>
+</ul>
+
+<h2>Full disposition matrix (54 PRs)</h2>
+
+<table>
+<thead>
+<tr>
+<th>PR</th>
+<th>Author</th>
+<th>Queue</th>
+<th>Disposition</th>
+<th>Cluster</th>
+<th>Rationale (trimmed)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3734">#3734</a></td>
+<td>quad341</td>
+<td>A-merge-now</td>
+<td>merge-now</td>
+<td>cli-ux</td>
+<td>Real authority-check bug (silent data loss on bd close when actor mismatches assignee), already verified absent from main, green CI, maintainer verdict explicitly recommends merge,</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3770">#3770</a></td>
+<td>idvorkin-ai-tools</td>
+<td>A-merge-now</td>
+<td>merge-now</td>
+<td>other</td>
+<td>Maintainer (maphew) posted explicit merge verdict with full technical verification on 2026-07-05; all CI green; small, well-scoped fix for documented daily-impact bug; no open asks</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3771">#3771</a></td>
+<td>kevglynn</td>
+<td>A-merge-now</td>
+<td>merge-now</td>
+<td>cli-ux</td>
+<td>Small, self-contained UX safety fix with all CI green, inventory high-confidence assessment, contributor responsive to maintainer's repro request, and linked issue #3681 still open</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4035">#4035</a></td>
+<td>Ethee</td>
+<td>B-absorb-after-4034</td>
+<td>escalate</td>
+<td>dolt-storage</td>
+<td>No authoritative maintainer verdict exists (the one retracted review was disavowed as unauthorized, and maphew's 2026-06-16 comment reads as a generic repro request rather than a d</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3548">#3548</a></td>
+<td>kingfly55</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>dolt-storage</td>
+<td>Inventory rates this a small, self-contained, test-backed primitive worth reimplementing rather than merging the orphan branch (which is now CONFLICTING with ~400-1000 commits of d</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3563">#3563</a></td>
+<td>shaunc</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>dolt-storage</td>
+<td>Real dolt-storage fix for host-config server-mode inference not present on main; PR is orphan branch (no common ancestor). Maintainer directs cherry-pick via fresh reimplementation</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3564">#3564</a></td>
+<td>shaunc</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Positive maintainer verdict on a small, well-tested fix (enrich port-conflict error messages with docker/external-server hint). PR is mergeable and maintainer can modify. Requires</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3618">#3618</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>dolt-storage</td>
+<td>Orphan PR (no merge-base) with reviewed, valid fix for prefix-list convergence between clean-databases and firewall. Maintainer verdict posted same day directs cherry-pick (reimple</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3640">#3640</a></td>
+<td>kevglynn</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>Small, validated permission-repair fix (2 files) addressing open issue #3593. Mergeable with all CI passing. Author responsive with detailed repro. Maintainer can efficiently rebas</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3694">#3694</a></td>
+<td>abnersajr</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>cli-ux</td>
+<td>Valuable, fully-tested unclaim command absent from main; PR is an orphan branch (no merge-base) from history rewrite, so cherry-pick/reimplement is the only viable path. Maintainer</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3744">#3744</a></td>
+<td>scotthamilton77</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>Valid bug fix (molReadyGatedCmd missing --gated flag) confirmed by responsive contributor. Maintainer can rebase, regenerate docs (routine fixup for the flag addition), and merge.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3758">#3758</a></td>
+<td>daniel-jasinski</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>doctor</td>
+<td>Small, valuable change (salvage-feature: embedded mode support for bd doctor checks) with green CI and modest conflict scope, but author inactive 19+ days and maintainers seek repr</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3759">#3759</a></td>
+<td>aphexcx</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>linear-sync</td>
+<td>Feature is genuine, well-tested, and absent from main. Orphaned by May 2026 history rewrite but maintainer analysis confirms 5 core files apply cleanly. Conflicts confined to gener</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3772">#3772</a></td>
+<td>kevglynn</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>linear-sync</td>
+<td>Inventory classifies this as a small, self-contained, still-needed fix for #3754; contributor already answered the maintainer's repro request in full but the branch is ~400-1000 co</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3781">#3781</a></td>
+<td>jjgarzella</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>formula</td>
+<td>Substantive, wanted feature with maintainer-approved design and passing CI; contributor inactive 2+ months; maintainer has refined and verified; rebase work is minimal given code i</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3789">#3789</a></td>
+<td>jmdaly</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>linear-sync</td>
+<td>Maintainer has already triaged and confirmed the fix is real and correct (Jira UTC-timezone bug still live on main). Explicit verdict recommends cherry-picking or reimplementing th</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3797">#3797</a></td>
+<td>seanmartinsmith</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>windows-tests</td>
+<td>Maintainer completed triage with explicit cherry-pick verdict on 2026-07-05. Test-only fix for Windows path canonicalization is small, well-diagnosed, has passing CI, and patch app</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3801">#3801</a></td>
+<td>seanmartinsmith</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>windows-tests</td>
+<td>Maintainer verdict (2026-07-05) confirms real bug still live on main, recommends cherry-pick due to orphan history and file path changes (from internal/storage/db/server to interna</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3802">#3802</a></td>
+<td>seanmartinsmith</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>windows-tests</td>
+<td>Small, well-tested Windows-specific test skip; orphan branch status requires cherry-pick or reimplement rather than direct merge. Maintainer explicitly recommended cherry-pick. Fix</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3806">#3806</a></td>
+<td>seanmartinsmith</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>windows-tests</td>
+<td>Valuable, small (5 test-only guards), favorable posted verdict, all CI green. Requires maintainer-performed rebase --onto (orphan branch). Contributor appears inactive post-verdict</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3812">#3812</a></td>
+<td>seanmartinsmith</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>tests-infra</td>
+<td>Maintainer's explicit directive (2026-07-05): cherry-pick the three test changes to a new main-rooted PR. Code is sound and requires no modifications; contributor responsively answ</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3858">#3858</a></td>
+<td>GraemeF</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>telemetry</td>
+<td>Small, self-contained fix for real telemetry instrumentation bug still present on main. All CI passes. Contributor inactive 56+ days, but fix is valuable and maintainer-modifiable</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3859">#3859</a></td>
+<td>GraemeF</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>telemetry</td>
+<td>Inventory confirms feature is absent on main and still valid (PR 2 of 3 in a telemetry OTel-env-vars series, sibling #3858 still open); no maintainer has triaged it and it now show</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3875">#3875</a></td>
+<td>jjgarzella</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Small self-contained fix for dep-type collision deduplication in cook.go's dependency handling; inventory confirms still absent from main and issue #3783 remains open. All CI passe</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3904">#3904</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>tests-infra</td>
+<td>Small test-only consolidation (+5 LOC) with full green CI, mergeable state, and maintainer modify permission. No maintainer review or concerns posted. Stale (47 days, 411+ commits</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3910">#3910</a></td>
+<td>harry-miller-trimble</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>nix</td>
+<td>Small, self-contained nix overlay feature with core-contributor approval and passing CI; conflicts require rebase but contributor (inactive since May 12) has authorized maintainer</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3913">#3913</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>docs</td>
+<td>Small docs-only PR (CONTRIBUTING_PR_GUIDELINES.md, 58 lines) from maintainer author quad341, mergeable with all CI green and no unresolved maintainer asks; should be rebased and me</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3922">#3922</a></td>
+<td>boardthatpowder</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>docs</td>
+<td>Valid documentation addition for a real tool (BeadSpec with OpenSpec integration) but 54 days stale on orphaned branch. Inventory classifies as salvage-reimplement, not mergeable-a</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3930">#3930</a></td>
+<td>aphexcx</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>linear-sync</td>
+<td>Feature-complete parent-reconciliation logic (9 unit tests, multi-team support) classified salvage-feature per 2026-07-05 inventory; confirmed absent from upstream/main; PR has mer</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3987">#3987</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>tests-infra</td>
+<td>One-line timeout fix with full CI coverage and positive author review; maintainer can rebase and land decision made against unresponsive contributor (19 days silent after 2026-06-1</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4022">#4022</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Small, approved change with explicit maintainer "merge-as-is" verdict and passing CI. Only blocker is technical conflict from May 2026 re-root (ordinary stale PR ~400+ commits behi</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4030">#4030</a></td>
+<td>shiminshen</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>Trivially correct help-text-only fix (two lines in cmd/bd/human.go), already positively reviewed, mergeable, maintainer can modify, and inventory classifies as small + cheap to lan</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4034">#4034</a></td>
+<td>Ethee</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Feature is valuable per inventory (high confidence, fixes blocking deadlock via dependency CTE) and contributor unresponsive for 19+ days. Merge conflicts present but maintainerCan</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4054">#4054</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>nix</td>
+<td>Valuable release-prep feature (bd preflight --fix for vendorHash auto-correction and version sync) with all 41 CI checks passing and favorable author review; stale 45+ days (last a</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4056">#4056</a></td>
+<td>Dev-KVN</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>formula</td>
+<td>The PR is small, self-contained, MERGEABLE, and the only credible maintainer touchpoint (maphew, 2026-06-16) is a generic repro request that doesn't fit this feature-style change a</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4057">#4057</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>Approved one-line change with complete CI passing and clear maintainer verdict. Mergeable status CONFLICTING requires rebase onto re-rooted main, but code quality is settled and th</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4058">#4058</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>PR has explicit maintainer approval with all CI passing. Conflicts exist only due to re-root; the substance was already approved as merge-ready. Small, self-contained change (wire</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4081">#4081</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>formula</td>
+<td>PR is MERGEABLE with green CI and maintainerCanModify=true, and the inventory rates it high-confidence "salvage-small" (small, self-contained, still needed, closes #4056 cherry-pic</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4095">#4095</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Confirmed bug fix for FIFO starvation in work claiming (newest issues claimed first instead of oldest, starving older tasks). Small self-contained fix touching sqlbuild ORDER BY ac</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4100">#4100</a></td>
+<td>quad341</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>tests-infra</td>
+<td>Small test-isolation fix with all CI passing, addresses real bug still present on main per 2026-07-05 inventory, contributor (Claude agents) inactive since creation, maintainer has</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4101">#4101</a></td>
+<td>prmichaelsen</td>
+<td>B-maintainer-absorb</td>
+<td>cherry-pick</td>
+<td>docs</td>
+<td>PR adds valid docs (RELATED_PROJECTS.md with scry entry, distinct from COMMUNITY_TOOLS) but is orphaned by re-root. Inventory identifies identical content in dangling commit 4ca114</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4104">#4104</a></td>
+<td>fishgills</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Small valid perf fix (2 files) addressing open issue #4102 via errgroup parallelization; needs rebase due to staleness but maintainer can resolve conflicts since maintainerCanModif</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4117">#4117</a></td>
+<td>A3Ackerman</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>graph-viewer</td>
+<td>Small 54-line single-file fix (scope CSS to #graph, add fitToView) with code-verified bug confirmation; inventory classified as worth landing post-rebase; contributor inactive 20 d</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4119">#4119</a></td>
+<td>A3Ackerman</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>linear-sync</td>
+<td>Small (160-line), clean, well-tested feature adding opt-in linear.outbound_state_map for Linear push-side state disambiguation. Inventory (2026-07-05, high confidence) verified abs</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4129">#4129</a></td>
+<td>Zireael</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>cli-ux</td>
+<td>Valuable small fix (CLI help text sync + new bd types --sections flag) confirmed needed per 2026-07-05 inventory. Contributor was responsive in June but inactive 18+ days. Maintain</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4133">#4133</a></td>
+<td>Zireael</td>
+<td>B-maintainer-absorb</td>
+<td>maintainer-rebase-merge</td>
+<td>dolt-storage</td>
+<td>Inventory rates this a small, self-contained, non-superseded fix (med confidence) for an open crash issue (#4132); PR is CONFLICTING and needs a rebase, and while the contributor r</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3774">#3774</a></td>
+<td>kevglynn</td>
+<td>B-reimplement-fresh</td>
+<td>escalate</td>
+<td>cli-ux</td>
+<td>Repro was requested and fully supplied by the contributor with no maintainer follow-up, so this isn't a stale/unresponsive case for close-with-credit or contributor-rebase; but the</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3776">#3776</a></td>
+<td>kevglynn</td>
+<td>C-contributor-rebase</td>
+<td>contributor-rebase</td>
+<td>linear-sync</td>
+<td>Feature-class PR adds Linear label-push support (GetTeamLabels + label_type_map inversion + labelIds resolution) fixing unfixed bug #3753; all tests pass with green CI; maintainer'</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3777">#3777</a></td>
+<td>iuyua9</td>
+<td>D-await-deadline</td>
+<td>contributor-rebase</td>
+<td>cli-ux</td>
+<td>Small, self-contained fix to honor deferred filters in ready-list queries (inventory: "still valid"). Contributor is responsive (pushed follow-up in May) but hasn't yet answered Ju</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3837">#3837</a></td>
+<td>ckumar1</td>
+<td>D-await-deadline</td>
+<td>hold</td>
+<td>dolt-storage</td>
+<td>Thread has two unresolved maintainer asks (coffeegoddd's 2026-05-10/11 repro/design questions about hard-coding dolt auth error strings vs a new `bd remote auth check` command, and</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3874">#3874</a></td>
+<td>jjgarzella</td>
+<td>D-await-deadline</td>
+<td>hold</td>
+<td>formula</td>
+<td>Inventory validates the fix as sound and still needed (looksLikeFormulaName gate remains on main), all CI passes, but maintainer's explicit repro request from 2026-06-16 remains un</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/4029">#4029</a></td>
+<td>quad341</td>
+<td>D-await-deadline</td>
+<td>hold</td>
+<td>dolt-storage</td>
+<td>CI is fully green and the fix looks small/self-contained per inventory and self-reviews, but the maintainer's explicit repro request is still unanswered by the contributor and merg</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3612">#3612</a></td>
+<td>gt-rm-0306</td>
+<td>E-owner-decision</td>
+<td>escalate</td>
+<td>dolt-storage</td>
+<td>Real correctness fix for cross-rig dependency visibility that passes all tests, but maintainer's unresolved design question about architectural layering (whether multi-rig/gastown</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gastownhall/beads/pull/3876">#3876</a></td>
+<td>jjgarzella</td>
+<td>E-owner-decision</td>
+<td>escalate</td>
+<td>formula</td>
+<td>CI is green and mergeable=CONFLICTING is just rebase drift, but the author himself has blocked merge on an unresolved cross-repo design decision (on_complete vs Gas City drain) tra</td>
+</tr>
+</tbody>
+</table>
+
+<h2>Method</h2>
+
+<ul>
+<li>Fresh state: one batched GraphQL query over all 57 inventory PRs (state, mergeability,
+latest activity) - caught #3786 MERGED.</li>
+<li>Thread triage: 54-agent workflow fan-out (haiku for routine threads, sonnet for the 8
+med-confidence rows, the escalate pair, and the #4056/#4081 duplicate pair), read-only,
+explicitly barred from re-reviewing code (the content review is complete per mybd-y7u0 /
+mybd-w15y / the inventory). Adversarial verify stage armed for close-with-credit
+recommendations; the single close rec (#3922) was instead overridden on inspection, so no
+closes were verified or executed.</li>
+<li>Caveat: a few rationale cells in the matrix still echo the void "orphan branch / no
+merge-base" framing the triage agents read in older thread comments. The operative fields are
+Queue and Disposition; "cherry-pick" and "maintainer-rebase-merge" both mean maintainer
+absorb, and the actual mechanics (rebase vs cherry-pick) get decided per PR at execution time.</li>
+<li>54/54 agents returned structured rows, zero errors. Subagent usage ~1.78M total tokens
+(haiku-dominant); the workflow's own output-token spend stayed within the session's 200k
+default target.</li>
+<li>Queue A merges gated by <code>bd-main/scripts/pr-preflight.sh</code> plus local stacked-merge
+validation (all three touch <code>cmd/bd/close.go</code>, so they were merge-tested in sequence in a
+scratch worktree before any upstream action).</li>
+</ul>
+
+<h2>Follow-through</h2>
+
+<ul>
+<li>Execute clusters via epic mybd-8chd (children .1-.11). First action: merge #3734 once its
+refreshed CI is green (.11), then cheapest-first: tests-infra (.7), Windows (.1),
+docs+nix (.6).</li>
+<li>D-queue deadline 2026-07-19: #3837 #4029 #3777 #3874 - absorb or close after.</li>
+<li>mybd-ufzk closes with this report: the <em>decision</em> is made; remaining work is execution,
+tracked by mybd-8chd.</li>
+</ul>
+
+</body>
+</html>
