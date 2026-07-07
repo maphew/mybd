@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision memo: mybd-pdvy (2026-07-07)</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; max-width: 46rem; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55; color: #1a1a1a; background: #fdfdfb; }
+  h1 { font-size: 1.45rem; border-bottom: 2px solid #444; padding-bottom: .4rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 1px solid #ccc; padding-bottom: .2rem; }
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: .85em; background: #f0efe9; padding: .08em .3em; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid #bbb; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #ecece4; }
+  .meta { color: #555; font-size: .95rem; }
+  .rec { background: #eef3ea; border-left: 4px solid #5a7a4a; padding: .75rem 1rem; margin: 1rem 0; }
+  .decide { background: #f6efe2; border-left: 4px solid #a07830; padding: .75rem 1rem; margin: 1.5rem 0; font-weight: bold; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #191918; color: #ddd; }
+    h1 { border-color: #999; } h2 { border-color: #555; }
+    code { background: #2c2c2a; }
+    th { background: #2c2c2a; } th, td { border-color: #555; }
+    .meta { color: #aaa; }
+    .rec { background: #22301e; border-color: #6f9a5a; }
+    .decide { background: #33291a; border-color: #c09040; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Decision memo: mybd-pdvy - escalate #4249 vs fork-carry pure-Go releases</h1>
+<p class="meta">Date: 2026-07-07 &middot; Owner decision due: <strong>2026-07-12</strong> &middot; Prepared read-only; nothing posted upstream.</p>
+
+<h2>Executive summary</h2>
+<div class="rec">
+<p>gastownhall/beads#4249 (the build-tagged zstd seam proposal) has had zero maintainer response in 39 days, while the fork-carry path is already built, staged, and verified locally as of this morning. <strong>Recommendation: Option C - start fork-carried pure-Go releases now, and keep the upstream ask alive by redirecting it to the storage owner (coffeegoddd / DoltHub) at the driver or Dolt level rather than re-pinging the beads issue.</strong> The seam lives in <code>dolthub/dolt</code> <code>store/nbs</code>, so the durable fix is upstream of beads anyway; carrying the fork buys immediate release relief without foreclosing that path.</p>
+</div>
+
+<h2>What #4249 proposes</h2>
+<p>Issue (not PR) gastownhall/beads#4249, opened 2026-05-29 by maphew, title "Proposal: a build-tagged zstd seam so embedded Dolt can build without cgo (pure-Go bd is proven)". Core claim: beads' entire cgo burden traces to one transitive dependency, <code>github.com/dolthub/gozstd</code>, imported only by <code>dolthub/dolt/go/store/nbs</code>. A ~120-line shim over <code>klauspost/compress/zstd</code> plus a <code>nocgo</code> tag migration yields a statically linked <code>bd</code> that runs embedded Dolt end to end. The ask: would Dolt accept a build-tagged seam in <code>store/nbs</code>, defaulting to cgo/gozstd so existing users are unaffected. Evidence in the issue: static binary, <code>bd init/create/list</code> round-trip in embedded mode, full federation help at CGO=0, both embedded suites passing (storage 59s, CLI 239s), all test packages compiling, with only two compression-ratio fixtures regressing.</p>
+
+<h2>Timeline of #4249</h2>
+<table>
+<tr><th>Date</th><th>Event</th></tr>
+<tr><td>2026-05-29 05:43Z</td><td>Issue opened; coffeegoddd @-mentioned and auto-subscribed at open</td></tr>
+<tr><td>2026-06-14</td><td>Cross-referenced from PR #4408 (seam evidence PR, opened same day)</td></tr>
+<tr><td>2026-06-14 to 2026-07-07</td><td>No comments, no reactions, no labels, no assignee</td></tr>
+<tr><td>2026-07-07 12:21Z</td><td><code>updatedAt</code> bumped, but comments=0, reactions=0, no visible timeline event: a cross-reference bump, <strong>not a reply</strong></td></tr>
+</table>
+<p>Companion PR #4408 ("pure-Go zstd seam evidence for embedded Dolt"): OPEN, MERGEABLE, 0 reviews, 2 comments, both by maphew (latest 2026-07-07, noting the nocgo stack was regenerated fresh on current main). Silence is non-engagement, not absence: coffeegoddd merged #4489 (db/sql) into beads main today and landed dolt driver/min-version bumps in late June.</p>
+
+<h2>Demand signal</h2>
+<ul>
+<li>#3312 and #3338 (both OPEN since April): <code>go install ...@latest</code> broken by the <code>go-mysql-server</code> replace directive; users repeatedly hit the install/build tangle.</li>
+<li>#4587 (OPEN, 2026-07-05): the <code>gms_pure_go</code> tag omission is "the single most common per-session build trap"; asks for auto-tagging and a doctor-build preflight. This is recurring cost of the cgo split that the seam removes.</li>
+</ul>
+
+<h2>Option A: escalate upstream</h2>
+<p>Concrete channels, in rough order of expected value:</p>
+<ol>
+<li><strong>File the seam ask at the Dolt/driver level.</strong> coffeegoddd (DoltHub) owns the storage boundary, and the roadmap direction is explicit that beads-side workarounds against storage are the wrong layer. The seam is a <code>dolthub/dolt</code> <code>store/nbs</code> change; an issue or small PR in the Dolt repo (or against <code>dolthub/driver</code>) reaches the actual owner in his own tracker, where a 193-line shim proposal is more legible than inside beads' queue.</li>
+<li><strong>One direct follow-up ping on #4249 naming coffeegoddd</strong>, citing his storage ownership and linking the regenerated evidence (#4408 now MERGEABLE on current main). Cheap, but he was already mentioned at open and has been active without engaging.</li>
+<li><strong>Offer to split the PR smaller</strong>: the shim alone (5 files, 193 insertions) is independently reviewable; explicitly decouple it from the 287-file tag migration so a reviewer can say yes to something small.</li>
+</ol>
+<p>Expected latency: unknown and unbounded. 39 days of silence against an active maintainer suggests low priority, not oversight. Risk: it stays silent through another release cycle and the weekly build pain (#4587-class traps, #3312/#3338-class installs) continues with no local relief.</p>
+
+<h2>Option B: fork-carry pure-Go releases</h2>
+<p>Staged branches on the fork (<code>maphew/beads</code>), stacked in this order:</p>
+<table>
+<tr><th>Branch</th><th>Head</th><th>Contents</th></tr>
+<tr><td><code>mybd-hli9-zstd-seam</code></td><td>31cbf8be7</td><td>Seam evidence: <code>gozstd-shim/</code> (139-line shim.go over klauspost zstd) + go.mod wiring + Nix vendorHash; backs PR #4408</td></tr>
+<tr><td><code>mybd-hli9-nocgo-build-tags</code></td><td>c6506a998</td><td>Single regenerated commit migrating <code>cgo</code>/<code>!cgo</code> tags to <code>!nocgo</code>/<code>nocgo</code>, 287 files, sitting on current main</td></tr>
+<tr><td><code>mybd-hli9-purego-release</code></td><td>57e843257</td><td>Collapses <code>.goreleaser.yml</code> from per-platform cgo builds (zig sysroots, CC/CXX wiring, verify-cgo hooks) to one <code>CGO_ENABLED=0 -tags gms_pure_go</code> build id covering linux/windows/android/freebsd, amd64+arm64; net -116/+29 across <code>.goreleaser.yml</code> and <code>release.yml</code></td></tr>
+</table>
+<p><strong>Verified</strong> (verify-queue, 2026-07-07, head c6506a998): <code>CGO_ENABLED=0 -tags gms_pure_go</code> full embedded suites pass - <code>internal/storage/embeddeddolt</code> ok 535s, <code>cmd/bd</code> ok 585s, doctor/protocol/setup ok - with one skip: <code>TestEmbeddedInitConcurrent</code> failed twice (init race, "repo_state.json: no such file"; 9 of 10 expected outcomes) before the third run passed with it skipped.</p>
+<p><strong>Pending</strong>: disposition of <code>TestEmbeddedInitConcurrent</code> (flaky vs a real pure-Go init race); the release branch (57e843257) has no verify-queue run and no goreleaser dry-run evidence; no cross-platform smoke of the produced artifacts; branch base is already 29 commits behind upstream/main tip.</p>
+<p><strong>Ongoing cost per upstream release</strong>: upstream velocity is high. The 287-file migration cannot be rebased through drift; it was already regenerated once after ~90 commits (per the #4408 comment), so each sync means re-running the sweep on new main plus resolving occasional go.mod/shim conflicts, then re-verifying. Budget roughly one regeneration + one verify-queue cycle per carried release.</p>
+<p><strong>Exit criteria for dropping the carry</strong>: (a) Dolt lands a build-tagged zstd seam in <code>store/nbs</code> (or the driver ships pure-Go), and (b) beads main builds embedded at CGO=0, at which point the fork branches collapse to at most the goreleaser change, or to nothing.</p>
+
+<h2>Option C: do both (recommended)</h2>
+<p>The evidence supports it: the carry is ready now and the escalation costs one issue filing plus one ping. Carry releases from <code>mybd-hli9-purego-release</code> (after clearing the two pending items above), keep #4249 and #4408 open as the exit path, and move the real ask to the Dolt repo where the storage owner lives. Re-ping cadence: monthly, referencing shipped fork releases as field evidence.</p>
+
+<h2>Comparison</h2>
+<table>
+<tr><th></th><th>A: escalate only</th><th>B: carry only</th><th>C: both</th></tr>
+<tr><td>Release pain relief</td><td>none until upstream acts</td><td>immediate</td><td>immediate</td></tr>
+<tr><td>Latency</td><td>unbounded (39 days silent so far)</td><td>~days (2 pending checks)</td><td>~days</td></tr>
+<tr><td>Ongoing cost</td><td>~zero</td><td>regen + verify per release</td><td>same as B + trivial ping cost</td></tr>
+<tr><td>Durable fix</td><td>yes, if it lands</td><td>no, permanent divergence risk</td><td>yes, carry is explicitly temporary</td></tr>
+<tr><td>Risk</td><td>silence continues</td><td>drift compounds, exit never comes</td><td>mitigated both ways</td></tr>
+</table>
+
+<div class="decide">Decide by 2026-07-12. Default if no decision: Option C - proceed with the fork-carry release after resolving the <code>TestEmbeddedInitConcurrent</code> disposition and a goreleaser dry-run, and file the Dolt-level seam issue; #4249 stays open as the exit path.</div>
+
+</body>
+</html>
