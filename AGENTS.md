@@ -133,7 +133,7 @@ Claude subagent tiers, invoked from any runtime via the shell. Use
 model/sandbox/reasoning defaults:
 
 ```bash
-scripts/codex-agent scout    "where is X handled?"          # gpt-5.4-mini, low, read-only, ephemeral
+scripts/codex-agent scout    "where is X handled?"          # gpt-5.4-mini, medium, read-only, ephemeral
 scripts/codex-agent builder  -C .worktrees/mybd/foo "..."   # gpt-5.4, medium, workspace-write
 scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.5, high, read-only
 scripts/codex-agent reviewer --diff --base main             # structured `codex review` of a branch diff

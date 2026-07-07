@@ -5,7 +5,7 @@
 # `codex exec` model/sandbox/reasoning defaults so Claude Code, Codex, and
 # humans all delegate to Codex the same way:
 #
-#   scout    read-only recon        gpt-5.4-mini, low reasoning, ephemeral
+#   scout    read-only recon        gpt-5.4-mini, medium reasoning, ephemeral
 #   builder  scoped implementation  gpt-5.4, medium reasoning, workspace-write
 #   reviewer correctness review     gpt-5.5, high reasoning, read-only
 #
@@ -83,7 +83,7 @@ fi
 case "$tier" in
   scout)
     exec codex exec -s read-only -m gpt-5.4-mini \
-      -c model_reasoning_effort='"low"' --ephemeral "$@" ;;
+      -c model_reasoning_effort='"medium"' --ephemeral "$@" ;;
   builder)
     exec codex exec -s workspace-write -m gpt-5.4 \
       -c model_reasoning_effort='"medium"' "$@" ;;
