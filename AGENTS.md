@@ -97,7 +97,13 @@ Named tiers live in `.claude/agents/` - prefer them over ad-hoc spawns:
 
 - **scout** (GPT-mini at medium reasoning, read-only) - searches, file inventories, 
   "where is X", summarizing files, running read-only bd/git commands or tests and 
-  reporting output verbatim.
+  reporting output verbatim. Scout runs on Codex, so prefer calling
+  `scripts/codex-agent scout -o <file> "<task>" </dev/null` directly from the
+  orchestrator - `codex exec` is itself an agent, so the direct call gives the
+  same context isolation without the relay hop. Include the recon rules from
+  `.claude/agents/scout.md` in the prompt. The `scout` agent type remains the
+  interface for workflow `agentType` calls and degrades to haiku (flagged)
+  when codex is unavailable.
 - **builder** (sonnet, can edit) - well-scoped implementation with a clear
   spec: exact files named, acceptance criteria stated. Give it a spec, not
   a problem.

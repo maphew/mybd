@@ -5,7 +5,11 @@ description: >
   the Codex CLI. Use for searches, file inventories, "where is X
   defined/used", summarizing a file or directory, running read-only bd/git
   commands or tests and reporting output verbatim. No editing. Delegate here
-  whenever the task is mechanical lookup rather than judgment.
+  whenever the task is mechanical lookup rather than judgment. Prefer
+  calling `scripts/codex-agent scout` directly from the orchestrator when
+  you can (same isolation, no relay hop; include the recon rules from this
+  file in the prompt); this agent type is the interface for workflow
+  agentType calls and the fallback when codex is unavailable.
 tools: Read, Grep, Glob, Bash
 model: haiku
 ---
