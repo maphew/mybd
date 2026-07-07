@@ -69,3 +69,23 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 - When code changes result from PR maintenance, follow repo quality gates and session completion rules in `AGENTS.md`.
 - Post multi-line PR comments from a real Markdown body file or a shell heredoc, not from strings with escaped `\n` sequences. After posting or editing, verify the rendered body with `gh pr view --comments --json comments --jq ...` before moving on.
 - Before finishing, re-read the PR, latest comments, review threads, and linked issues; address or explicitly note any unresolved action items.
+
+## Base-Branch Health (stop-the-line)
+
+When upstream main is red, per-PR check verdicts stop being reliable: every PR
+inherits red checks, and "these failures are pre-existing" reasoning lets new
+breakage stack on top of old. The 2026-07-05..07 window (~33h red, 4 independent
+breakages, fixed by gastownhall/beads#4623 + #4624) and the 2026-07-07
+CLI-docs-drift red (#4631) are both instances.
+
+- **Check base health before merging anything.** `pr-preflight.sh` does this
+  automatically since gastownhall/beads#4630 (per-workflow newest *decisive*
+  run; cancelled runs are ignored, so a later green unrelated workflow cannot
+  mask a red test workflow). Manual check:
+  `gh run list --repo gastownhall/beads --branch main --status completed --limit 10`
+- **While main is red, merge ONLY the fix for main.** Everything else waits,
+  no matter how green its own checks look.
+- **After the fix lands**, any PR whose green checks predate it must be
+  refreshed (`gh pr update-branch`) and re-watched before judging.
+- Autonomous agents run preflight with `PR_PREFLIGHT_BLOCK_RED_BASE=1` so a
+  red base is a hard block rather than a warning (see AGENTS.md).
