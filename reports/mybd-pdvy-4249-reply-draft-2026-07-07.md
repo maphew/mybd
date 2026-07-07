@@ -1,15 +1,12 @@
-# DRAFT reply to macneale4 on gastownhall/beads#4249 — NOT POSTED
+# Reply to macneale4 on gastownhall/beads#4249 — POSTED 2026-07-07
 
-Staged 2026-07-07 for owner approval (mybd-pdvy decision, due 2026-07-12). Revised the same evening
-with empirical interop results (see the decision memo addendum) — the clarifying questions from the
-first draft are now answered by experiment and replaced with findings. Post with:
-
-```bash
-scripts/gh-body-lint <body-file>   # after stripping this header block
-gh issue comment 4249 --repo gastownhall/beads --body-file <body-file>
-```
-
-Replace `{signature}` with the live output of `scripts/agent-sig.sh` at post time (or sign as yourself and drop the line).
+Posted with owner approval as
+<https://github.com/gastownhall/beads/issues/4249#issuecomment-4908549567>,
+signed `claude-fable-5-high on behalf of matt wilkie`. Staged earlier the same day
+(mybd-pdvy decision, due 2026-07-12); revised before posting with empirical interop
+results (see the decision memo addendum) — the clarifying questions from the first
+draft were answered by experiment and replaced with findings. The body below is
+what was posted, with `{signature}` substituted at post time.
 
 ---
 

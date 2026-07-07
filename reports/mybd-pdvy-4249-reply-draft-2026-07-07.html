@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DRAFT reply to macneale4 on gastownhall/beads#4249 — NOT POSTED</title>
+<title>Reply to macneale4 on gastownhall/beads#4249 — POSTED 2026-07-07</title>
 <style>
   body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
          margin:32px auto; max-width:1120px; padding:0 24px; }
@@ -25,11 +25,8 @@
 </style>
 </head>
 <body>
-<h1>DRAFT reply to macneale4 on gastownhall/beads#4249 — NOT POSTED</h1>
-<p>Staged 2026-07-07 for owner approval (mybd-pdvy decision, due 2026-07-12). Revised the same evening with empirical interop results (see the decision memo addendum) — the clarifying questions from the first draft are now answered by experiment and replaced with findings. Post with:</p>
-<pre><code>scripts/gh-body-lint &lt;body-file&gt;   # after stripping this header block
-gh issue comment 4249 --repo gastownhall/beads --body-file &lt;body-file&gt;</code></pre>
-<p>Replace <code>{signature}</code> with the live output of <code>scripts/agent-sig.sh</code> at post time (or sign as yourself and drop the line).</p>
+<h1>Reply to macneale4 on gastownhall/beads#4249 — POSTED 2026-07-07</h1>
+<p>Posted with owner approval as &lt;https://github.com/gastownhall/beads/issues/4249#issuecomment-4908549567&gt;, signed <code>claude-fable-5-high on behalf of matt wilkie</code>. Staged earlier the same day (mybd-pdvy decision, due 2026-07-12); revised before posting with empirical interop results (see the decision memo addendum) — the clarifying questions from the first draft were answered by experiment and replaced with findings. The body below is what was posted, with <code>{signature}</code> substituted at post time.</p>
 <hr>
 <p>Thanks @macneale4 — that settles the encode side. And rather than come back with more questions, we ran the interop empirically against the beads-pinned dolt (<code>45335d44ad79</code>), with two <code>bd</code> builds: stock cgo/libzstd, and pure-Go with <code>gozstd</code> replaced by a ~140-line klauspost shim (the #4408 branch). 5,000-issue database, <code>bd gc</code> → <code>CALL DOLT_GC()</code>, default archive level. Results:</p>
 <ol><li><strong>cgo writes → pure-Go reads: works.</strong> Default GC wrote a 15.6 MB <code>.darc</code> with 15,656 zstd trained-dict frames (dictID 1383496744). The klauspost build read the entire store — <code>bd export</code> of all 5,000 issues, byte-identical to the cgo build&#x27;s export. So klauspost decode of libzstd ZDICT-trained frames holds in practice, and a pure-Go binary only needs zstd <em>decode</em> to open existing stores.</li><li><strong>pure-Go writes → cgo reads: fails.</strong> A store GC&#x27;d by the klauspost build is rejected by the cgo build with <code>decompression error: Dictionary mismatch</code> — the klauspost <code>BuildDict</code> output produces frames carrying dictID 1, which libzstd won&#x27;t accept against that dictionary. Consistent with your finding that klauspost dictionary training is the weak link — and it&#x27;s an interchange hazard on top of a ratio problem. Possibly relevant to your option (a) prototype too, if the generic embedded dictionary is klauspost-built.</li><li><strong>Existing beads stores really do contain zstd archives</strong>, but only past the <code>maxSamples = 1000</code> chunk threshold in the stream writer — smaller stores get snappy-only <code>.darc</code> files. Our own beads database is past it (a 40 MB archive with 4,565 zstd frames), so decode capability for existing stores is a hard requirement, not a corner case.</li><li><strong>Ratio on this dataset</strong>: the klauspost trained-dict archive came out 10.7% larger than libzstd&#x27;s — same direction as your prototype result, not dramatic.</li></ol>

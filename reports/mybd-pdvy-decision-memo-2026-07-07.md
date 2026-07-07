@@ -26,14 +26,14 @@ Date: 2026-07-07. Owner decision due: **2026-07-12**. Prepared read-only; nothin
 
 ### Revised recommendation: engage now, hold the carry
 
-- **Reply to macneale4 promptly** — endorse path (b), and lead with evidence instead of questions: the interop experiments above answer what the first draft asked. The revised draft is staged at [`reports/mybd-pdvy-4249-reply-draft-2026-07-07.md`](mybd-pdvy-4249-reply-draft-2026-07-07.md); **not posted** — owner to approve/adjust/post. It offers a concrete one-line beads PR (`--archive-level 0` at the GC call site) and asks one design question: would Dolt take a tag-out of `gozstd` paired with klauspost decode-only for legacy archives. Maintainer engagement windows are short; this is the time-critical piece of the 2026-07-12 decision.
+- **Reply to macneale4 promptly** — endorse path (b), and lead with evidence instead of questions: the interop experiments above answer what the first draft asked. The revised draft at [`reports/mybd-pdvy-4249-reply-draft-2026-07-07.md`](mybd-pdvy-4249-reply-draft-2026-07-07.md) was **posted with owner approval on 2026-07-07** as [issuecomment-4908549567](https://github.com/gastownhall/beads/issues/4249#issuecomment-4908549567). It offers a concrete one-line beads PR (`--archive-level 0` at the GC call site) and asks one design question: would Dolt take a tag-out of `gozstd` paired with klauspost decode-only for legacy archives. Maintainer engagement windows are short; this is the time-critical piece of the 2026-07-12 decision.
 - **Do not start shipping fork-carried releases yet.** The carry's value was relief from unbounded upstream silence; silence just ended, and the per-release cost (287-file tag regen + verify cycle, compounding drift) buys little while a simpler upstream path is live. The reverse-interop finding adds a **new pre-release blocker**: a fork build running default GC writes stores unreadable by official binaries. Original Option C's "start now" is superseded twice over.
 - **Keep the hli9 stack staged and fresh.** It remains the implementation vehicle under every outcome: the `nocgo` tag migration and goreleaser collapse are beads-side and needed regardless of which zstd path Dolt picks; the shim shrinks to decode-only (proven sufficient for existing stores) or to nothing under path (b). Before any fork release, the shim's write path must be neutered (`--archive-level 0` GC or `BuildDict` fix). #4249 and #4408 stay open.
 - **New fallback checkpoint: 2026-07-21.** If by then the thread has not produced a concrete direction (who implements what, at which layer), fall back to original Option C — begin fork-carried releases after clearing the pending items (TestEmbeddedInitConcurrent disposition, goreleaser dry-run, and the reverse-interop mitigation above).
 
 ### Revised decision line
 
-The 2026-07-12 owner decision becomes: (1) approve/adjust/post the reply draft, (2) confirm holding fork-carry releases, (3) confirm 2026-07-21 as the fallback checkpoint for reverting to Option C.
+The 2026-07-12 owner decision becomes: (1) ~~approve/adjust/post the reply draft~~ **done — posted 2026-07-07**, (2) confirm holding fork-carry releases, (3) confirm 2026-07-21 as the fallback checkpoint for reverting to Option C.
 
 ---
 
