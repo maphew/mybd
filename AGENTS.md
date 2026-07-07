@@ -95,9 +95,9 @@ run it on.
 
 Named tiers live in `.claude/agents/` - prefer them over ad-hoc spawns:
 
-- **scout** (haiku, read-only) - searches, file inventories, "where is X",
-  summarizing files, running read-only bd/git commands or tests and reporting
-  output verbatim.
+- **scout** (GPT-mini at medium reasoning, read-only) - searches, file inventories, 
+  "where is X", summarizing files, running read-only bd/git commands or tests and 
+  reporting output verbatim.
 - **builder** (sonnet, can edit) - well-scoped implementation with a clear
   spec: exact files named, acceptance criteria stated. Give it a spec, not
   a problem.
