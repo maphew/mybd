@@ -2,6 +2,40 @@
 
 Date: 2026-07-07. Owner decision due: **2026-07-12**. Prepared read-only; nothing posted upstream.
 
+**UPDATED 2026-07-07 evening**: maintainer engagement arrived on #4249 hours after this memo was drafted. Read the Addendum below first; it supersedes the executive summary's recommendation. The original analysis is retained unchanged below it.
+
+## Addendum (2026-07-07T18:38Z): maintainer engagement changes the premise
+
+[macneale4](https://github.com/gastownhall/beads/issues/4249#issuecomment-4907243168) (Dolt storage team, DoltHub) replied on #4249 — the first maintainer response in 39 days, and from exactly the audience Option A's step 1 proposed to reach by filing at the Dolt level. Substance:
+
+- **Answers Q2 (the load-bearing dictionary risk)**: DoltHub already tested klauspost-produced dictionaries and found them "sufficiently bad" — no compression improvement over snappy. This kills the naive seam-as-proposed (klauspost as a drop-in encode backend with trained dicts).
+- **Path (a)**: a generic dictionary embedded in the binary, klauspost-encoded. Prototyped by DoltHub; better than snappy, worse than a custom trained dict.
+- **Path (b), his suggestion**: *disable zstd entirely for beads and use snappy alone* — "for the beads use case the database size is rarely a problem."
+
+### Why this changes the calculus
+
+1. **The silence premise is gone.** The memo's Option A latency estimate ("unknown and unbounded") rested on 39 days of non-engagement. There is now an active conversation with the storage owner's team, on our issue, proposing a path.
+2. **Both offered paths are pure-Go-compatible, and (b) is simpler than our ask.** Path (a) is klauspost (pure Go) with an embedded generic dict; path (b) is snappy (already pure Go — normal chunk writes use it today). Our goal was never compression ratio, it was CGO elimination. A snappy-only beads profile needs *no zstd encode backend at all* — less code than the seam #4249 proposed.
+3. **Two load-bearing caveats remain** (these are the clarifying questions to put back to macneale4):
+   - **Build-time vs runtime**: disabling zstd at runtime does not remove the direct `gozstd` API references in `store/nbs`, which fail under `CGO_ENABLED=0` unless tagged out or replaced. Path (b) only reaches `CGO_ENABLED=0` if it includes that.
+   - **Existing stores**: stores GC'd by a cgo build may already contain zstd trained-dict archives — beads users demonstrably run GC (`CALL DOLT_GC()` is the current workaround for #4258), and cross-vendor review confirmed against pinned Dolt source that the GC archive path builds dictionaries and converts snappy chunks to zstd archives. A snappy-only binary needs either a zstd *decode* path for those (klauspost documents decoder support for standard trained dictionaries — expected to work, unverified against a Dolt archive fixture) or a GC rewrite-to-snappy story.
+   - Secondary: where the switch lives (Dolt archive config, driver default, or beads-side) — per the storage-driver roadmap, prefer the Dolt/driver level.
+
+### Revised recommendation: engage now, hold the carry
+
+- **Reply to macneale4 promptly** — endorse path (b) as serving beads' actual goal, and ask the two clarifying questions above. A draft is staged at [`reports/mybd-pdvy-4249-reply-draft-2026-07-07.md`](mybd-pdvy-4249-reply-draft-2026-07-07.md); **not posted** — owner to approve/adjust/post. Maintainer engagement windows are short; this is the time-critical piece of the 2026-07-12 decision.
+- **Do not start shipping fork-carried releases yet.** The carry's value was relief from unbounded upstream silence; silence just ended, and the per-release cost (287-file tag regen + verify cycle, compounding drift) buys little while a simpler upstream path is live. Original Option C's "start now" is superseded.
+- **Keep the hli9 stack staged and fresh.** It remains the implementation vehicle under every outcome: the `nocgo` tag migration and goreleaser collapse are beads-side and needed regardless of which zstd path Dolt picks; the shim shrinks to decode-only (caveat 2) or to nothing under path (b). #4249 and #4408 stay open.
+- **New fallback checkpoint: 2026-07-21.** If by then the thread has not produced a concrete direction (who implements what, at which layer), fall back to original Option C — begin fork-carried releases after clearing the two pending items (TestEmbeddedInitConcurrent disposition, goreleaser dry-run).
+
+### Revised decision line
+
+The 2026-07-12 owner decision becomes: (1) approve/adjust/post the reply draft, (2) confirm holding fork-carry releases, (3) confirm 2026-07-21 as the fallback checkpoint for reverting to Option C.
+
+---
+
+*The sections below are the original 2026-07-07 morning analysis, retained for the record. The "zero maintainer response" premise and the Option C "start fork-carried releases now" recommendation are superseded by the Addendum above.*
+
 ## Executive summary
 
 gastownhall/beads#4249 (the build-tagged zstd seam proposal) has had zero maintainer response in 39 days, while the fork-carry path is already built, staged, and verified locally as of this morning. **Recommendation: Option C - start fork-carried pure-Go releases now, and keep the upstream ask alive by redirecting it to the storage owner (coffeegoddd / DoltHub) at the driver or Dolt level rather than re-pinging the beads issue.** The seam lives in `dolthub/dolt` `store/nbs`, so the durable fix is upstream of beads anyway; carrying the fork buys immediate release relief without foreclosing that path.

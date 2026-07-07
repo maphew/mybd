@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRAFT reply to macneale4 on gastownhall/beads#4249 — NOT POSTED</title>
+<style>
+  body { color:#202124; font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:32px auto; max-width:1120px; padding:0 24px; }
+  h1,h2,h3,h4 { line-height:1.2; }
+  h1 { font-size:1.7em; margin-bottom:0.2em; }
+  h2 { margin-top:1.6em; border-bottom:1px solid #e0e0e0; padding-bottom:4px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  code { background:#f1f3f4; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+  pre { background:#f8f9fa; padding:12px 16px; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:0.88em; }
+  table { border-collapse:collapse; margin:12px 0; width:100%; }
+  th,td { border:1px solid #dadce0; padding:6px 10px; text-align:left; font-size:0.92em; vertical-align:top; }
+  th { background:#f1f3f4; }
+  blockquote { border-left:3px solid #dadce0; margin:12px 0; padding:4px 16px; color:#5f6368; }
+  a { color:#1a73e8; }
+  ul,ol { margin:8px 0; }
+  hr { border:none; border-top:1px solid #e0e0e0; margin:2em 0; }
+  .sig { color:#5f6368; font-style:italic; }
+</style>
+</head>
+<body>
+<h1>DRAFT reply to macneale4 on gastownhall/beads#4249 — NOT POSTED</h1>
+<p>Staged 2026-07-07 for owner approval (mybd-pdvy decision, due 2026-07-12). Post with:</p>
+<pre><code>scripts/gh-body-lint &lt;body-file&gt;   # after stripping this header block
+gh issue comment 4249 --repo gastownhall/beads --body-file &lt;body-file&gt;</code></pre>
+<p>Replace <code>{signature}</code> with the live output of <code>scripts/agent-sig.sh</code> at post time (or sign as yourself and drop the line).</p>
+<hr>
+<p>Thanks @macneale4 — that settles the encode side. If klauspost-trained dictionaries buy nothing over snappy, the seam as proposed here (klauspost as a drop-in zstd <em>encode</em> backend) isn&#x27;t worth pursuing, and we&#x27;re glad to drop that approach. (The decode-interop half of the original question — reading existing libzstd trained-dict archives — is still open; question 2 below.)</p>
+<p><strong>Disabling zstd and using snappy alone for beads works for us.</strong> The goal on the beads side was never compression ratio — it&#x27;s building embedded Dolt at <code>CGO_ENABLED=0</code> (the <code>gozstd</code> import is the last cgo dependency in a full <code>bd</code> binary). For the beads workload we agree database size is rarely the constraint. And your path (b) is simpler than what this issue asked for: no zstd encode backend at all. (Path (a), klauspost with an embedded generic dictionary, would also serve the cgo goal since klauspost is pure Go — we have no preference on compression; whichever is simpler for you wins.)</p>
+<p>Three clarifying questions to make sure path (b) actually reaches <code>CGO_ENABLED=0</code>:</p>
+<ol><li><strong>Build-time vs runtime.</strong> Disabling zstd at runtime doesn&#x27;t by itself remove the direct <code>gozstd</code> API references in <code>store/nbs</code>, which fail under <code>CGO_ENABLED=0</code> unless tagged out or replaced. Would path (b) include tagging out (or removing) those references — i.e. a snappy-only <code>store/nbs</code> under a build tag or config, with no zstd backend linked?</li><li><strong>Existing stores.</strong> Stores that have been GC&#x27;d by a cgo build may already contain zstd trained-dict archives — beads users do run <code>CALL DOLT_GC()</code> (it&#x27;s the current workaround for #4258). Would a snappy-only binary need a zstd <em>decode</em> path for those (klauspost documents decoder support for standard trained dictionaries, so decode-only via klauspost looks feasible — we&#x27;d verify against a real archive fixture), or would GC rewrite them to snappy?</li><li><strong>Where the switch lives.</strong> Would this be a Dolt archive-config default that the driver sets for beads, or something beads configures per-database?</li></ol>
+<p>Happy to help on either side of the boundary — PR #4408 has the current evidence branch (static binary, both embedded suites passing at CGO=0) if any of it is useful as a starting point, and we can benchmark or test a snappy-only build against real beads databases.</p>
+<p><em>{signature}</em></p>
+</body>
+</html>
