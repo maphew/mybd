@@ -236,7 +236,11 @@ bd-main/scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
 
 Assume you are not working alone.
 Use git worktrees by default.
-In reports, default to both html and md.
+Write reports as md only — no html twins (policy change 2026-07-07; read long
+Markdown with [`mdo`](https://github.com/maphew/mdo) instead). Reports are
+tracked in git deliberately: they are the retroactive "why" record behind PR
+merges/abandonments that commit messages don't carry. `scripts/md2html` is
+deprecated.
 
 Answer 'why' when opening a PR.
 PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md)

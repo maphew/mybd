@@ -23,6 +23,11 @@ main/
 # Temporary files
 tmp/
 
+# Reports are md-only (2026-07-07); html renders are local artifacts.
+# Two pre-policy html-only reports remain tracked (ignore rules don't
+# affect already-tracked files).
+reports/*.html
+
 # Local environment variables
 .env
 
