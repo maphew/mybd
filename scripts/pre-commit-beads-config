@@ -3,6 +3,15 @@
 
 set -euo pipefail
 
+# Linked worktrees share the common git-dir but not the tracker DB: the
+# embedded Dolt database at .beads/embeddeddolt only exists in the main
+# checkout. Exempt linked worktrees before touching .beads/ at all, mirroring
+# the guard in .githooks/pre-commit (bead mybd-42bp).
+if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+  echo "pre-commit-beads-config: linked worktree, skipping tracker-DB guard" >&2
+  exit 0
+fi
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
