@@ -10,7 +10,6 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_experiment_guard
 
 UPSTREAM="${TRI_UPSTREAM:-gastownhall/beads}"
 EXTERNAL_REF=""

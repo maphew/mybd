@@ -4,6 +4,22 @@ Tooling for managing the firehose of issues + PRs on `gastownhall/beads`. Two
 loops: **triage** (decide what to do) and **review** (do the PR work, resumable
 across machines).
 
+The workflow is split into three layers by **output audience** (v2 redesign,
+2026-07-07, after the v1 experiment drowned readers in agent-written text):
+
+1. **Mechanical sync** (`tri-pull`, `tri-sync`, `tri-daily`, labels) - posts
+   no text anywhere; runs freely, cron-safe.
+2. **Classification** (`/triage` command in Claude Code) - dispositions and
+   one-line reasons into bd labels/notes, plus one short digest per run under
+   `reports/triage/`. Never posts text upstream.
+3. **Publication** (`tri-submit`) - the only path that posts agent-drafted
+   text to upstream GitHub. Word-budgeted, distilled into a separate
+   `NNNN.post.md`, and gated behind interactive terminal confirmation so
+   unattended agents cannot post.
+
+The old blanket `MYBD_ENABLE_TRIAGE=1` gate is gone; the gate now sits
+exactly where the risk is (text publication), not on the whole toolkit.
+
 On Windows, do not invoke extensionless scripts directly from PowerShell. Use
 the matching `.ps1` wrapper, for example `scripts/tri-daily.ps1`, or run the
 extensionless script through Git Bash.
@@ -11,12 +27,16 @@ extensionless script through Git Bash.
 ## Daily workflow
 
 ```
-1. tri-pull                     # fetch new untriaged items into bd
-2. bd ready                     # see queue, decide per-item:
-     close / defer / claim / human
-3. tri-review <id>              # for claimed PRs: worktree + scaffold + checks
-4. (read, edit pr-reviews/NNNN.md, optionally tri-checkpoint)
-5. tri-submit <id> --approve    # post review + close bd + label upstream
+1. tri-pull + tri-sync          # or /triage in Claude Code, which wraps both,
+     classifies each stub (tri:* label + one-line reason), and writes a short
+     digest to reports/triage/YYYY-MM-DD.md
+2. review the digest / bd ready # confirm or flip dispositions:
+     close / defer / claim / human / needs-info
+3. tri-review <id>              # for claimed PRs: worktree + scaffolds + checks
+4. edit pr-reviews/NNNN.md      # full analysis, stays local
+5. distill pr-reviews/NNNN.post.md   # <=150 words, the only text posted
+6. tri-submit <id> --approve    # budget-lint + confirm at terminal + post
+                                #   + close bd + label upstream
 
 For non-PR triage stubs: tri-close <id> [--reason=...]
 ```
@@ -167,13 +187,16 @@ body to a file and lint it:
 
 ```bash
 scripts/gh-body-lint body.md
-scripts/gh-body-lint --fix body.md   # rewrites GH#1234 to #1234
+scripts/gh-body-lint --fix body.md          # rewrites GH#1234 to #1234
+scripts/gh-body-lint --max-words 150 body.md   # also enforce a word budget
 gh pr edit 1234 --repo gastownhall/beads --body-file body.md
 ```
 
 The lint guard rejects literal `\n` sequences and `GH#1234` refs, both of
-which render badly or fail to autolink in GitHub posts. `tri-submit` runs this
-guard automatically before posting review notes.
+which render badly or fail to autolink in GitHub posts. With `--max-words N`
+it also fails bodies over the budget (fenced code blocks excluded from the
+count) - use it on anything public-facing; long analysis belongs in a local
+report, not the post. `tri-submit` runs both checks automatically.
 
 ## tri-review (PR work loop)
 
@@ -268,14 +291,24 @@ want to keep, push them manually first (e.g., to a `wip/` branch on your fork).
 
 ```bash
 scripts/tri-submit <id> --approve
-scripts/tri-submit <id> --request-changes
+scripts/tri-submit <id> --request-changes      # last resort, warns
 scripts/tri-submit <id> --comment
-scripts/tri-submit <id> --approve --dry-run    # preview
+scripts/tri-submit <id> --approve --dry-run    # preview the exact body
+scripts/tri-submit <id> --comment --max-words 250   # deliberate budget raise
 ```
 
-Reads `pr-reviews/<NNNN>.md`, posts as a `gh pr review --<verdict>`, then
-calls `tri-close` to close bd + apply upstream `triaged`. Refuses if the
-note's `Verdict:` line is still `TBD`.
+Posts `pr-reviews/<NNNN>.post.md` (NOT the full analysis note) as a
+`gh pr review --<verdict>`, then calls `tri-close` to close bd + apply
+upstream `triaged`. Guards, in order:
+
+- refuses if `<NNNN>.md`'s `Verdict:` line is still `TBD`
+- refuses if `<NNNN>.post.md` is missing, empty, or only comments
+- fails the body over the word budget (default 150; `TRI_POST_MAX_WORDS`
+  or `--max-words` to override deliberately)
+- runs the GitHub body lint
+- shows the exact body and requires typing `post` at the terminal
+  (`/dev/tty`), so unattended agents cannot post text upstream;
+  `TRI_ALLOW_UNATTENDED_POST=1` is the owner-only escape hatch
 
 ## tri-report (observability digest)
 
@@ -363,6 +396,9 @@ export in `.envrc`.
 - `TRI_WORKTREE_BASE` — worktree parent dir (default `~/dev/mybd-tri`)
 - `TRI_BD_MAIN` — canonical upstream checkout (default `<project>/bd-main`)
 - `TRI_REVIEWS_DIR` — review notes dir (default `<project>/_working_on/pr-reviews`)
+- `TRI_POST_MAX_WORDS` — word budget for upstream post bodies (default `150`)
+- `TRI_ALLOW_UNATTENDED_POST` — set to `1` to skip tri-submit's interactive
+  confirmation; owner-only, for deliberate automation
 
 ## Layer 2
 

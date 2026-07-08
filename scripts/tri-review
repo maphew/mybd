@@ -16,7 +16,6 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_experiment_guard
 tri_require bd gh jq git
 
 INPUT=""
@@ -44,6 +43,7 @@ read -r kind num <<<"$(tri_parse_ref "$ref")" || tri_die "$BD_ID ref '$ref' is n
 
 WT="$(tri_worktree_path "$num")"
 NOTE="$(tri_review_note_path "$num")"
+POST="$(tri_post_note_path "$num")"
 BRANCH="$(tri_branch_name "$num")"
 
 mkdir -p "$TRI_WORKTREE_BASE" "$TRI_REVIEWS_DIR"
@@ -235,6 +235,18 @@ EOF
   echo "Scaffold written to $NOTE"
 fi
 
+# Scaffold the distilled upstream post file (the only body tri-submit posts)
+if [[ ! -e "$POST" ]]; then
+  cat > "$POST" <<EOF
+<!-- Upstream post for PR #$num - budget $TRI_POST_MAX_WORDS words (fenced code excluded).
+     This file is what tri-submit posts. Distill from $(basename "$NOTE"):
+     verdict, the 2-3 findings that change the maintainer's action, questions
+     phrased as questions. Everything else stays in the local note. -->
+
+EOF
+  echo "Post stub written to $POST (budget: $TRI_POST_MAX_WORDS words)"
+fi
+
 # Log to bd
 tri_log_note "$BD_ID" "review-started: worktree=$WT note=${NOTE/#$HOME/~}"
 
@@ -243,4 +255,5 @@ bd update "$BD_ID" --status=in_progress >/dev/null 2>&1 || true
 
 echo
 echo "Next: cd $WT && \$EDITOR $NOTE"
+echo "Then distill the upstream post into $POST"
 echo "When ready: tri-submit $BD_ID --approve|--request-changes|--comment"

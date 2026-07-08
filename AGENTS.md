@@ -7,6 +7,10 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 "gh ..." : use gh cli to interact with GitHub
 "gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
+"run issue triage" / "triage" : run the pinned procedure in
+`.claude/commands/triage.md` (the `/triage` command) - do not improvise a
+triage workflow. It never posts text upstream; publication goes through
+`scripts/tri-submit`, which is human-gated (see `scripts/README.md`).
 
 ### Windows / Daily Housekeeping
 

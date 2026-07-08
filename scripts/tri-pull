@@ -26,7 +26,6 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_experiment_guard
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UPSTREAM="${TRI_UPSTREAM:-gastownhall/beads}"
