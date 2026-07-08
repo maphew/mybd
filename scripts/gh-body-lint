@@ -5,15 +5,18 @@ set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
 
 FIX=0
+MAX_WORDS=""
 FILES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fix) FIX=1; shift;;
+    --max-words) [[ $# -ge 2 ]] || tri_die "--max-words needs a value"; MAX_WORDS="$2"; shift 2;;
+    --max-words=*) MAX_WORDS="${1#--max-words=}"; shift;;
     -h|--help)
       cat <<'USAGE'
 Usage:
-  scripts/gh-body-lint [--fix] <body.md> [body2.md...]
+  scripts/gh-body-lint [--fix] [--max-words N] <body.md> [body2.md...]
 
 Checks GitHub-facing Markdown bodies for common formatting mistakes:
   - literal \n sequences that render as text instead of line breaks
@@ -21,6 +24,10 @@ Checks GitHub-facing Markdown bodies for common formatting mistakes:
 
 With --fix, rewrites GH#1234 to #1234 in-place. Literal \n sequences are
 reported but not rewritten because they may appear inside legitimate examples.
+
+With --max-words N, also fails any body over N words (fenced code blocks
+excluded from the count). Use this on public comments and reviews so the
+posted text stays digestible; long analysis belongs in a local report.
 USAGE
       exit 0
       ;;
@@ -29,11 +36,15 @@ USAGE
   esac
 done
 
-[[ "${#FILES[@]}" -gt 0 ]] || tri_die "usage: gh-body-lint [--fix] <body.md> [body2.md...]"
+[[ "${#FILES[@]}" -gt 0 ]] || tri_die "usage: gh-body-lint [--fix] [--max-words N] <body.md> [body2.md...]"
+[[ -z "$MAX_WORDS" || "$MAX_WORDS" =~ ^[0-9]+$ ]] || tri_die "--max-words must be a number (got '$MAX_WORDS')"
 
 for file in "${FILES[@]}"; do
   if [[ "$FIX" == 1 ]]; then
     tri_normalize_gh_body "$file"
   fi
   tri_lint_gh_body "$file"
+  if [[ -n "$MAX_WORDS" ]]; then
+    tri_word_budget "$file" "$MAX_WORDS" >/dev/null
+  fi
 done

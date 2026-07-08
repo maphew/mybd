@@ -1,25 +1,35 @@
 #!/usr/bin/env bash
-# tri-submit — finalize a PR review: post the review-note to upstream as a
-# gh pr review with the chosen verdict, then close the bd issue and apply
+# tri-submit — finalize a PR review: post the DISTILLED post file to upstream
+# as a gh pr review with the chosen verdict, then close the bd issue and apply
 # the upstream 'triaged' label (via tri-close).
+#
+# Two files, two audiences:
+#   _working_on/pr-reviews/NNNN.md       full analysis — stays local, never posted
+#   _working_on/pr-reviews/NNNN.post.md  distilled post — the ONLY body posted
+#
+# The post file must fit the word budget (default 150 words, fenced code
+# excluded; TRI_POST_MAX_WORDS or --max-words to override deliberately), and
+# posting requires interactive confirmation at a terminal — unattended agents
+# cannot post text upstream.
 #
 # Usage:
 #   tri-submit <bd-id-or-pr-num> --approve
 #   tri-submit <id> --request-changes
 #   tri-submit <id> --comment
 #   tri-submit <id> --approve --dry-run     # show what would be posted
+#   tri-submit <id> --comment --max-words 250
 #
-# Requires the review note (_working_on/pr-reviews/NNNN.md) to exist and have
-# its 'Verdict' line filled in. Refuses to submit if Verdict is 'TBD'.
+# Requires the review note (NNNN.md) to exist with its 'Verdict' line filled
+# in, and the post file (NNNN.post.md) to be distilled from it.
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_experiment_guard
 tri_require bd gh jq git
 
 INPUT=""
 VERDICT=""
 DRY_RUN=0
+MAX_WORDS="$TRI_POST_MAX_WORDS"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,14 +37,17 @@ while [[ $# -gt 0 ]]; do
     --request-changes) VERDICT="request-changes"; shift;;
     --comment) VERDICT="comment"; shift;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --max-words) [[ $# -ge 2 ]] || tri_die "--max-words needs a value"; MAX_WORDS="$2"; shift 2;;
+    --max-words=*) MAX_WORDS="${1#--max-words=}"; shift;;
+    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*) tri_die "unknown flag: $1";;
     *) [[ -n "$INPUT" ]] && tri_die "only one id allowed"; INPUT="$1"; shift;;
   esac
 done
 
-[[ -n "$INPUT" ]] || tri_die "Usage: tri-submit <id> --approve|--request-changes|--comment [--dry-run]"
+[[ -n "$INPUT" ]] || tri_die "Usage: tri-submit <id> --approve|--request-changes|--comment [--dry-run] [--max-words N]"
 [[ -n "$VERDICT" ]] || tri_die "must specify --approve, --request-changes, or --comment"
+[[ "$MAX_WORDS" =~ ^[0-9]+$ ]] || tri_die "--max-words must be a number (got '$MAX_WORDS')"
 
 BD_ID="$(tri_resolve_bd_id "$INPUT")"
 ref="$(tri_external_ref "$BD_ID")"
@@ -43,37 +56,64 @@ read -r kind num <<<"$(tri_parse_ref "$ref")" || tri_die "$BD_ID ref '$ref' inva
 [[ "$kind" == "pr" ]] || tri_die "$BD_ID is for an issue, not a PR"
 
 NOTE="$(tri_review_note_path "$num")"
+POST="$(tri_post_note_path "$num")"
 [[ -e "$NOTE" ]] || tri_die "review note not found: $NOTE (run tri-review first)"
+if [[ ! -e "$POST" ]]; then
+  tri_die "post file not found: $POST
+Distill it from $NOTE: verdict, the 2-3 findings that change the maintainer's
+action, questions phrased as questions. Budget: $MAX_WORDS words."
+fi
 
 # Refuse if Verdict still TBD
 if grep -q '^\*\*Verdict:\*\* TBD' "$NOTE"; then
   tri_die "Verdict line in $NOTE is still 'TBD' — fill it in first"
 fi
 
+# Refuse an empty or placeholder-only post file (the tri-review scaffold is a
+# multi-line HTML comment, so this must ignore whole comment blocks)
+if ! tri_body_has_content "$POST"; then
+  tri_die "post file has no content outside comments: $POST"
+fi
+
+# Per PR_MAINTAINER_GUIDELINES.md, request-changes is a last resort.
+if [[ "$VERDICT" == "request-changes" ]]; then
+  echo "NOTE: request-changes is a last resort (PR_MAINTAINER_GUIDELINES.md)." >&2
+  echo "      Prefer absorbing/transforming the change or commenting." >&2
+fi
+
+words="$(tri_word_budget "$POST" "$MAX_WORDS")"
+
 echo "── Submit review for PR #$num ───────────────────────────"
 tri_kv "bd id" "$BD_ID"
 tri_kv "verdict flag" "--$VERDICT"
-tri_kv "note" "${NOTE/#$HOME/~}"
+tri_kv "post body" "${POST/#$HOME/~} ($words/$MAX_WORDS words)"
+tri_kv "local note" "${NOTE/#$HOME/~} (stays local)"
 tri_kv "upstream" "$TRI_UPSTREAM"
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo
-  echo "DRY-RUN — would run:"
-  echo "  gh pr review $num --repo $TRI_UPSTREAM --$VERDICT --body-file $NOTE"
+  echo "DRY-RUN — body that would be posted:"
+  echo "────────────────────────────────────"
+  cat "$POST"
+  echo "────────────────────────────────────"
+  echo "Would run:"
+  echo "  gh pr review $num --repo $TRI_UPSTREAM --$VERDICT --body-file $POST"
   echo "  scripts/tri-close $BD_ID --reason=\"review submitted: $VERDICT\""
   exit 0
 fi
 
+tri_lint_gh_body "$POST"
+tri_confirm_post "$POST" "$TRI_UPSTREAM PR #$num (--$VERDICT)"
+
 echo
 echo "Posting review to upstream..."
-tri_lint_gh_body "$NOTE"
-if ! gh pr review "$num" --repo "$TRI_UPSTREAM" --"$VERDICT" --body-file "$NOTE"; then
+if ! gh pr review "$num" --repo "$TRI_UPSTREAM" --"$VERDICT" --body-file "$POST"; then
   tri_die "gh pr review failed — bd issue NOT closed"
 fi
 echo "  ✓ review posted"
 
 # Log to bd before close
-tri_log_note "$BD_ID" "review submitted: $VERDICT"
+tri_log_note "$BD_ID" "review submitted: $VERDICT ($words words)"
 
 # Close bd + apply upstream triaged label via tri-close
 echo "Closing bd issue + applying upstream 'triaged' label..."

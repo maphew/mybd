@@ -14,7 +14,6 @@
 
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
-tri_experiment_guard
 tri_require bd git
 
 [[ $# -ge 1 ]] || tri_die "Usage: tri-checkpoint <bd-id-or-pr-num> [\"msg\"]"
