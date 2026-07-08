@@ -70,3 +70,5 @@ export.auto: false
 no-git-ops: false
 prime:
     max-memory-chars: 4500
+agent:
+    profile: team-maintainer
