@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd prime"
+            "command": "bd prime --hook-json"
           },
           {
             "type": "command",
