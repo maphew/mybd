@@ -81,8 +81,9 @@ CLI-docs-drift red (#4631) are both instances.
 - **Check base health before merging anything.** `pr-preflight.sh` does this
   automatically since gastownhall/beads#4630 (per-workflow newest *decisive*
   run; cancelled runs are ignored, so a later green unrelated workflow cannot
-  mask a red test workflow). Manual check:
-  `gh run list --repo gastownhall/beads --branch main --status completed --limit 10`
+  mask a red test workflow). Run the same check in blocking mode for the
+  candidate PR:
+  `PR_PREFLIGHT_BLOCK_RED_BASE=1 bd-main/scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads`
 - **While main is red, merge ONLY the fix for main.** Everything else waits,
   no matter how green its own checks look.
 - **After the fix lands**, any PR whose green checks predate it must be
