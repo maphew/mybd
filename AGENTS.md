@@ -238,6 +238,11 @@ bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/b
 bd-main/scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
 ```
 
+Autonomous agents export `PR_PREFLIGHT_BLOCK_RED_BASE=1` so preflight
+hard-blocks (rather than warns) when the base branch is red. While upstream
+main is red, the only mergeable PR is the fix for main - stop-the-line, see
+[PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) "Base-Branch Health".
+
 Assume you are not working alone.
 Use git worktrees by default.
 Write reports as md only — no html twins (policy change 2026-07-07; read long
