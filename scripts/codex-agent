@@ -5,9 +5,14 @@
 # `codex exec` model/sandbox/reasoning defaults so Claude Code, Codex, and
 # humans all delegate to Codex the same way:
 #
-#   scout    read-only recon        gpt-5.4-mini, medium reasoning, ephemeral
-#   builder  scoped implementation  gpt-5.4, medium reasoning, workspace-write
-#   reviewer correctness review     gpt-5.5, high reasoning, read-only
+#   scout    read-only recon        gpt-5.6-terra, medium reasoning, ephemeral
+#   builder  scoped implementation  gpt-5.6-terra, medium reasoning, workspace-write
+#   reviewer correctness review     gpt-5.6-sol, high reasoning, read-only
+#
+# GPT-5.6 family: sol = flagship, terra = balanced lower-cost (mini-like),
+# luna = high-volume (nano-like); the bare `gpt-5.6` alias routes to sol.
+# GPT-5.6 adds `xhigh` and `max` reasoning efforts - raise a single run with
+# e.g. -c model_reasoning_effort='"xhigh"' for the hardest reviews.
 #
 # Usage:
 #   scripts/codex-agent <scout|builder|reviewer> [-C <dir>] [extra codex flags] "<prompt>"
@@ -27,7 +32,7 @@
 
 set -euo pipefail
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
 tier="${1:-}"
 case "$tier" in
@@ -65,7 +70,7 @@ if [ "$diff_mode" = 1 ]; then
     esac
   done
   cd "$workdir"
-  exec codex review -c model='"gpt-5.5"' \
+  exec codex review -c model='"gpt-5.6-sol"' \
     -c model_reasoning_effort='"high"' ${pass[@]+"${pass[@]}"}
 fi
 
@@ -82,12 +87,12 @@ fi
 
 case "$tier" in
   scout)
-    exec codex exec -s read-only -m gpt-5.4-mini \
+    exec codex exec -s read-only -m gpt-5.6-terra \
       -c model_reasoning_effort='"medium"' --ephemeral "$@" ;;
   builder)
-    exec codex exec -s workspace-write -m gpt-5.4 \
+    exec codex exec -s workspace-write -m gpt-5.6-terra \
       -c model_reasoning_effort='"medium"' "$@" ;;
   reviewer)
-    exec codex exec -s read-only -m gpt-5.5 \
+    exec codex exec -s read-only -m gpt-5.6-sol \
       -c model_reasoning_effort='"high"' "$@" ;;
 esac

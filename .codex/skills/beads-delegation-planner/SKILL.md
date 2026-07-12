@@ -29,7 +29,7 @@ Use the documented execution hint keys from `bd-main/docs/METADATA.md` exactly. 
 ```json
 {
   "execution_agent_type": "worker",
-  "execution_suggested_model": "gpt-5.5",
+  "execution_suggested_model": "gpt-5.6-sol",
   "execution_reasoning_effort": "medium",
   "execution_mode": "delegated",
   "execution_parallel_group": "catalog",
@@ -50,7 +50,7 @@ Use the documented execution hint keys from `bd-main/docs/METADATA.md` exactly. 
 Allowed and recommended values:
 
 - `execution_agent_type`: suggested worker class, usually `explorer`, `worker`, or `mixed`.
-- `execution_suggested_model`: concrete model for the parent agent or spawned subagent. Leave unset unless the bead has a clear need, and treat a pin as a capability tier, not a brand: frontier tier (`gpt-5.5`, `claude-fable-5`) for high-risk design, security, storage, or cross-repo work; fast tier (`gpt-5.4-mini`) for mechanical, low-risk cleanup. Consumers on a different provider substitute their own model of the same tier rather than dropping the hint. Exception: the Claude fast tier (haiku) is retired in this repo (owner directive 2026-07-07, see AGENTS.md scout tier) - fast-tier hints, including legacy `claude-haiku-4-5` pins on old beads, execute via `scripts/codex-agent scout` (gpt-5.4-mini, medium reasoning), not haiku.
+- `execution_suggested_model`: concrete model for the parent agent or spawned subagent. Leave unset unless the bead has a clear need, and treat a pin as a capability tier, not a brand: frontier tier (`gpt-5.6-sol`, `claude-fable-5`) for high-risk design, security, storage, or cross-repo work; fast tier (`gpt-5.6-terra`) for mechanical, low-risk cleanup. Legacy pins on old beads map by tier, not slug: `gpt-5.5`/`gpt-5.4` -> `gpt-5.6-sol`, `gpt-5.4-mini` -> `gpt-5.6-terra`. Consumers on a different provider substitute their own model of the same tier rather than dropping the hint. Exception: the Claude fast tier (haiku) is retired in this repo (owner directive 2026-07-07, see AGENTS.md scout tier) - fast-tier hints, including legacy `claude-haiku-4-5` pins on old beads, execute via `scripts/codex-agent scout` (gpt-5.6-terra, medium reasoning), not haiku.
 - `execution_reasoning_effort`: `low`, `medium`, `high`, or `xhigh`. This is the canonical stored scale; consumers map to their own runtime (Claude Code: `xhigh` -> `max`; Fable's `auto` is acceptable when no override is warranted). Default to leaving it unset for normal work; set `high` for ambiguous implementation or broad codebase impact; set `xhigh` for critical concurrency, data loss, storage, migration, or maintainer policy decisions.
 - `execution_mode`: `local` when the current agent should do the work directly, `delegated` when it should be spawned or handed off, or `staged` when exploration/planning should happen before local implementation.
 - `execution_parallel_group`: short stable group name such as `A`, `B`, `docs`, `tests`, `storage`, or `blocked`. Same group means the tasks can run together or should be coordinated together, depending on local convention; explain in notes when unclear.

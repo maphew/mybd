@@ -99,7 +99,7 @@ run it on.
 
 Named tiers live in `.claude/agents/` - prefer them over ad-hoc spawns:
 
-- **scout** (GPT-mini at medium reasoning, read-only) - searches, file inventories, 
+- **scout** (GPT-5.6 Terra at medium reasoning, read-only) - searches, file inventories, 
   "where is X", summarizing files, running read-only bd/git commands or tests and 
   reporting output verbatim. Scout runs on Codex, so prefer calling
   `scripts/codex-agent scout -o <file> "<task>" </dev/null` directly from the
@@ -143,9 +143,9 @@ Claude subagent tiers, invoked from any runtime via the shell. Use
 model/sandbox/reasoning defaults:
 
 ```bash
-scripts/codex-agent scout    "where is X handled?"          # gpt-5.4-mini, medium, read-only, ephemeral
-scripts/codex-agent builder  -C .worktrees/mybd/foo "..."   # gpt-5.4, medium, workspace-write
-scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.5, high, read-only
+scripts/codex-agent scout    "where is X handled?"          # gpt-5.6-terra, medium, read-only, ephemeral
+scripts/codex-agent builder  -C .worktrees/mybd/foo "..."   # gpt-5.6-terra, medium, workspace-write
+scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.6-sol, high, read-only
 scripts/codex-agent reviewer --diff --base main             # structured `codex review` of a branch diff
 ```
 
@@ -161,7 +161,7 @@ When to route to Codex instead of a Claude subagent:
   assuming the budget captured them.
 - **Long mechanical work** that would otherwise burn session context.
 - **Bead routing hints** - when a bead's `execution_suggested_model`
-  metadata names an OpenAI model (e.g. `gpt-5.5`), route that bead's work
+  metadata names an OpenAI model (e.g. `gpt-5.6-sol`), route that bead's work
   through `codex-agent` at the tier implied by `execution_agent_type` and
   `execution_reasoning_effort` (see `.codex/skills/beads-delegation-planner/`).
 
