@@ -21,7 +21,7 @@
           },
           {
             "type": "command",
-            "command": "C:\\PROGRA~1\\Git\\bin\\bash.exe scripts/session-start-stamp"
+            "command": "scripts/session-start-stamp"
           }
         ]
       }
