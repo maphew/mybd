@@ -6,3 +6,9 @@ Shared cross-agent instructions live in [AGENTS.md](AGENTS.md) (imported above):
 
 This file is intentionally short. Do not copy workflow, build, storage, or UI
 rules here; those details drift quickly when repeated across agent entrypoints.
+
+<!-- BEGIN BEADS INTEGRATION -->
+## Beads Issue Tracker
+
+See [AGENTS.md](AGENTS.md) for the full beads workflow; run `bd prime` for context.
+<!-- END BEADS INTEGRATION -->
