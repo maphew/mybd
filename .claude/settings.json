@@ -63,7 +63,7 @@
           },
           {
             "type": "command",
-            "command": "scripts/session-start-stamp"
+            "command": "sh scripts/session-start-stamp"
           },
           {
             "type": "command",

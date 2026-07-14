@@ -14,26 +14,40 @@
     ],
     "PreCompact": [
       {
-        "matcher": "",
+        "matcher": "manual|auto",
         "hooks": [
           {
             "type": "command",
-            "command": "bd prime"
+            "command": "bd codex-hook PreCompact",
+            "statusMessage": "Checking Beads context"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bd codex-hook PostCompact",
+            "statusMessage": "Scheduling Beads context refresh"
           }
         ]
       }
     ],
     "SessionStart": [
       {
-        "matcher": "",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
-            "command": "bd prime --hook-json"
+            "command": "bd codex-hook SessionStart",
+            "statusMessage": "Loading Beads context"
           },
           {
             "type": "command",
-            "command": "scripts/session-start-stamp"
+            "command": "sh scripts/session-start-stamp"
           }
         ]
       },
@@ -61,6 +75,15 @@
       }
     ],
     "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bd codex-hook UserPromptSubmit",
+            "statusMessage": "Refreshing Beads context"
+          }
+        ]
+      },
       {
         "matcher": null,
         "hooks": [
