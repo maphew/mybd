@@ -72,3 +72,5 @@ prime:
     max-memory-chars: 4500
 agent:
     profile: team-maintainer
+sync:
+    remote: "https://github.com/maphew/mybd.git"
