@@ -1,0 +1,3 @@
+# Per-session digests may quote raw transcripts (secrets, private paths).
+# They stay local-only; curated findings.md and batches/ are what gets tracked.
+digests/

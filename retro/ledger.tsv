@@ -1,0 +1,20 @@
+scope	runtime	session_id	started	size_kb	status	batch	note
+mybd	claude-code	29c2c472-3e52-4e4d-996b-cca77670a4c1	2026-07-14	1481	pending		
+mybd	claude-code	1a15af9b-1268-4d6e-b4f5-c119616ca6ba	2026-07-14	604	pending		
+mybd	claude-code	dc8e7cb6-01f5-48c7-a143-dd32660f8c14	2026-07-14	236	skipped-inflight		this planning session
+mybd	claude-code	f4208934-f184-476c-8eab-ee34b8420dc3	2026-07-14	17	skipped-trivial		
+mybd	claude-code	c202d537-3a6b-4d52-a7ed-cd278105fd00	2026-07-13	462	pending		
+mybd	claude-code	239ff742-3eed-42a5-90fd-58b495444645	2026-07-12	1462	pending		
+mybd	claude-code	b32eb7f5-0ea2-4a0b-9542-a01b7b34b3e3	2026-07-12	1178	pending		
+mybd	claude-code	7a827b23-9188-4aea-a948-8dab1e668071	2026-07-12	668	pending		
+mybd	claude-code	895576de-6f14-4c64-a2b5-46d9bac9ca1a	2026-07-12	328	pending		
+mybd	claude-code	bc5a9eff-3d64-45ba-a8f9-0ddb36f28ef1	2026-07-12	45	skipped-trivial		
+mybd	claude-code	a8544b40-0b90-4370-9374-767a3280f4c4	2026-07-12	13	skipped-trivial		
+mybd	claude-code	db73f789-fd0d-45f2-ac2b-1e43448c60af	2026-07-12	13	skipped-trivial		
+mybd	claude-code	5ea64a09-9215-4606-81d8-b470a38aeece	2026-06-20	1791	pending		
+mybd	claude-code	2792dcce-72ee-430c-8a6b-677b93fad5db	2026-06-20	1456	pending		
+mybd	claude-code	9401131e-cc66-4cf6-9604-0626e1190d1b	2026-06-20	488	pending		
+mybd	claude-code	8d01abad-0db8-43c5-976a-5b8cdfac4c4e	2026-06-20	261	pending		
+mybd	claude-code	cca2fbe7-52a8-4f10-8055-9e25a7b3442c	2026-06-19	899	pending		
+mybd	claude-code	8571c16a-b44e-412e-8bd5-0d227832fa51	2026-06-19	600	pending		
+mybd	claude-code	510f4d95-a925-4f21-a4ae-c46b3385f03f	2026-06-18	2529	pending		
