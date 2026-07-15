@@ -107,7 +107,20 @@ for file in "$CODEX_HOOKS" "$CLAUDE_SETTINGS"; do
   fi
 done
 
-# --- Group 3: session-start-stamp TTL behavior ------------------------------
+# --- Group 3: Beads hook wrapper portability -------------------------------
+
+for hook in "$root/.githooks/pre-commit" "$root/.githooks/pre-push" "$root/.githooks/prepare-commit-msg"; do
+  hook_name="${hook##*/}"
+  for required in 'command -v timeout' 'command -v gtimeout' "perl -e 'alarm shift; exec @ARGV'" '_bd_used_perl=1' 'running without timeout' '[ $_bd_used_perl -eq 1 ] && [ $_bd_exit -eq 142 ]'; do
+    if grep -Fq "$required" "$hook"; then
+      pass "$hook_name: preserves Beads portable timeout fallback: $required"
+    else
+      fail "$hook_name: missing Beads portable timeout fallback: $required"
+    fi
+  done
+done
+
+# --- Group 4: session-start-stamp TTL behavior ------------------------------
 
 if [[ ! -x "$STAMP_SCRIPT" && ! -r "$STAMP_SCRIPT" ]]; then
   fail "session-start-stamp not found at $STAMP_SCRIPT"
