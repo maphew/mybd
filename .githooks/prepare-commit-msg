@@ -1,3 +1,10 @@
 #!/bin/sh
 # Entire CLI hooks
 if command -v entire >/dev/null 2>&1; then entire hooks git prepare-commit-msg "$1" "$2" 2>/dev/null || true; else :; fi
+
+# core.hooksPath redirects Git away from .git/hooks, where bd installs its
+# hook shims. Compose the Beads prepare-commit-msg check with Entire's hook.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  bd hooks run prepare-commit-msg "$@"
+fi
