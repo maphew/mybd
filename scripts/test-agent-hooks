@@ -9,8 +9,8 @@
 #      JSON; .codex/hooks.json carries all four bd codex-hook lifecycle
 #      events, and SessionStart also fires the session-start-stamp hook.
 #   2. Cross-platform command resolution - no Windows-only paths/binaries in
-#      either hooks config, and every command referencing a repo script goes
-#      through `sh` so it works without a shebang-aware shell on PATH.
+#      either hooks config, and every command referencing a repo script uses
+#      an explicit shell compatible with that script.
 #   3. session-start-stamp TTL behavior, exercised in a throwaway temp repo.
 set -uo pipefail
 
@@ -87,21 +87,22 @@ for file in "$CODEX_HOOKS" "$CLAUDE_SETTINGS"; do
   fi
 
   # Every command that references a repo script (session-start-stamp is the
-  # only one currently invoked from these configs) must use `sh <script>` or
-  # `sh -c ...` so it runs without relying on a shebang-aware shell (Windows).
+  # only one currently invoked from these configs) must use `bash <script>` or
+  # `bash -c ...`: session-start-stamp uses Bash syntax and cannot run under
+  # POSIX sh on Linux.
   bad_commands="$(
     jq -r '
       [.. | objects | .command? // empty]
       | .[]
       | select(test("scripts/") or test("session-start-stamp"))
-      | select((startswith("sh ") or startswith("sh -c")) | not)
+      | select((startswith("bash ") or startswith("bash -c")) | not)
     ' "$file" 2>/dev/null
   )"
   if [[ -z "$bad_commands" ]]; then
-    pass "$file: every repo-script command uses sh <script> or sh -c form"
+    pass "$file: every repo-script command uses bash <script> or bash -c form"
   else
     while IFS= read -r cmd; do
-      [[ -n "$cmd" ]] && fail "$file: repo-script command not in 'sh' form: $cmd"
+      [[ -n "$cmd" ]] && fail "$file: repo-script command not in 'bash' form: $cmd"
     done <<<"$bad_commands"
   fi
 done
@@ -126,7 +127,7 @@ else
   if [[ -f "$stamp" ]]; then
     fail "stamp TTL setup: unexpected pre-existing stamp"
   else
-    (cd "$tmpdir" && sh "$STAMP_SCRIPT") >/dev/null 2>&1
+    (cd "$tmpdir" && bash "$STAMP_SCRIPT") >/dev/null 2>&1
     if [[ -f "$stamp" ]]; then
       pass "stamp TTL: no stamp -> script creates one"
     else
@@ -138,7 +139,7 @@ else
   now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '%s\tfakesha-fresh\n' "$now_iso" >"$stamp"
   before="$(cat "$stamp")"
-  (cd "$tmpdir" && sh "$STAMP_SCRIPT") >/dev/null 2>&1
+  (cd "$tmpdir" && bash "$STAMP_SCRIPT") >/dev/null 2>&1
   after="$(cat "$stamp")"
   if [[ "$before" == "$after" ]]; then
     pass "stamp TTL: fresh stamp is not overwritten"
@@ -151,7 +152,7 @@ else
   stale_iso="$(date -u -d "@${stale_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
   printf '%s\tfakesha-stale\n' "$stale_iso" >"$stamp"
   before="$(cat "$stamp")"
-  (cd "$tmpdir" && sh "$STAMP_SCRIPT") >/dev/null 2>&1
+  (cd "$tmpdir" && bash "$STAMP_SCRIPT") >/dev/null 2>&1
   after="$(cat "$stamp")"
   if [[ "$before" != "$after" ]]; then
     pass "stamp TTL: stale stamp (5h, default TTL) is overwritten"
@@ -164,7 +165,7 @@ else
   recent_iso="$(date -u -d "@${recent_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
   printf '%s\tfakesha-recent\n' "$recent_iso" >"$stamp"
   before="$(cat "$stamp")"
-  (cd "$tmpdir" && MYBD_SESSION_STAMP_TTL=1 sh "$STAMP_SCRIPT") >/dev/null 2>&1
+  (cd "$tmpdir" && MYBD_SESSION_STAMP_TTL=1 bash "$STAMP_SCRIPT") >/dev/null 2>&1
   after="$(cat "$stamp")"
   if [[ "$before" != "$after" ]]; then
     pass "stamp TTL: MYBD_SESSION_STAMP_TTL=1 overwrites a 2s-old stamp"
