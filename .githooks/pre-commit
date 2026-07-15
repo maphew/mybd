@@ -63,6 +63,14 @@ if [ -d "$ROOT/.beads/embeddeddolt" ] && [ -x "$ROOT/scripts/pre-commit-beads-co
   "$ROOT/scripts/pre-commit-beads-config"
 fi
 
+# core.hooksPath redirects Git away from .git/hooks, where bd installs its
+# hook shims. Run the Beads hook explicitly so enabling this tracked hook set
+# does not silently disable Beads' pre-commit checks.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  bd hooks run pre-commit "$@"
+fi
+
 # --- escape hatch: deliberate root commit ---
 if [ "${MYBD_ALLOW_ROOT_COMMIT:-0}" = "1" ]; then
   exit 0

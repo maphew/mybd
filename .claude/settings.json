@@ -46,7 +46,7 @@
       {
         "hooks": [
           {
-            "command": "sh scripts/session-start-stamp",
+            "command": "bash scripts/session-start-stamp",
             "type": "command"
           },
           {

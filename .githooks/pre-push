@@ -3,3 +3,10 @@
 # Pre-push hook: push session logs alongside user's push
 # $1 is the remote name (e.g., "origin")
 if command -v entire >/dev/null 2>&1; then entire hooks git pre-push "$1"; else :; fi
+
+# core.hooksPath redirects Git away from .git/hooks, where bd installs its
+# hook shims. Compose the Beads pre-push check with Entire's hook.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  bd hooks run pre-push "$@"
+fi
