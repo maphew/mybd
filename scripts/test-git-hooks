@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# test-git-hooks - smoke-test the composed .githooks set (bd wrappers +
+# Entire CLI hooks + root-commit guard) end to end, without touching a real
+# beads DB or the repo's own git config.
+#
+# Usage: scripts/test-git-hooks
+#
+# Exits non-zero if any check fails (PASS/FAIL style borrowed from
+# scripts/test-agent-hooks). Safety: everything happens inside a throwaway
+# temp dir. A stub `bd` executable (always exits 3, "database not
+# initialized") is prepended onto PATH for every git operation below, so no
+# real bd/dolt command ever runs, and the temp repo's git config is local to
+# that temp repo, never this checkout's.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+tmp="$(mktemp -d)"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+# --- stub bd and entire, prepended onto PATH -------------------------------
+
+stubdir="$tmp/stub-bin"
+mkdir -p "$stubdir"
+
+cat >"$stubdir/bd" <<'EOF'
+#!/bin/sh
+# Stub bd: proves the composed hooks invoke `bd hooks run <event>` without
+# ever touching a real beads DB. Exit 3 = "database not initialized", which
+# every wrapper in .githooks/* treats as skip-and-continue.
+echo "stub-bd: $*" >&2
+exit 3
+EOF
+chmod +x "$stubdir/bd"
+
+cat >"$stubdir/entire" <<'EOF'
+#!/bin/sh
+# Stub entire: always succeeds, so Entire-composed hooks are exercised
+# deterministically without depending on whether the real entire CLI is
+# installed on this machine.
+exit 0
+EOF
+chmod +x "$stubdir/entire"
+
+export PATH="$stubdir:$PATH"
+
+# --- temp git repo with the tracked .githooks set active -------------------
+
+reporoot="$tmp/repo"
+mkdir -p "$reporoot"
+git init -q -b main "$reporoot"
+git -C "$reporoot" config user.name "test-git-hooks"
+git -C "$reporoot" config user.email "test-git-hooks@example.invalid"
+git -C "$reporoot" config commit.gpgsign false
+git -C "$reporoot" config core.editor true
+
+cp -r "$root/.githooks" "$reporoot/.githooks"
+git -C "$reporoot" config core.hooksPath .githooks
+
+# --- event 1: commit A on main ----------------------------------------------
+# Fires pre-commit, prepare-commit-msg, commit-msg, post-commit.
+
+echo "hello" >"$reporoot/file.txt"
+git -C "$reporoot" add file.txt
+commit_a_stderr="$tmp/commit-a.stderr"
+if git -C "$reporoot" commit -q -m "commit A" >"$tmp/commit-a.stdout" 2>"$commit_a_stderr"; then
+  pass "commit A on main succeeds (pre-commit, prepare-commit-msg, commit-msg, post-commit)"
+else
+  fail "commit A on main failed (exit $?); stderr: $(cat "$commit_a_stderr")"
+fi
+
+# Prove the composition actually invoked bd, not just that nothing failed.
+if grep -Fq "stub-bd: hooks run pre-commit" "$commit_a_stderr"; then
+  pass "commit A invoked the composed bd wrapper (stub-bd: hooks run pre-commit)"
+else
+  fail "commit A did not invoke bd hooks run pre-commit; stderr: $(cat "$commit_a_stderr")"
+fi
+
+# --- event 2: branch b, commit B, back to main ------------------------------
+# Checkout back to main fires post-checkout.
+
+git -C "$reporoot" checkout -q -b b >/dev/null 2>&1
+echo "b" >>"$reporoot/file.txt"
+git -C "$reporoot" add file.txt
+git -C "$reporoot" commit -q -m "commit B" >/dev/null 2>&1
+
+checkout_stderr="$tmp/checkout.stderr"
+if git -C "$reporoot" checkout -q main 2>"$checkout_stderr"; then
+  pass "checkout back to main succeeds (post-checkout)"
+else
+  fail "checkout back to main failed (exit $?); stderr: $(cat "$checkout_stderr")"
+fi
+
+# --- event 3: merge b into main ---------------------------------------------
+# Fires post-merge, plus the commit-path hooks (prepare-commit-msg,
+# commit-msg, post-commit) for the merge commit itself.
+
+merge_stderr="$tmp/merge.stderr"
+if git -C "$reporoot" merge --no-ff --no-edit -q b 2>"$merge_stderr"; then
+  pass "git merge --no-ff b succeeds (post-merge + commit-path hooks)"
+else
+  fail "git merge --no-ff b failed (exit $?); stderr: $(cat "$merge_stderr")"
+fi
+
+# --- event 4: push to a bare remote -----------------------------------------
+# Fires pre-push.
+
+barerepo="$tmp/bare.git"
+git init -q --bare "$barerepo" >/dev/null
+git -C "$reporoot" remote add origin "$barerepo"
+
+push_stderr="$tmp/push.stderr"
+if git -C "$reporoot" push -q origin main 2>"$push_stderr"; then
+  pass "push to bare remote succeeds (pre-push)"
+else
+  fail "push to bare remote failed (exit $?); stderr: $(cat "$push_stderr")"
+fi
+
+# --- coverage note: hooksPath drift check --------------------------------
+# scripts/check-beads-config's hooksPath drift check needs a real beads DB
+# (it reads .beads/metadata.json and dolt state) to run end to end, so it is
+# not exercised here. Cheaply assert the drift-check logic is present
+# instead, by grepping for its core.hooksPath reference.
+if grep -q "core.hooksPath" "$root/scripts/check-beads-config"; then
+  pass "scripts/check-beads-config contains a core.hooksPath drift check"
+else
+  fail "scripts/check-beads-config is missing a core.hooksPath drift check"
+fi
+
+# --- Summary -----------------------------------------------------------------
+
+if [[ "$fails" -eq 0 ]]; then
+  echo "test-git-hooks: all checks passed"
+  exit 0
+else
+  echo "test-git-hooks: $fails check(s) failed"
+  exit 1
+fi

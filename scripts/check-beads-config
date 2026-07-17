@@ -129,6 +129,29 @@ if [[ -n "$expected_remote" && "$expected_remote_ok" != 1 ]]; then
   report_failure "expected database $EXPECTED_DB origin remote is $expected_remote; expected $(expected_remote_label)"
 fi
 
+# --- hooksPath drift (warn-only; never changes this script's exit code) ---
+# `bd hooks install --beads` is known to flip core.hooksPath to .beads/hooks,
+# silently deactivating the composed .githooks set (root-commit guard,
+# scripts/pre-commit-beads-config, Entire CLI hooks, and all five bd hook
+# events). Detect and, with --fix, repair that drift. This runs unconditionally
+# and does not feed into $failures, so it never changes the exit code above.
+EXPECTED_HOOKS_PATH=".githooks"
+current_hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
+if [[ "$current_hooks_path" == "$EXPECTED_HOOKS_PATH" ]]; then
+  say "beads config ok: core.hooksPath is $EXPECTED_HOOKS_PATH"
+else
+  if [[ "$FIX" == 1 ]]; then
+    git -C "$ROOT" config core.hooksPath "$EXPECTED_HOOKS_PATH"
+    # stderr, not say: a --quiet --fix run must still surface that git config
+    # was changed (this activates the composed .githooks set).
+    echo "check-beads-config: repaired core.hooksPath -> $EXPECTED_HOOKS_PATH (was ${current_hooks_path:-"(unset)"})" >&2
+  else
+    echo "check-beads-config: warning: core.hooksPath is ${current_hooks_path:-"(unset)"}; expected $EXPECTED_HOOKS_PATH" >&2
+    echo "check-beads-config: warning: 'bd hooks install --beads' is known to flip this and deactivate the composed .githooks set" >&2
+    echo "check-beads-config: warning: fix with: git config core.hooksPath $EXPECTED_HOOKS_PATH (or re-run with --fix)" >&2
+  fi
+fi
+
 if [[ "$failures" -gt 0 ]]; then
   if [[ "$FIX" == 1 ]]; then
     if [[ "$metadata_backend" == "dolt" \

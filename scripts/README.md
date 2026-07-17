@@ -174,9 +174,13 @@ scripts/check-beads-config --fix    # repair only the known safe mybd/beads drif
 scripts/pre-commit-beads-config     # block staged metadata drift from commits
 ```
 
-`--fix` is deliberately conservative. It only rewrites `.beads/metadata.json`
+`--fix` is deliberately conservative. It rewrites `.beads/metadata.json` only
 when the configured database is empty or missing, `mybd` has issues, and `mybd`
-has the expected `origin` remote. If both databases contain issues, export both
+has the expected `origin` remote. It additionally repairs one other known
+drift: `core.hooksPath` not pointing at the composed `.githooks` set (e.g.
+after `bd hooks install --beads` flips it to `.beads/hooks`); this git-config
+write activates the composed hook set and is announced on stderr even under
+`--quiet`. If both databases contain issues, export both
 and reconcile manually before changing metadata. Intentional database renames
 must set `MYBD_ALLOW_DB_RENAME=1`.
 

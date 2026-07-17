@@ -345,17 +345,24 @@ Why: on 2026-05-29 two agents shared the root checkout (no worktree); one ran
 `git checkout` to a new branch mid-session, racing the other's commits. Working
 from a per-task worktree keeps each agent's index and HEAD isolated.
 
-A tracked, **opt-in** pre-commit guard backs this convention:
-`.githooks/pre-commit`. It fires only in the MAIN checkout (linked worktrees are
-a no-op), warns by default, and points you at the worktree command. It is **not**
+A tracked, **opt-in** `.githooks/` tree backs this convention. It is the single
+composed hook path for the repo: the root-commit guard (`.githooks/pre-commit`,
+fires only in the MAIN checkout - linked worktrees are a no-op, warns by
+default and points you at the worktree command), `scripts/pre-commit-beads-config`
+(chained when the tracker DB is present), the Entire CLI hooks, and all five
+bd hook events (`bd hooks run <event>`, one wrapper per event: pre-commit,
+post-merge, pre-push, post-checkout, prepare-commit-msg). It is **not**
 auto-enabled. The owner turns it on with:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Once enabled it composes with `scripts/pre-commit-beads-config` (chained when
-the tracker DB is present). Two env knobs tune it:
+`bd hooks install --beads` is known to silently flip `core.hooksPath` to
+`.beads/hooks` (which has no git hooks of its own), deactivating this whole
+composed set - `scripts/check-beads-config` now warns on that drift and
+`--fix` restores `.githooks`. Smoke-test the composed set with
+`scripts/test-git-hooks`. Two env knobs tune the root-commit guard:
 
 - `MYBD_ENFORCE_ROOT_GUARD=1` - make a root commit a hard block instead of a warning.
 - `MYBD_ALLOW_ROOT_COMMIT=1` - escape hatch for a deliberate root commit
