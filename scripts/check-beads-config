@@ -142,7 +142,9 @@ if [[ "$current_hooks_path" == "$EXPECTED_HOOKS_PATH" ]]; then
 else
   if [[ "$FIX" == 1 ]]; then
     git -C "$ROOT" config core.hooksPath "$EXPECTED_HOOKS_PATH"
-    say "beads config repaired: core.hooksPath set to $EXPECTED_HOOKS_PATH (was ${current_hooks_path:-"(unset)"})"
+    # stderr, not say: a --quiet --fix run must still surface that git config
+    # was changed (this activates the composed .githooks set).
+    echo "check-beads-config: repaired core.hooksPath -> $EXPECTED_HOOKS_PATH (was ${current_hooks_path:-"(unset)"})" >&2
   else
     echo "check-beads-config: warning: core.hooksPath is ${current_hooks_path:-"(unset)"}; expected $EXPECTED_HOOKS_PATH" >&2
     echo "check-beads-config: warning: 'bd hooks install --beads' is known to flip this and deactivate the composed .githooks set" >&2
