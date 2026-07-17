@@ -1,5 +1,5 @@
 #!/bin/sh
-# bd (beads) expects five git hook events: pre-commit, post-merge, pre-push,
+# Beads (bd) expects five git hook events: pre-commit, post-merge, pre-push,
 # post-checkout, and prepare-commit-msg. Entire CLI has no hook for
 # post-checkout, so this file exists solely to complete the composed bd set
 # alongside the other .githooks/* files.
