@@ -1,0 +1,50 @@
+#!/bin/sh
+# bd (beads) expects five git hook events: pre-commit, post-merge, pre-push,
+# post-checkout, and prepare-commit-msg. Entire CLI has no hook for
+# post-checkout, so this file exists solely to complete the composed bd set
+# alongside the other .githooks/* files.
+
+# core.hooksPath redirects Git away from .git/hooks, where bd installs its
+# hook shims. Run the Beads post-checkout hook explicitly so enabling this
+# tracked hook set does not silently disable Beads' post-checkout checks.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  _bd_timeout=${BEADS_HOOK_TIMEOUT:-300}
+  _bd_used_perl=0
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "$_bd_timeout" bd hooks run post-checkout "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  elif command -v gtimeout >/dev/null 2>&1; then
+    if gtimeout "$_bd_timeout" bd hooks run post-checkout "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  elif command -v perl >/dev/null 2>&1; then
+    _bd_used_perl=1
+    if perl -e 'alarm shift; exec @ARGV' "$_bd_timeout" bd hooks run post-checkout "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  else
+    echo >&2 "beads: hook 'post-checkout' running without timeout; install coreutils or perl to enable BEADS_HOOK_TIMEOUT"
+    if bd hooks run post-checkout "$@"; then
+      _bd_exit=0
+    else
+      _bd_exit=$?
+    fi
+  fi
+  if [ $_bd_exit -eq 124 ] || { [ $_bd_used_perl -eq 1 ] && [ $_bd_exit -eq 142 ]; }; then
+    echo >&2 "beads: hook 'post-checkout' timed out after ${_bd_timeout}s — continuing without beads"
+    _bd_exit=0
+  fi
+  if [ $_bd_exit -eq 3 ]; then
+    echo >&2 "beads: database not initialized — skipping hook 'post-checkout'"
+    _bd_exit=0
+  fi
+  if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
+fi
