@@ -97,7 +97,7 @@ if [[ "$bd_ok" == 1 ]]; then
   # Haystack: open/in_progress bead title+description+notes + full memory bodies.
   # Prefer `bd memories --json` (untruncated) over the ...-truncated table.
   haystack="$(
-    bd list --status=open --status=in_progress --limit 0 --json 2>/dev/null \
+    bd list --status=open,in_progress --limit 0 --json 2>/dev/null \
       | jq -r '.[] | [.title, (.description // ""), (.notes // "")] | @tsv' 2>/dev/null || true
   )"
   haystack+=$'\n'"$(bd memories --json 2>/dev/null || bd memories 2>/dev/null || true)"
