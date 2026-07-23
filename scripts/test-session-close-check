@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# test-session-close-check - exercise the cold-start report-reference check
+# without touching the real Beads database or the repository working tree.
+#
+# Usage: bash scripts/test-session-close-check
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+check="$root/scripts/session-close-check"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+command -v jq >/dev/null 2>&1 || { echo "test-session-close-check: jq is required" >&2; exit 2; }
+command -v git >/dev/null 2>&1 || { echo "test-session-close-check: git is required" >&2; exit 2; }
+
+tmp="$(mktemp -d)"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+# The bd stub intentionally implements last-wins --status parsing. With the
+# former repeated `--status=open --status=in_progress` invocation, it returns
+# no open beads and the referenced report test below fails.
+stubdir="$tmp/stub-bin"
+mkdir -p "$stubdir"
+cat >"$stubdir/bd" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+printf '%s\n' "$*" >>"$BD_CALL_LOG"
+
+case "${1:-}" in
+  list)
+    shift
+    status=""
+    limit=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --status=*) status="${1#--status=}" ;;
+        --status) shift; status="${1:-}" ;;
+        --limit=*) limit="${1#--limit=}" ;;
+        --limit) shift; limit="${1:-}" ;;
+      esac
+      shift
+    done
+
+    if [[ "$limit" == "1" ]]; then
+      printf '[]\n'
+    elif [[ "$status" == "open" || "$status" == "open,in_progress" ]]; then
+      printf '%s\n' '[{"id":"mybd-test","status":"open","title":"Open report owner","description":"reports/referenced-report.md","notes":"","created_at":""}]'
+    else
+      printf '[]\n'
+    fi
+    ;;
+  memories)
+    printf '[]\n'
+    ;;
+  *)
+    echo "unexpected bd invocation: $*" >&2
+    exit 64
+    ;;
+esac
+EOF
+chmod +x "$stubdir/bd"
+
+export BD_CALL_LOG="$tmp/bd-calls.log"
+export PATH="$stubdir:$PATH"
+
+reporoot="$tmp/repo"
+mkdir -p "$reporoot/reports"
+git init -q -b main "$reporoot"
+git -C "$reporoot" config user.name "test-session-close-check"
+git -C "$reporoot" config user.email "test-session-close-check@example.invalid"
+git -C "$reporoot" config commit.gpgsign false
+printf 'baseline\n' >"$reporoot/README.md"
+git -C "$reporoot" add README.md
+git -C "$reporoot" commit -q -m "baseline"
+
+# Check 1 must include both open and in-progress beads in one supported status
+# argument. A report referenced only by the open bead must remain reachable.
+printf 'referenced report\n' >"$reporoot/reports/referenced-report.md"
+referenced_stderr="$tmp/referenced.stderr"
+if (cd "$reporoot" && bash "$check" --since HEAD --strict) >"$tmp/referenced.stdout" 2>"$referenced_stderr"; then
+  pass "report referenced only by an open bead passes strict mode"
+else
+  fail "open-bead report reference warned unexpectedly: $(cat "$referenced_stderr")"
+fi
+
+if grep -Fq "list --status=open,in_progress --limit 0 --json" "$BD_CALL_LOG"; then
+  pass "session-close-check requests open and in-progress beads together"
+else
+  fail "combined open,in_progress bd list call was not observed: $(cat "$BD_CALL_LOG")"
+fi
+
+if grep -Fq "new report not referenced" "$referenced_stderr"; then
+  fail "referenced report emitted an unreferenced warning: $(cat "$referenced_stderr")"
+else
+  pass "referenced report emits no unreferenced warning"
+fi
+
+# A genuinely unreferenced report must still warn, and strict mode must fail.
+printf 'unreferenced report\n' >"$reporoot/reports/unreferenced-report.md"
+unreferenced_stderr="$tmp/unreferenced.stderr"
+if (cd "$reporoot" && bash "$check" --since HEAD --strict) >"$tmp/unreferenced.stdout" 2>"$unreferenced_stderr"; then
+  unreferenced_rc=0
+else
+  unreferenced_rc=$?
+fi
+
+if [[ "$unreferenced_rc" -eq 1 ]]; then
+  pass "strict mode fails for an actually unreferenced report"
+else
+  fail "strict mode exit for unreferenced report = $unreferenced_rc, want 1; stderr: $(cat "$unreferenced_stderr")"
+fi
+
+if grep -Fq "new report not referenced by any open bead or memory: reports/unreferenced-report.md" "$unreferenced_stderr"; then
+  pass "unreferenced report emits the expected warning"
+else
+  fail "unreferenced report warning missing: $(cat "$unreferenced_stderr")"
+fi
+
+if grep -Fq "reports/referenced-report.md" "$unreferenced_stderr"; then
+  fail "open-bead report was warned during the unreferenced case: $(cat "$unreferenced_stderr")"
+else
+  pass "open-bead report remains recognized when another report warns"
+fi
+
+if [[ "$fails" -eq 0 ]]; then
+  echo "test-session-close-check: all checks passed"
+  exit 0
+else
+  echo "test-session-close-check: $fails check(s) failed"
+  exit 1
+fi
