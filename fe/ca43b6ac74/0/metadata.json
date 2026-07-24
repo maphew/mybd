@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "feca43b6ac74",
+  "session_id": "a7e557b0-34cb-4f37-bb75-4e6b9cf0908c",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T17:53:33.362212841Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "99d94fb87fd7",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 54,
+    "cache_creation_tokens": 100097,
+    "cache_read_tokens": 2382652,
+    "output_tokens": 30018,
+    "api_call_count": 27
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-review-2026-07-24T17:38:52.198804794Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "9ef3654c90d1",
+      "timestamp": "2026-07-24T17:38:52.198804794Z",
+      "native": {
+        "command": "/review"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/review",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+/review recent mybd merge re: pr-babysitting
+
+---
+
+add your review to whatever bead drove this branch and apply your fixes. after that assess whether it's worth the effort to port the scripts to cross platform Go/Python/Rust so my Windows machines can use them. (it might better architecture to designate only one machine be the babysitter)
