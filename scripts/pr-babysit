@@ -40,7 +40,7 @@ block() {
 
 legacy_policy() {
   # Only a complete, latest handoff line is authoritative; prose elsewhere is
-  # not policy. Output method<TAB>rerun or nothing.
+  # not policy. Output repo<TAB>pr<TAB>method<TAB>rerun or nothing.
   sed -nE 's/^\[pr-handoff [^]]+\] repo=([^ ]+) pr=([1-9][0-9]*) method=(squash|merge|rebase) flake_rerun=(allowed|no) .*/\1\t\2\t\3\t\4/p' <<<"$1" | tail -n1
 }
 
@@ -131,7 +131,7 @@ while read -r item; do
     continue
   fi
   pending="$(jq '[.[] | select(.bucket == "pending")] | length' <<<"$checks")"; failing="$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<<"$checks")"
-  if (( pending > 0 )); then transition "$bead" "$metadata" "$notes" "waiting:$head:$pending:$failing" "Checks pending; retained under patrol." || log "$bead: transition failed"; continue; fi
+  if (( pending > 0 )); then transition "$bead" "$metadata" "$notes" "waiting:$head" "Checks pending ($pending pending, $failing failing); retained under patrol." || log "$bead: transition failed"; continue; fi
 
   if (( failing > 0 )); then
     rerun_head="$(jq -r '.pr_babysit_rerun_head // empty' <<<"$metadata")"
@@ -176,6 +176,9 @@ while read -r item; do
   final_head="$(jq -r .headRefOid <<<"$final_json")"
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
   if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and (. [0].metadata == $queued.metadata)' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
+    # Surface the skip on the bead (once per head): a persistent mismatch here
+    # would otherwise livelock visibly only in the local patrol log.
+    transition "$bead" "$metadata" "$notes" "authorization-mismatch:$head" "Bead changed between queue read and merge, or bd was unavailable; merge skipped; retained under patrol." || log "$bead: transition failed"
     log "$bead: merge authorization revoked or unavailable; skipping"
     continue
   fi

@@ -193,17 +193,40 @@ run_patrol; run_patrol
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "preflight block merged"
 [[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "preflight annotations were not idempotent"
 
-# Waiting transitions are also idempotent across timer invocations.
+# Waiting transitions are also idempotent across timer invocations, including
+# when the pending/failing counts change under the same head.
 reset idempotent "$policy"
 export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""}]'
 run_patrol; run_patrol
 [[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "waiting annotations were not idempotent"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""},{"name":"two","bucket":"pending","link":""}]'
+run_patrol
+[[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "waiting note grew with changing check counts"
 
 # Note-only handoffs from before pr_babysit_* metadata remain supported.
 reset legacy '{}' '[pr-handoff 2026-01-01T00:00:00Z] repo=gastownhall/beads pr=123 method=rebase flake_rerun=allowed — patrol owns the merge'
 export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
 run_patrol
 grep -q -- '--rebase' "$FAKE_GH_LOG" || fail "legacy note-only method was not honored"
+
+# A legacy gh-pr-N external reference resolves to the default repository.
+reset legacy-ref "$policy" '' 'gh-pr-123'
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+grep -q -- 'pr merge 123 --repo gastownhall/beads' "$FAKE_GH_LOG" || fail "legacy gh-pr-N reference did not resolve"
+
+# A PR already MERGED at first read closes the bead without a merge attempt;
+# one CLOSED unmerged leaves the queue for a decision.
+reset already-merged "$policy"
+export FAKE_PR_STATE=MERGED
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "already-merged PR attempted a merge"
+grep -q '^close ' "$FAKE_BD_LOG" || fail "already-merged PR did not close bead"
+reset closed-unmerged "$policy"
+export FAKE_PR_STATE=CLOSED
+run_patrol
+grep -q 'closed-unmerged' "$FAKE_BD_LOG" || fail "closed-unmerged PR was not transitioned"
+grep -q -- '--remove-label merge-when-green' "$FAKE_BD_LOG" || fail "closed-unmerged PR kept the queue label"
 
 # Handoff validates arguments and writes namespaced policy metadata.  A
 # non-default repository must never query the legacy gh-pr-N reference.
@@ -293,9 +316,10 @@ for case_name in rollup-pending rollup-failed rollup-malformed; do
 done
 
 # Removing the label during preflight revokes Beads authorization without the
-# patrol restoring it or attempting a merge.
+# patrol restoring it or attempting a merge; the skip is surfaced on the bead.
 reset authorization-revoked "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_REVOKE_LABEL=1
 run_patrol; [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "revoked authorization merged"
+grep -q 'authorization-mismatch' "$FAKE_BD_LOG" || fail "authorization skip was not surfaced on the bead"
 
 # Legacy note-only identity must agree with the external reference.
 reset legacy-identity '{}' '[pr-handoff 2026-01-01T00:00:00Z] repo=other/repo pr=999 method=squash flake_rerun=allowed — patrol owns the merge'
