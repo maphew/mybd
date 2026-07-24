@@ -28,18 +28,20 @@ transition() {
 # completed.
 block() {
   local bead="$1" metadata="$2" notes="$3" key="$4" message="$5"
-  if ! bd unclaim "$bead" >/dev/null 2>&1; then log "$bead: block deferred (unclaim failed)"; return 1; fi
-  if ! transition "$bead" "$metadata" "$notes" "$key" "$message"; then log "$bead: block deferred (transition failed)"; return 1; fi
-  if ! bd update "$bead" --remove-label merge-when-green --add-label merge-blocked >/dev/null 2>&1; then
-    log "$bead: block deferred (label update failed)"; return 1
+  local previous args=()
+  previous="$(jq -r '.pr_babysit_last_transition // empty' <<<"$metadata")"
+  args=(update "$bead" --status open --assignee "" --remove-label merge-when-green --add-label merge-blocked)
+  if [[ "$previous" != "$key" && ! ( -z "$previous" && "$notes" == *"transition=$key"* ) ]]; then
+    args+=(--set-metadata "pr_babysit_last_transition=$key" --append-notes "[pr-babysit $(date -u +%FT%TZ)] transition=$key — $message")
   fi
+  if ! bd "${args[@]}" >/dev/null 2>&1; then log "$bead: block deferred (atomic update failed)"; return 1; fi
   log "$bead: BLOCKED ($message)"
 }
 
 legacy_policy() {
   # Only a complete, latest handoff line is authoritative; prose elsewhere is
   # not policy. Output method<TAB>rerun or nothing.
-  sed -nE 's/^\[pr-handoff [^]]+\] repo=[^ ]+ pr=[1-9][0-9]* method=(squash|merge|rebase) flake_rerun=(allowed|no) .*/\1\t\2/p' <<<"$1" | tail -n1
+  sed -nE 's/^\[pr-handoff [^]]+\] repo=([^ ]+) pr=([1-9][0-9]*) method=(squash|merge|rebase) flake_rerun=(allowed|no) .*/\1\t\2\t\3\t\4/p' <<<"$1" | tail -n1
 }
 
 valid_repo_pr() { [[ "$1" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$2" =~ ^[1-9][0-9]*$ ]]; }
@@ -57,6 +59,8 @@ while read -r item; do
     continue
   fi
   metadata="$metadata_raw"
+  legacy="$(legacy_policy "$notes")"
+  legacy_repo="$(cut -f1 <<<"$legacy")"; legacy_pr="$(cut -f2 <<<"$legacy")"; legacy_method="$(cut -f3 <<<"$legacy")"; legacy_rerun="$(cut -f4 <<<"$legacy")"
 
   repo=""; pr=""
   if [[ "$ref" =~ ^gh:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
@@ -65,6 +69,7 @@ while read -r item; do
     repo="gastownhall/beads"; pr="${BASH_REMATCH[1]}"
   elif [[ -z "$ref" ]]; then
     repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
+    if ! valid_repo_pr "$repo" "$pr"; then repo="$legacy_repo"; pr="$legacy_pr"; fi
     if ! valid_repo_pr "$repo" "$pr"; then
       block "$bead" "$metadata" "$notes" "missing-reference" "No valid external_ref or metadata PR identity; needs agent judgment."
       continue
@@ -78,10 +83,13 @@ while read -r item; do
     block "$bead" "$metadata" "$notes" "reference-metadata-mismatch" "external_ref and pr_babysit metadata disagree; needs agent judgment."
     continue
   fi
+  if [[ -n "$legacy" ]] && { [[ "$legacy_repo" != "$repo" || "$legacy_pr" != "$pr" ]]; }; then
+    block "$bead" "$metadata" "$notes" "reference-legacy-mismatch" "external_ref and legacy handoff identity disagree; needs agent judgment."
+    continue
+  fi
 
   # Present metadata must be valid. Only absent/null keys may fall back to the
   # latest exact legacy handoff marker.
-  legacy="$(legacy_policy "$notes")"; legacy_method="${legacy%%$'\t'*}"; legacy_rerun="${legacy#*$'\t'}"
   method_present="$(jq 'has("pr_babysit_method") and .pr_babysit_method != null' <<<"$metadata")"
   rerun_present="$(jq 'has("pr_babysit_flake_rerun") and .pr_babysit_flake_rerun != null' <<<"$metadata")"
   method="$(jq -r '.pr_babysit_method // empty' <<<"$metadata")"; rerun_policy="$(jq -r '.pr_babysit_flake_rerun // empty' <<<"$metadata")"
@@ -156,13 +164,21 @@ while read -r item; do
     fi
     continue
   fi
-  # Checks and preflight may take time; re-read immediately before CAS merge.
-  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string")' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
+  if ! grep -qE '^\[pass\] Base branch .+ CI is green( \(|$)' <<<"$preflight_out"; then
+    transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
+    continue
+  fi
+  # Checks and preflight may take time; re-read head and rollup atomically.
+  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
     transition "$bead" "$metadata" "$notes" "premerge-pr-unavailable:$head" "Could not revalidate PR before merge; retained under patrol." || log "$bead: transition failed"
     continue
   fi
   final_head="$(jq -r .headRefOid <<<"$final_json")"
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
+  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and (. [0].metadata == $queued.metadata)' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
+    log "$bead: merge authorization revoked or unavailable; skipping"
+    continue
+  fi
   if gh pr merge "$pr" --repo "$repo" "--$method" --match-head-commit "$head" >>"$LOG" 2>&1; then
     if ! after_json="$(gh pr view "$pr" --repo "$repo" --json state 2>>"$LOG")" || ! after_state="$(jq -er '.state | strings' <<<"${after_json:-}" 2>/dev/null)"; then
       transition "$bead" "$metadata" "$notes" "postmerge-unavailable:$head" "Merge returned success but state confirmation failed; retained under patrol." || log "$bead: transition failed"
