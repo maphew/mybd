@@ -16,11 +16,21 @@ case "${1:-} ${2:-}" in
   "pr view")
     if [[ -n "${FAKE_PR_BODY:-}" ]]; then printf '%s\n' "$FAKE_PR_BODY"; exit "${FAKE_PR_EXIT:-0}"; fi
     state="${FAKE_PR_STATE:-OPEN}"
+    head="${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    [[ -f "${FAKE_PREFLIGHT_MARK:-/dev/null}" ]] && head="${FAKE_HEAD_AFTER_PREFLIGHT:-$head}"
     [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
-    printf '{"title":"Example PR","state":"%s","headRefOid":"%s"}\n' "$state" "${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    printf '{"title":"Example PR","state":"%s","headRefOid":"%s"}\n' "$state" "$head"
+    [[ -f "$FAKE_MERGE_MARK" ]] && exit "${FAKE_POST_PR_EXIT:-0}"
+    exit "${FAKE_PR_EXIT:-0}"
     ;;
   "pr checks") printf '%s\n' "${FAKE_CHECKS:-[]}"; exit "${FAKE_CHECKS_EXIT:-0}" ;;
-  "pr merge") touch "$FAKE_MERGE_MARK"; exit "${FAKE_MERGE_EXIT:-0}" ;;
+  "pr merge")
+    [[ "${FAKE_MERGE_EXIT:-0}" == 0 ]] || exit "$FAKE_MERGE_EXIT"
+    expected=""; for arg in "$@"; do [[ "$arg" == "--match-head-commit" ]] && next=1 && continue; [[ "${next:-}" == 1 ]] && expected="$arg" && unset next; done
+    actual="${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"; [[ -f "${FAKE_PREFLIGHT_MARK:-/dev/null}" ]] && actual="${FAKE_HEAD_AFTER_PREFLIGHT:-$actual}"
+    [[ "$expected" == "$actual" ]] || exit 65
+    touch "$FAKE_MERGE_MARK"
+    ;;
   "run rerun") exit "${FAKE_RERUN_EXIT:-0}" ;;
   *) echo "unexpected gh invocation: $*" >&2; exit 64 ;;
 esac
@@ -29,10 +39,18 @@ cat >"$FAKE_BIN/bd" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_BD_LOG"
+[[ -z "${FAKE_BD_FAIL_ON:-}" || "${1:-}" != "$FAKE_BD_FAIL_ON" ]] || exit 1
+[[ -z "${FAKE_BD_FAIL_MATCH:-}" || " $* " != *"$FAKE_BD_FAIL_MATCH"* ]] || exit 1
 case "${1:-}" in
   list)
-    if [[ " $* " == *" --label "* ]]; then cat "$FAKE_QUEUE"; else printf '[]\n'; fi
+    if [[ " $* " == *" --label "* ]]; then
+      cat "$FAKE_QUEUE"
+    else
+      ref=""; for arg in "$@"; do [[ "${next:-}" == 1 ]] && ref="$arg" && unset next; [[ "$arg" == "--external-ref" ]] && next=1; done
+      jq --arg ref "$ref" '[.[] | select(.external_ref == $ref)]' "$FAKE_QUEUE"
+    fi
     ;;
+  show) jq --arg id "$2" '[.[] | select(.id == $id)]' "$FAKE_QUEUE" ;;
   create) printf '{"id":"mybd-created"}\n' ;;
   update)
     bead="$2"; shift 2
@@ -46,6 +64,10 @@ case "${1:-}" in
             "$FAKE_QUEUE" >"$qtmp"
           mv -f "$qtmp" "$FAKE_QUEUE"
           shift 2 ;;
+        --external-ref)
+          ref="$2"; qtmp="$FAKE_QUEUE.tmp"
+          jq --arg id "$bead" --arg ref "$ref" 'map(if .id == $id then .external_ref = $ref else . end)' "$FAKE_QUEUE" >"$qtmp"
+          mv -f "$qtmp" "$FAKE_QUEUE"; shift 2 ;;
         --append-notes) shift 2 ;;
         *) shift ;;
       esac
@@ -57,13 +79,20 @@ esac
 EOF
 cat >"$FAKE_BIN/preflight" <<'EOF'
 #!/usr/bin/env bash
+touch "${FAKE_PREFLIGHT_MARK:-/dev/null}"
+[[ -z "${FAKE_PREFLIGHT_OUTPUT:-}" ]] || printf '%s\n' "$FAKE_PREFLIGHT_OUTPUT"
 exit "${FAKE_PREFLIGHT_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemctl"
+cat >"$FAKE_BIN/systemd-analyze" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SYSTEMD_ANALYZE_LOG"
+exit "${FAKE_SYSTEMD_ANALYZE_EXIT:-0}"
+EOF
+chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemctl" "$FAKE_BIN/systemd-analyze"
 
 export PATH="$FAKE_BIN:$PATH"
 export PR_BABYSIT_PREFLIGHT="$FAKE_BIN/preflight"
@@ -72,15 +101,17 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
 
 reset() {
-  local name="$1" metadata="${2-}" notes="${3:-}"
+  local name="$1" metadata="${2-}" notes="${3:-}" ref
+  if [[ $# -ge 4 ]]; then ref="$4"; else ref="gh:gastownhall/beads#123"; fi
   [[ -n "$metadata" ]] || metadata='{}'
   CASE="$TMP/$name"; mkdir -p "$CASE"
-  export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged"
+  export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged" FAKE_PREFLIGHT_MARK="$CASE/preflight" FAKE_SYSTEMD_ANALYZE_LOG="$CASE/analyze.log"
   export XDG_STATE_HOME="$CASE/state"
-  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_POST_MERGE_STATE
+  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH
+  rm -f "$FAKE_PREFLIGHT_MARK"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  jq -cn --arg notes "$notes" --argjson metadata "$metadata" \
-    '[{id:"mybd-test", external_ref:"gh:gastownhall/beads#123", notes:$notes, metadata:$metadata}]' >"$FAKE_QUEUE"
+  jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
+    '[{id:"mybd-test", external_ref:$ref, notes:$notes, metadata:$metadata}]' >"$FAKE_QUEUE"
   : >"$FAKE_BD_LOG"; : >"$FAKE_GH_LOG"
 }
 
@@ -101,7 +132,7 @@ run_patrol; run_patrol
 [[ "$(jq -r '.[0].metadata.pr_babysit_rerun_head' "$FAKE_QUEUE")" == "$FAKE_HEAD" ]] || fail "successful rerun head was not recorded"
 
 # A changed head receives its own rerun budget.
-reset head-change '{"pr_babysit_flake_rerun":"allowed","pr_babysit_rerun_head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+reset head-change '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_rerun_head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
 export FAKE_HEAD=cccccccccccccccccccccccccccccccccccccccc
 export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/gastownhall/beads/actions/runs/43/job"}]'
 run_patrol
@@ -155,7 +186,7 @@ run_patrol; run_patrol
 [[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "waiting annotations were not idempotent"
 
 # Note-only handoffs from before pr_babysit_* metadata remain supported.
-reset legacy '{}' 'method=rebase flake_rerun=allowed'
+reset legacy '{}' '[pr-handoff 2026-01-01T00:00:00Z] repo=gastownhall/beads pr=123 method=rebase flake_rerun=allowed — patrol owns the merge'
 export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
 run_patrol
 grep -q -- '--rebase' "$FAKE_GH_LOG" || fail "legacy note-only method was not honored"
@@ -176,8 +207,60 @@ grep -q 'pr_babysit_repo=owner/other' "$FAKE_BD_LOG" || fail "handoff did not wr
 # Installation substitutes the real checkout path and leaves a finite patrol
 # timeout in the generated user service.
 install_config="$TMP/install-config"
+stable_root="$(cd "$(dirname "$(git -C "$ROOT" rev-parse --git-common-dir)")" && pwd)"
 XDG_CONFIG_HOME="$install_config" "$ROOT/scripts/install-pr-babysit" >/dev/null
-grep -Fq "ExecStart=\"$ROOT/scripts/pr-babysit\"" "$install_config/systemd/user/pr-babysit.service" || fail "installer did not write actual root"
+grep -Fq "ExecStart=\"$stable_root/scripts/pr-babysit\"" "$install_config/systemd/user/pr-babysit.service" || fail "installer did not write stable root"
 grep -q '^TimeoutStartSec=10min$' "$install_config/systemd/user/pr-babysit.service" || fail "installed service lacks timeout"
+grep -q '^verify ' "$FAKE_SYSTEMD_ANALYZE_LOG" || fail "installer did not validate generated service"
+
+# A nonzero gh status, even with valid JSON, is never trusted.  The second case
+# verifies the post-merge read has the same requirement.
+reset gh-status "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PR_EXIT=1
+run_patrol; [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "nonzero initial gh view merged"
+reset postmerge-status "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_POST_PR_EXIT=1
+run_patrol; [[ "$(count '^close ' "$FAKE_BD_LOG")" == 0 ]] || fail "nonzero post-merge view closed bead"
+
+# Re-read after preflight, before CAS merge; an altered head cannot be merged.
+reset changed-head "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_HEAD_AFTER_PREFLIGHT=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+run_patrol; [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "changed head reached merge"
+
+reset empty-checks "$policy"; export FAKE_CHECKS='[]'; run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "empty checks merged"
+reset bad-policy '{"pr_babysit_method":"bogus","pr_babysit_flake_rerun":"allowed"}'; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'; run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "invalid metadata policy merged"
+reset stale-policy '{}' 'method=merge flake_rerun=allowed'; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'; run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "non-marker stale policy merged"
+
+# Reservation failure calls no rerun; handoff retains a spent budget; legacy
+# flake-rerun-done notes are conservatively treated as spent.
+reset reservation "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/x/y/actions/runs/42/job"}]' FAKE_BD_FAIL_MATCH='pr_babysit_rerun_head='
+run_patrol; [[ "$(count 'run rerun' "$FAKE_GH_LOG")" == 0 ]] || fail "rerun ran without reservation"
+reset repeat-handoff '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_rerun_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+"$ROOT/scripts/pr-handoff" 123 >/dev/null
+[[ "$(grep -c 'pr_babysit_rerun_head=' "$FAKE_BD_LOG")" == 0 ]] || fail "handoff cleared rerun budget"
+reset legacy-spent '{}' $'[pr-handoff 2026-01-01T00:00:00Z] repo=gastownhall/beads pr=123 method=squash flake_rerun=allowed — patrol owns the merge\n[pr-babysit 2026-01-01T00:01:00Z] flake-rerun-done'
+export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/x/y/actions/runs/42/job"}]'; run_patrol
+[[ "$(count 'run rerun' "$FAKE_GH_LOG")" == 0 ]] || fail "legacy spent rerun retried"
+
+# Red-base-only failures retain the bead; a policy block becomes actionable.
+reset red-base "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED'
+run_patrol; [[ "$(count 'unclaim' "$FAKE_BD_LOG")" == 0 ]] || fail "red base blocked bead"
+reset policy-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge conflict detected'
+run_patrol; grep -q '^unclaim ' "$FAKE_BD_LOG" || fail "policy block did not unclaim"
+reset partial-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":""}]' FAKE_BD_FAIL_ON=unclaim
+run_patrol; ! grep -q 'BLOCKED' "$XDG_STATE_HOME/pr-babysit/patrol.log" || fail "failed unclaim logged blocked"
+reset reference-mismatch '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_repo":"other/repo","pr_babysit_pr":"123"}'
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'; run_patrol
+grep -q '^unclaim ' "$FAKE_BD_LOG" || fail "reference/metadata mismatch was not blocked"
+
+# Overrides are inspected/canonicalized; automatic duplicate candidates fail.
+reset override-mismatch '{}' '' 'gh:other/repo#99'
+if "$ROOT/scripts/pr-handoff" 123 --bead mybd-test >/dev/null 2>&1; then fail "mismatched override accepted"; fi
+reset override-empty '{}' '' ''
+"$ROOT/scripts/pr-handoff" 123 --bead mybd-test >/dev/null
+grep -q -- '--external-ref gh:gastownhall/beads#123' "$FAKE_BD_LOG" || fail "empty override was not canonicalized"
+reset duplicates '{}'
+jq '. + [{id:"mybd-other", external_ref:"gh-pr-123", notes:"", metadata:{}}]' "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
+if "$ROOT/scripts/pr-handoff" 123 >/dev/null 2>&1; then fail "duplicate automatic matches accepted"; fi
 
 echo "pr-babysit behavioural tests: PASS"
