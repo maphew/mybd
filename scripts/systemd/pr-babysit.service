@@ -1,0 +1,7 @@
+[Unit]
+Description=PR merge-tail patrol (zero-token babysitter for merge-when-green beads)
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/dev/mybd/scripts/pr-babysit

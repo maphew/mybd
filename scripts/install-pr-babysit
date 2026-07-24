@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Install and enable the pr-babysit systemd user timer on this machine.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$UNIT_DIR"
+cp -f "$ROOT/scripts/systemd/pr-babysit.service" "$ROOT/scripts/systemd/pr-babysit.timer" "$UNIT_DIR/"
+systemctl --user daemon-reload
+systemctl --user enable --now pr-babysit.timer
+systemctl --user list-timers pr-babysit.timer --no-pager

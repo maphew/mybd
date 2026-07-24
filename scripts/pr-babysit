@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Zero-token merge-tail patrol. Run by pr-babysit.timer (or manually).
+#
+# For every open bead labeled merge-when-green with a PR external ref:
+#   - PR merged/closed upstream        -> close/annotate the bead
+#   - checks pending                   -> wait (do nothing)
+#   - checks green + base branch green -> merge (method from bead notes), close bead
+#   - checks failed, no rerun yet      -> rerun failed jobs once (if allowed), mark it
+#   - checks failed after rerun        -> relabel merge-blocked, unclaim, so the bead
+#                                         surfaces in `bd ready` for an agent to judge
+#
+# Design: sessions produce (review/fix/push + scripts/pr-handoff), this patrol alone
+# consumes (merge/close). bd claims cannot distinguish two sessions of the same user,
+# so mutual exclusion comes from this role split, not from claims.
+#
+# Zero model tokens; safe under cron; flock-guarded; bd calls are serial.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pr-babysit"
+mkdir -p "$STATE_DIR"
+LOG="$STATE_DIR/patrol.log"
+LOCK="$STATE_DIR/lock"
+
+exec 9>"$LOCK"
+flock -n 9 || exit 0   # another patrol run is active
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"; }
+
+cd "$ROOT"
+
+QUEUE="$(bd list --label merge-when-green --json 2>/dev/null)" || { log "bd unavailable (lock/migration gate?); skipping run"; exit 0; }
+COUNT="$(jq 'length' <<<"$QUEUE")"
+[[ "$COUNT" == "0" || -z "$COUNT" ]] && exit 0
+
+log "patrol start: $COUNT queued bead(s)"
+
+jq -c '.[]' <<<"$QUEUE" | while read -r item; do
+  bead="$(jq -r '.id' <<<"$item")"
+  ref="$(jq -r '.external_ref // ""' <<<"$item")"
+  notes="$(jq -r '.notes // ""' <<<"$item")"
+
+  # Accept both conventions: gh-pr-<n> (default repo) and gh:owner/repo#<n>.
+  repo="gastownhall/beads"; pr=""
+  if [[ "$ref" =~ ^gh-pr-([0-9]+)$ ]]; then
+    pr="${BASH_REMATCH[1]}"
+  elif [[ "$ref" =~ ^gh:([^#]+)#([0-9]+)$ ]]; then
+    repo="${BASH_REMATCH[1]}"; pr="${BASH_REMATCH[2]}"
+  else
+    log "$bead: unparseable external_ref '$ref'; skipping"
+    continue
+  fi
+
+  state="$(gh pr view "$pr" --repo "$repo" --json state --jq '.state' 2>/dev/null)"
+  case "$state" in
+    MERGED)
+      bd close "$bead" --reason "PR $repo#$pr merged (observed by pr-babysit)." >/dev/null 2>&1
+      log "$bead: $repo#$pr already merged; bead closed"
+      continue ;;
+    CLOSED)
+      bd update "$bead" --remove-label merge-when-green \
+        --append-notes "[pr-babysit $(date -u +%FT%TZ)] PR closed unmerged upstream; needs a decision." >/dev/null 2>&1
+      log "$bead: $repo#$pr closed unmerged; label removed"
+      continue ;;
+    OPEN) ;;
+    *)
+      log "$bead: cannot read $repo#$pr state; skipping"
+      continue ;;
+  esac
+
+  checks="$(gh pr checks "$pr" --repo "$repo" 2>/dev/null)"
+  pend="$(awk -F'\t' '$2=="pending"' <<<"$checks" | wc -l)"
+  fail="$(awk -F'\t' '$2=="fail"' <<<"$checks" | wc -l)"
+
+  if [[ "$pend" -gt 0 ]]; then
+    log "$bead: $repo#$pr waiting ($pend pending, $fail failed)"
+    continue
+  fi
+
+  if [[ "$fail" -eq 0 ]]; then
+    # Base-branch health gate (stop-the-line rule) before merging.
+    if ! PR_PREFLIGHT_BLOCK_RED_BASE=1 "$ROOT/bd-main/scripts/pr-preflight.sh" "$pr" --repo "$repo" >>"$LOG" 2>&1; then
+      log "$bead: $repo#$pr green but preflight blocked; leaving for agent judgment"
+      bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] checks green but preflight blocked (red base or policy); see patrol.log." >/dev/null 2>&1
+      continue
+    fi
+    method="squash"
+    [[ "$notes" == *"method=merge"* ]] && method="merge"
+    [[ "$notes" == *"method=rebase"* ]] && method="rebase"
+    if gh pr merge "$pr" --repo "$repo" "--$method" >>"$LOG" 2>&1; then
+      bd close "$bead" --reason "PR $repo#$pr merged by pr-babysit ($method) after green checks + preflight." >/dev/null 2>&1
+      log "$bead: MERGED $repo#$pr ($method); bead closed"
+    else
+      bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] merge attempt failed (branch protection / review requirement?); see patrol.log." >/dev/null 2>&1
+      log "$bead: merge of $repo#$pr FAILED; noted on bead"
+    fi
+    continue
+  fi
+
+  # Failures present.
+  if [[ "$notes" != *"flake-rerun-done"* && "$notes" == *"flake_rerun=allowed"* ]]; then
+    runs="$(awk -F'\t' '$2=="fail" {print $4}' <<<"$checks" | grep -oE '/runs/[0-9]+' | grep -oE '[0-9]+' | sort -u)"
+    for rid in $runs; do
+      gh run rerun "$rid" --repo "$repo" --failed >>"$LOG" 2>&1 && log "$bead: reran failed jobs of run $rid"
+    done
+    bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] flake-rerun-done: reran failed jobs of run(s) $(tr '\n' ' ' <<<"$runs")." >/dev/null 2>&1
+  else
+    bd update "$bead" --remove-label merge-when-green --add-label merge-blocked \
+      --append-notes "[pr-babysit $(date -u +%FT%TZ)] checks still failing after rerun budget; needs agent judgment. Failing: $(awk -F'\t' '$2=="fail" {print $1}' <<<"$checks" | tr '\n' '; ')" >/dev/null 2>&1
+    bd unclaim "$bead" >/dev/null 2>&1
+    log "$bead: $repo#$pr BLOCKED (persistent failures); relabeled merge-blocked + unclaimed"
+  fi
+done
+
+log "patrol end"

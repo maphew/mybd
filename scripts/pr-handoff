@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Hand a PR's merge tail to the pr-babysit patrol instead of watching CI in-session.
+#
+# Creates-or-claims the tracking bead for the PR, labels it merge-when-green,
+# and records the merge policy in the bead notes. The pr-babysit timer (see
+# scripts/pr-babysit) then owns the merge: sessions that run this script must
+# NOT merge, close, or re-run checks on the PR afterwards.
+#
+# Usage: scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+#
+# When several beads share the PR's external ref (e.g. a tracking bead plus a
+# follow-ups bead), pass --bead to name the merge-tail bead explicitly; the
+# ref lookup otherwise takes the first match.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="gastownhall/beads"
+METHOD="squash"
+FLAKE_RERUN="allowed"
+PR=""
+BEAD_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --method) METHOD="$2"; shift 2 ;;
+    --bead) BEAD_OVERRIDE="$2"; shift 2 ;;
+    --no-flake-rerun) FLAKE_RERUN="no"; shift ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) PR="$1"; shift ;;
+  esac
+done
+[[ -n "$PR" ]] || { echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method m] [--no-flake-rerun]" >&2; exit 2; }
+
+cd "$ROOT"
+
+title="$(gh pr view "$PR" --repo "$REPO" --json title,state --jq '.title')" || { echo "cannot read PR $PR on $REPO" >&2; exit 1; }
+
+# Find an existing bead under either external-ref convention.
+bead="$BEAD_OVERRIDE"
+[[ -n "$bead" ]] || bead="$(bd list --json --external-ref "gh-pr-$PR" 2>/dev/null | jq -r '.[0].id // empty')"
+[[ -n "$bead" ]] || bead="$(bd list --json --external-ref "gh:$REPO#$PR" 2>/dev/null | jq -r '.[0].id // empty')"
+
+if [[ -z "$bead" ]]; then
+  bead="$(bd create --title="$title" \
+    --description="Upstream PR: https://github.com/$REPO/pull/$PR — merge tail handed to pr-babysit patrol." \
+    --type=task --priority=2 --external-ref="gh:$REPO#$PR" --json | jq -r '.id // .[0].id')"
+  echo "created bead $bead"
+fi
+
+bd update "$bead" --claim --add-label merge-when-green \
+  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hands off here." >/dev/null
+
+echo "handed off: $REPO#$PR -> bead $bead (label merge-when-green, method=$METHOD, flake_rerun=$FLAKE_RERUN)"
+if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
+  echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
+fi

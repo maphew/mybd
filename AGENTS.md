@@ -401,6 +401,32 @@ housekeeping section.
 `verify_state=passed|failed` plus result metadata back to bd. Keep full-suite
 concurrency low by default; Beads/Dolt tests are process and disk heavy.
 
+### PR Merge Tails (babysitter pattern)
+
+Never babysit CI in-session. When a PR's remaining work is "merge when checks
+pass", run:
+
+```bash
+scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+```
+
+and end the session. The `pr-babysit` systemd user timer (installed via
+`scripts/install-pr-babysit`, fires every 12 min, zero model tokens) then owns
+the merge: it merges green PRs after a blocking `pr-preflight` base-health
+check, reruns failed jobs once when flake-rerun is allowed, and on persistent
+failure relabels the bead `merge-blocked` and unclaims it so `bd ready`
+surfaces it for agent judgment. Patrol log:
+`~/.local/state/pr-babysit/patrol.log`.
+
+Role split, not claims: `bd update --claim` is idempotent for the same user,
+and all local sessions run as the same user, so claims cannot mutually exclude
+parallel sessions (2026-07-24: one session merged gastownhall/beads#4942 with a
+red nix job while another was mid-review of it, breaking main's nix build for
+~2h). The rule that prevents this: sessions produce (review, fix, push, hand
+off); only the patrol merges. Merging in-session is allowed only when checks
+are already decisively green at the moment of action and no `merge-when-green`
+bead exists for that PR.
+
 ## Quick Reference
 
 ```bash

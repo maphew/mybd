@@ -12,9 +12,9 @@ Base health at sweep time: upstream main green (Main b7e25f091, Regression 1125e
 
 | PR | Verdict | Action taken |
 |----|---------|--------------|
-| 5003 proxied compact/gc/ping/clean-databases | merge-fix | Pushed maintainer commit `21eacaef0` to `db/more-commands`; comment with 4 author-judgment items; merge when CI green |
-| 5002 bd sql multi-statement + --database | easy-win / merge | Awaiting CI, then squash-merge (branch has a "maybe" WIP commit; squash absorbs it) |
-| 4942 Bump Go 1.26.5 | merge pending CI | Substance verified complete; earlier Embedded Dolt Storage failure re-running; merge if green |
+| 5003 proxied compact/gc/ping/clean-databases | merge-fix | Maintainer commit `21eacaef0` pushed; comment with 4 author-judgment items; **squash-merged 2026-07-24 by pr-babysit patrol** after green checks + preflight |
+| 5002 bd sql multi-statement + --database | easy-win / merge | Approved + **squash-merged** as `b9b437894` after green sharded CI; Copilot threads resolved |
+| 4942 Bump Go 1.26.5 | merged externally | Merged by a parallel maphew session at 01:54Z **with red nix** — go-modules FOD hash changed without default.nix update, main nix red ~2h until dependabot #4701's auto-computed vendorHash healed it |
 | 4388 ci: drop -short + bundled metrics/RunE | retire | **Closed** with credit note |
 | 4372 metrics → GA4 via eventkit | retire | **Closed** with credit note |
 | 4286 six target-typed dependency tables | retire (re-cut wanted) | **Closed** with full re-cut requirements |
@@ -64,6 +64,17 @@ new parallel DOLT_GC tests), proxied-vs-embedded `bd gc` exit-code divergence,
 clean-databases circuit-breaker omission for multi-tenant servers, JSON parity ledger.
 PR 5002 non-blocking note: `SwitchDatabase` session-scoped USE outlives the UOW on
 pooled connections — safe for one-shot CLI, latent hazard if reused long-lived.
+
+## Session-overlap incident → babysitter pattern
+
+The #4942 red-nix merge collision (a parallel session of the same user merging a
+PR another session was mid-review on) exposed that `bd --claim` cannot mutually
+exclude same-user sessions. Outcome: babysitter pattern instituted —
+`scripts/pr-handoff` + `scripts/pr-babysit` (systemd user timer, zero-token
+mechanical patrol that merges green PRs after blocking preflight, one flake
+rerun, `merge-blocked` relabel for agent judgment). Sessions produce; only the
+patrol merges. Documented in AGENTS.md "PR Merge Tails" + `bd remember
+pr-babysit-pattern`. First live customer: #5003, merged by the patrol.
 
 ## Cross-vendor observation
 
