@@ -1,0 +1,98 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "47e3235e0805",
+  "session_id": "e06b7792-c8f4-4f69-bbd5-ad33ea7ebc53",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T05:43:30.366259172Z",
+  "branch": "main",
+  "checkpoints_count": 49,
+  "save_step_count": 3,
+  "files_touched": [
+    "scripts/pr-handoff"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "1eb0b3167725",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 462,
+    "cache_creation_tokens": 811507,
+    "cache_read_tokens": 69864094,
+    "output_tokens": 199265,
+    "api_call_count": 231
+  },
+  "session_metrics": {
+    "turn_count": 49
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-24T05:43:30.020392311Z",
+    "agent_lines": 44,
+    "agent_removed": 0,
+    "human_added": 193,
+    "human_modified": 3,
+    "human_removed": 0,
+    "total_committed": 238,
+    "total_lines_changed": 243,
+    "agent_percentage": 18.106995884773664,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 225,
+      "user_lines_removed": 1,
+      "agent_lines_added": 50,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43,
+        "AGENTS.md": 26,
+        "scripts/install-pr-babysit": 10,
+        "scripts/pr-babysit": 115,
+        "scripts/pr-handoff": 5,
+        "scripts/systemd/pr-babysit.service": 7,
+        "scripts/systemd/pr-babysit.timer": 10
+      },
+      "user_removed_per_file": {
+        "scripts/pr-handoff": 1
+      }
+    }
+  ]
+}
