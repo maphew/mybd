@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "a3efdb9dc530",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 8,
+  "files_touched": [
+    "reports/2026-07-24-psxg5-design-review-codex-sol.md",
+    "reports/2026-07-24-psxg5-pr-a-review-claude-opus.md",
+    "reports/2026-07-24-psxg5-pr-a-review-codex-sol.md",
+    "reports/2026-07-24-psxg5-proxy-identity-design.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a3/efdb9dc530/0/metadata.json",
+      "transcript": "/a3/efdb9dc530/0/full.jsonl",
+      "compact_transcript": "/a3/efdb9dc530/0/transcript.jsonl",
+      "content_hash": "/a3/efdb9dc530/0/content_hash.txt",
+      "prompt": "/a3/efdb9dc530/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 166,
+    "cache_creation_tokens": 118513,
+    "cache_read_tokens": 21701100,
+    "output_tokens": 65510,
+    "api_call_count": 83
+  }
+}
