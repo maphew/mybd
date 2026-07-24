@@ -1,9 +1,9 @@
 # Independent Assessment — Plugin System Proposal
 
 > Reviewer: Claude (Sonnet 4.5 via Kilo CLI)
-> Subject: `proposals/plugin-system.md` (2026-05-13 draft)
+> Subject: `proposals/plugin-system/README.md` (2026-05-13 draft)
 > Date: 2026-05-20
-> Scope: Independent technical review. Other plugin-system-*.md files in this folder were deliberately not consulted.
+> Scope: Independent technical review. Other plugin-system/*.md files in this folder were deliberately not consulted.
 > Verification: Grounded in direct reading of `bd-main/` source.
 
 Editor's note: The chat that started this review was Opus Latest xhigh in Kilocode vscode extension, but it delegated to Sonnet 4.5 and then compiled this final report, which is why there both Sonnet and Opus signatures.

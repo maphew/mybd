@@ -1,6 +1,6 @@
 # Recommendation: Beads Plugin Architecture
 
-> Companion proposal to `plugin-system.md`
+> Companion proposal to `README.md`
 > Status: recommendation draft for council deliberation
 > Date: 2026-05-18
 > Author: Kilo Code
@@ -8,7 +8,7 @@
 
 ## Purpose
 
-This document is a second proposal, not a rewrite of `plugin-system.md`.
+This document is a second proposal, not a rewrite of `README.md`.
 
 It treats the existing plugin-system draft as useful back-of-napkin design input, but not as steering. The goal here is to recommend a lower-maintenance architecture based on battle-tested plugin systems, especially VS Code, Terraform providers, Git-style executable plugins, and language-server-style protocols.
 

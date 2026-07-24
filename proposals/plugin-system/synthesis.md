@@ -1,23 +1,23 @@
 # Plugin System Review Synthesis
 
-> Combined synthesis of independent reviews for `proposals/plugin-system.md`
+> Combined synthesis of independent reviews for `proposals/plugin-system/README.md`
 > Date: 2026-05-20
-> Sources: `proposals/plugin-system-review-*.md`
+> Sources: `proposals/review-*.md`
 
 This document consolidates the independent reviews of the Beads plugin-system
-proposal. It intentionally covers only the `plugin-system-review*.md` files. The
-separate `plugin-system-recommendation-kilo.md` is a companion proposal, not one
+proposal. It intentionally covers only the `review*.md` files. The
+separate `recommendation-kilo.md` is a companion proposal, not one
 of the review inputs synthesized here.
 
 ## Source Reviews
 
 | File | Signature |
 |---|---|
-| `plugin-system-review-claude-opus-47.md` | _Claude-Opus-4.7-high on behalf of maphew, using claude code cli_ |
-| `plugin-system-review-codex-gpt-55.md` | _codex-gpt-5.5-xhigh on behalf of maphew_ |
-| `plugin-system-review-kilo-gpt-55.md` | _kilocode-openai/gpt-5.5-xhigh on behalf of maphew_ |
-| `plugin-system-review-kilo-opus-47.md` | _kilocode-claude-opus-4.7-max on behalf of matt_ |
-| `plugin-system-review-kilo-sonnet-45.md` | _kilocode-claude-opus-latest on behalf of maphew_ |
+| `review-claude-opus-47.md` | _Claude-Opus-4.7-high on behalf of maphew, using claude code cli_ |
+| `review-codex-gpt-55.md` | _codex-gpt-5.5-xhigh on behalf of maphew_ |
+| `review-kilo-gpt-55.md` | _kilocode-openai/gpt-5.5-xhigh on behalf of maphew_ |
+| `review-kilo-opus-47.md` | _kilocode-claude-opus-4.7-max on behalf of matt_ |
+| `review-kilo-sonnet-45.md` | _kilocode-claude-opus-latest on behalf of maphew_ |
 
 ## Common Ground
 

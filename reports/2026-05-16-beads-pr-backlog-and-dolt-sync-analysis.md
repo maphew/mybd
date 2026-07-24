@@ -1,7 +1,7 @@
 # Beads PR Backlog And Dolt Sync Analysis
 
 Date: 2026-05-16  
-Scope: `gastownhall/beads` GitHub issues/PRs, local `bd-main`, `docs/PROJECT_CHARTER.md`, `proposals/plugin-system.md`  
+Scope: `gastownhall/beads` GitHub issues/PRs, local `bd-main`, `docs/PROJECT_CHARTER.md`, `proposals/plugin-system/README.md`  
 Prepared for: maphew
 
 ## Executive Summary

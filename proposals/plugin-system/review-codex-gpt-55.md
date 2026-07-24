@@ -2,7 +2,7 @@
 
 Date: 2026-05-20
 Reviewer: Codex GPT-5.5
-Scope: `proposals/plugin-system.md` only. I did not read or rely on sibling `plugin-system-*.md` files in `proposals/`.
+Scope: `proposals/plugin-system/README.md` only. I did not read or rely on sibling `plugin-system/*.md` files in `proposals/`.
 
 ## Verdict
 

@@ -2,8 +2,8 @@
 
 > Reviewer: Claude Code (Opus 4.7, high reasoning)
 > Date: 2026-05-20
-> Subject: `proposals/plugin-system.md` (Draft, dated 2026-05-13)
-> Method: Independent review. I did **not** read the other `plugin-system-*.md`
+> Subject: `proposals/plugin-system/README.md` (Draft, dated 2026-05-13)
+> Method: Independent review. I did **not** read the other `plugin-system/*.md`
 > files in this folder. I verified the proposal's claims against the beads
 > source tree at `bd-main/` (HEAD `0bf33da63`).
 

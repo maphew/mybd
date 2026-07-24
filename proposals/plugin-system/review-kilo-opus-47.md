@@ -2,7 +2,7 @@
 
 > Reviewer: Kilo (claude-opus-4.7) on behalf of matt
 > Date: 2026-05-20
-> Subject: `proposals/plugin-system.md` (dated 2026-05-13)
+> Subject: `proposals/plugin-system/README.md` (dated 2026-05-13)
 > Method: Independent review. Verified proposal claims against `bd-main/` source tree. Did NOT read other reviewer assessments in `proposals/`.
 
 ## TL;DR

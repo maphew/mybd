@@ -1,6 +1,6 @@
 # Review: Plugin System for Beads
 
-> Review of `plugin-system.md`
+> Review of `README.md`
 > Status: Maintainer/design feedback for council consideration
 > Date: 2026-05-18
 > Reviewer: Kilo Code
