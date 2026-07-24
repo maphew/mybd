@@ -147,7 +147,7 @@ while read -r item; do
   [[ -n "$preflight_out" ]] && printf '%s\n' "$preflight_out" >>"$LOG"
   if (( preflight_status != 0 )); then
     blocks="$(grep -F '[block]' <<<"$preflight_out" || true)"
-    if [[ -n "$blocks" ]] && grep -qvE '^\[block\] Base branch .+ CI is RED$' <<<"$blocks"; then
+    if [[ -n "$blocks" ]] && grep -qvE '^\[block\] Base branch .+ CI is RED(:.*)?$' <<<"$blocks"; then
       block "$bead" "$metadata" "$notes" "preflight-policy:$head" "Preflight reported a non-red-base block; needs agent judgment."
     elif [[ -n "$blocks" ]]; then
       transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"

@@ -1,26 +1,83 @@
 #!/usr/bin/env bash
+# Hand a PR's merge tail to the zero-token pr-babysit patrol.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; REPO="gastownhall/beads"; METHOD="squash"; FLAKE_RERUN="allowed"; PR=""; BEAD_OVERRIDE=""
-usage() { echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]" >&2; }
-while [[ $# -gt 0 ]]; do case "$1" in --repo|--method|--bead) [[ $# -ge 2 ]] || { usage; exit 2; }; case "$1" in --repo) REPO="$2";; --method) METHOD="$2";; *) BEAD_OVERRIDE="$2";; esac; shift 2;; --no-flake-rerun) FLAKE_RERUN=no; shift;; -*) usage; exit 2;; *) [[ -z "$PR" ]] || { usage; exit 2; }; PR="$1"; shift;; esac; done
-[[ "$PR" =~ ^[1-9][0-9]*$ && "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$METHOD" =~ ^(squash|merge|rebase)$ && ( -z "$BEAD_OVERRIDE" || "$BEAD_OVERRIDE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ) ]] || { usage; exit 2; }
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="gastownhall/beads"
+METHOD="squash"
+FLAKE_RERUN="allowed"
+PR=""
+BEAD_OVERRIDE=""
+
+usage() {
+  echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]" >&2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      REPO="$2"; shift 2 ;;
+    --method)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      METHOD="$2"; shift 2 ;;
+    --bead)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      BEAD_OVERRIDE="$2"; shift 2 ;;
+    --no-flake-rerun) FLAKE_RERUN="no"; shift ;;
+    -*) usage; exit 2 ;;
+    *)
+      [[ -z "$PR" ]] || { usage; exit 2; }
+      PR="$1"; shift ;;
+  esac
+done
+
+[[ "$PR" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { usage; exit 2; }
+[[ "$METHOD" =~ ^(squash|merge|rebase)$ ]] || { usage; exit 2; }
+[[ -z "$BEAD_OVERRIDE" || "$BEAD_OVERRIDE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+
 cd "$ROOT" || exit 1
 pr_json="$(gh pr view "$PR" --repo "$REPO" --json title,state 2>/dev/null)" || { echo "cannot read PR" >&2; exit 1; }
-title="$(jq -er '.title | strings | select(length > 0)' <<<"$pr_json")" || { echo "malformed PR data" >&2; exit 1; }; [[ "$(jq -r '.state // empty' <<<"$pr_json")" == OPEN ]] || { echo "PR is not OPEN" >&2; exit 1; }
-canonical="gh:$REPO#$PR"; legacy="gh-pr-$PR"; ids=""
-if [[ -z "$BEAD_OVERRIDE" ]]; then
-  ids="$(bd list --json --external-ref "$canonical" 2>/dev/null | jq -r '.[].id // empty')"
-  [[ "$REPO" == gastownhall/beads ]] && ids+=$'\n'"$(bd list --json --external-ref "$legacy" 2>/dev/null | jq -r '.[].id // empty')"
-  ids="$(sort -u <<<"$ids" | sed '/^$/d')"; count="$(wc -l <<<"$ids" | tr -d ' ')"
-  (( count <= 1 )) || { echo "ambiguous merge-tail beads for $canonical" >&2; exit 1; }
-  bead="$ids"
-else
-  bead="$BEAD_OVERRIDE"; selected="$(bd show "$bead" --json 2>/dev/null)" || { echo "cannot inspect bead $bead" >&2; exit 1; }
+title="$(jq -er '.title | strings | select(length > 0)' <<<"$pr_json")" || { echo "malformed PR data" >&2; exit 1; }
+[[ "$(jq -r '.state // empty' <<<"$pr_json")" == "OPEN" ]] || { echo "PR is not OPEN" >&2; exit 1; }
+
+canonical="gh:$REPO#$PR"
+legacy="gh-pr-$PR"
+if [[ -n "$BEAD_OVERRIDE" ]]; then
+  bead="$BEAD_OVERRIDE"
+  selected="$(bd show "$bead" --json 2>/dev/null)" || { echo "cannot inspect bead $bead" >&2; exit 1; }
   selected_ref="$(jq -er '.[0].external_ref // ""' <<<"$selected")" || { echo "malformed bead $bead" >&2; exit 1; }
-  if [[ -n "$selected_ref" && "$selected_ref" != "$canonical" && ! ( "$REPO" == gastownhall/beads && "$selected_ref" == "$legacy" ) ]]; then echo "bead $bead belongs to $selected_ref, not $canonical" >&2; exit 1; fi
+  if [[ -n "$selected_ref" && "$selected_ref" != "$canonical" && ! ( "$REPO" == "gastownhall/beads" && "$selected_ref" == "$legacy" ) ]]; then
+    echo "bead $bead belongs to $selected_ref, not $canonical" >&2
+    exit 1
+  fi
+else
+  matches="$(bd list --json --external-ref "$canonical" 2>/dev/null | jq -r '.[].id // empty')"
+  if [[ "$REPO" == "gastownhall/beads" ]]; then
+    matches+=$'\n'"$(bd list --json --external-ref "$legacy" 2>/dev/null | jq -r '.[].id // empty')"
+  fi
+  matches="$(sort -u <<<"$matches" | sed '/^$/d')"
+  match_count="$(wc -l <<<"$matches" | tr -d ' ')"
+  (( match_count <= 1 )) || { echo "ambiguous merge-tail beads for $canonical" >&2; exit 1; }
+  bead="$matches"
 fi
-if [[ -z "$bead" ]]; then bead="$(bd create --title="$title" --description="Upstream PR: https://github.com/$REPO/pull/$PR — merge tail handed to pr-babysit patrol." --type=task --priority=2 --external-ref="$canonical" --json | jq -r '.id // .[0].id')"; [[ -n "$bead" ]] || exit 1; fi
+
+if [[ -z "$bead" ]]; then
+  bead="$(bd create --title="$title" --description="Upstream PR: https://github.com/$REPO/pull/$PR — merge tail handed to pr-babysit patrol." --type=task --priority=2 --external-ref="$canonical" --json | jq -r '.id // .[0].id')"
+  [[ -n "$bead" ]] || exit 1
+fi
+
 bd update "$bead" --claim --add-label merge-when-green --external-ref "$canonical" \
-  --set-metadata "pr_babysit_repo=$REPO" --set-metadata "pr_babysit_pr=$PR" --set-metadata "pr_babysit_method=$METHOD" --set-metadata "pr_babysit_flake_rerun=$FLAKE_RERUN" \
-  --set-metadata pr_babysit_last_transition= --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hand off here." >/dev/null
+  --set-metadata "pr_babysit_repo=$REPO" \
+  --set-metadata "pr_babysit_pr=$PR" \
+  --set-metadata "pr_babysit_method=$METHOD" \
+  --set-metadata "pr_babysit_flake_rerun=$FLAKE_RERUN" \
+  --set-metadata pr_babysit_last_transition= \
+  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hand off here." \
+  >/dev/null
+
 echo "handed off: $REPO#$PR -> bead $bead"
+if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
+  echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
+fi

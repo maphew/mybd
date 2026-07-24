@@ -211,7 +211,7 @@ stable_root="$(cd "$(dirname "$(git -C "$ROOT" rev-parse --git-common-dir)")" &&
 XDG_CONFIG_HOME="$install_config" "$ROOT/scripts/install-pr-babysit" >/dev/null
 grep -Fq "ExecStart=\"$stable_root/scripts/pr-babysit\"" "$install_config/systemd/user/pr-babysit.service" || fail "installer did not write stable root"
 grep -q '^TimeoutStartSec=10min$' "$install_config/systemd/user/pr-babysit.service" || fail "installed service lacks timeout"
-grep -q '^verify ' "$FAKE_SYSTEMD_ANALYZE_LOG" || fail "installer did not validate generated service"
+grep -Eq '^verify .+\.service$' "$FAKE_SYSTEMD_ANALYZE_LOG" || fail "installer did not validate a .service-shaped temporary file"
 
 # A nonzero gh status, even with valid JSON, is never trusted.  The second case
 # verifies the post-merge read has the same requirement.
@@ -243,7 +243,7 @@ export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/x
 [[ "$(count 'run rerun' "$FAKE_GH_LOG")" == 0 ]] || fail "legacy spent rerun retried"
 
 # Red-base-only failures retain the bead; a policy block becomes actionable.
-reset red-base "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED'
+reset red-base "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED: Main failed at 2026-07-24T00:00:00Z'
 run_patrol; [[ "$(count 'unclaim' "$FAKE_BD_LOG")" == 0 ]] || fail "red base blocked bead"
 reset policy-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge conflict detected'
 run_patrol; grep -q '^unclaim ' "$FAKE_BD_LOG" || fail "policy block did not unclaim"
