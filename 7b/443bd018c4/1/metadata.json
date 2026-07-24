@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "7b443bd018c4",
+  "session_id": "d41b072b-60a1-4514-9833-47e37aa7b046",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T17:25:16.773205466Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-24-mybd-beads-state-sweep.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "4f1a92af26bb",
+  "checkpoint_transcript_start": 155,
+  "transcript_lines_at_start": 155,
+  "compact_transcript_start": 32,
+  "token_usage": {
+    "input_tokens": 42,
+    "cache_creation_tokens": 31846,
+    "cache_read_tokens": 2497837,
+    "output_tokens": 15414,
+    "api_call_count": 21
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-24T17:25:16.727156563Z",
+    "agent_lines": 37,
+    "agent_removed": 2,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 37,
+    "total_lines_changed": 39,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
