@@ -39,6 +39,19 @@ Easy wins can be handled automatically during a PR review run and by recurring p
 
 Needs-review PRs require a deeper agent review and a concrete report. The maintainer can summarize those reports or inspect the agent sessions directly.
 
+### Sweep by author, not by age
+
+When working the open-PR queue, prefer **author-clustered sweeps**: pick one contributor, process all of their open PRs in a single session, and leave them a single consolidated picture (what merged, what was fixed on their branches, what needs their judgment, what was retired and why).
+
+Why this beats oldest-first or one-at-a-time:
+
+- One context load covers the author's style, recurring themes, and cross-PR dependencies — their PRs often share branches-behind-main problems, overlapping files, or one design thread.
+- The contributor gets one coherent conversation instead of scattered verdicts, and follow-ups concentrate into one tracking bead (e.g. mybd-5bz2).
+- Retirements land better when paired with merges of the same author's other work — attribution and goodwill are preserved in context.
+- It converts the queue into a finite list of named clusters, which makes progress visible and delegable (one sweep bead per author).
+
+Reference runs: `reports/2026-07-23-coffeegoddd-pr-sweep.md` (6 PRs: 2 merged with maintainer fixes, 3 retired with re-cut requirements, follow-ups in one bead) and the johnzook triage (`reports/johnzook-pr-triage-2026-07-03.md`). Pick the next cluster by open-PR count and staleness (`gh pr list --repo gastownhall/beads --state open --json author | jq ...`).
+
 ## Outcomes
 
 Use these recommendations after review:
