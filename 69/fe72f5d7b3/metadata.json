@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "69fe72f5d7b3",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "PR_MAINTAINER_GUIDELINES.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/69/fe72f5d7b3/0/metadata.json",
+      "transcript": "/69/fe72f5d7b3/0/full.jsonl",
+      "compact_transcript": "/69/fe72f5d7b3/0/transcript.jsonl",
+      "content_hash": "/69/fe72f5d7b3/0/content_hash.txt",
+      "prompt": "/69/fe72f5d7b3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 4273,
+    "cache_read_tokens": 673977,
+    "output_tokens": 2689,
+    "api_call_count": 5
+  }
+}
