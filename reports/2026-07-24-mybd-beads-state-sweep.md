@@ -88,3 +88,38 @@ Worst:
 - Net-new features into an unreviewed 30-PR queue — review beats produce this week.
 - Anything giving sessions merge authority or parallel bd writes — the #4942
   lesson is three days old.
+
+## Outcome: drift-reconciliation sweep executed (mybd-2avs, same session)
+
+Workflow `wf_0905e1de-bcd`: 52 agents (~2.1M subagent tokens over the 200k
+target — the self-enforced guard only checks between stages; noted for future
+scripts), 9 checkers over all 58 in_progress beads using gh + bd-main git only
+(zero agent bd calls), adversarial verification of all 42 proposed closures,
+plus a deep-dive on mybd-zgxf. Applied serially via bd afterward.
+
+**In-progress: 58 → 6.** All six survivors verified active: mybd-2avs (this
+sweep), mybd-nfrv (pr-babysit hardening, fresh commit in worktree), mybd-9rgr
+(#4702 merge tail, patrol-owned), mybd-5bz2 (coffeegoddd follow-ups),
+mybd-hr4t.3 (tracking duncan4123's open upstream PR), mybd-0bxs (open PR #4350,
+green CI 07-23).
+
+- **42 closed**: 40 adversarially confirmed (mostly landed via #4878, #4875,
+  #5004, the plugin-docs batch #4969-#4976, import fixes #4963/#4964, and the
+  07-23/24 be-* flush) + mybd-lb4i (verifier tooling gap, orchestrator
+  confirmed vs #4976) + mybd-vxu3 (dependabot batch closed with corrected
+  note: the 12th PR #4702's tail explicitly handed to mybd-9rgr).
+- **10 unclaimed** back to the ready pool: 6 dead claims (ds4v, j5ed, 9rro,
+  sk7e, 8chd.1, 8chd.3) + 4 human-gated items also labeled `human` with notes
+  (k8ic npm-deprecate credentials, 2yok publication venue, r5u2 CreateIssue
+  overwrite policy, hli9 re-scope-or-close).
+- **mybd-zgxf downgraded P0→P2 + `human`**: gh#4657 is *misdiagnosed, not
+  unfixed* — `--claim` has been a hard CAS for distinct actors since
+  GH-3570/#4537 (conditional UPDATE + RowsAffected + row_lock commit conflict,
+  regression-tested exactly-one-winner); the reporter's load test ran all
+  callers as the same actor, which is documented idempotent success (#2821).
+  #5006/#5008 are adjacent hardening, not this fix. Next step is a human-gated
+  tri-submit upstream reply requesting a distinct-actor re-test.
+- **Ops lesson** (saved as bd memory `claim-actor-mismatch`): old claims are
+  held by actor "matt wilkie" while sessions now act as "maphew"; close/unclaim
+  hard-fail cross-actor, so the sweep's 45 guarded ops needed `--force`. If new
+  claims still record the old actor string, config drift is ongoing.
