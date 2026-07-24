@@ -3,8 +3,10 @@
   "checkpoint_id": "feca43b6ac74",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
-  "files_touched": null,
+  "checkpoints_count": 3,
+  "files_touched": [
+    "reports/2026-07-24-ecuthiell-pr-sweep.md"
+  ],
   "sessions": [
     {
       "metadata": "/fe/ca43b6ac74/0/metadata.json",
@@ -12,13 +14,20 @@
       "compact_transcript": "/fe/ca43b6ac74/0/transcript.jsonl",
       "content_hash": "/fe/ca43b6ac74/0/content_hash.txt",
       "prompt": "/fe/ca43b6ac74/0/prompt.txt"
+    },
+    {
+      "metadata": "/fe/ca43b6ac74/1/metadata.json",
+      "transcript": "/fe/ca43b6ac74/1/full.jsonl",
+      "compact_transcript": "/fe/ca43b6ac74/1/transcript.jsonl",
+      "content_hash": "/fe/ca43b6ac74/1/content_hash.txt",
+      "prompt": "/fe/ca43b6ac74/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 54,
-    "cache_creation_tokens": 100097,
-    "cache_read_tokens": 2382652,
-    "output_tokens": 30018,
-    "api_call_count": 27
+    "input_tokens": 113,
+    "cache_creation_tokens": 141049,
+    "cache_read_tokens": 7450583,
+    "output_tokens": 48827,
+    "api_call_count": 57
   }
 }
