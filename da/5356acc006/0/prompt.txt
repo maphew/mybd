@@ -1,0 +1,13 @@
+@reports/ naming convention is all over place. standardise on date first so they sort properly; convert the .html to .md and remove the .html; remove the .json as that's data and not reporting;
+
+---
+
+yeah, remove the .txt, we don't need it anymore. sweep other folders to see if there are other organisation style things which could be improved
+
+---
+
+yes collapse plugin-system. and i agree and thanks on the rest. any other housekeeping to consider?
+
+---
+
+yes, clean (1) up per recommends. (2) what's up with those. (3) i think pr-5004 was been merged overnight
