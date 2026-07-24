@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
-# Hand a PR's merge tail to the pr-babysit patrol instead of watching CI in-session.
-#
-# Creates-or-claims the tracking bead for the PR, labels it merge-when-green,
-# and records the merge policy in the bead notes. The pr-babysit timer (see
-# scripts/pr-babysit) then owns the merge: sessions that run this script must
-# NOT merge, close, or re-run checks on the PR afterwards.
-#
-# Usage: scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
-#
-# When several beads share the PR's external ref (e.g. a tracking bead plus a
-# follow-ups bead), pass --bead to name the merge-tail bead explicitly; the
-# ref lookup otherwise takes the first match.
+# Hand a PR's merge tail to the pr-babysit patrol instead of watching CI.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,36 +9,56 @@ FLAKE_RERUN="allowed"
 PR=""
 BEAD_OVERRIDE=""
 
+usage() {
+  echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]" >&2
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo) REPO="$2"; shift 2 ;;
-    --method) METHOD="$2"; shift 2 ;;
-    --bead) BEAD_OVERRIDE="$2"; shift 2 ;;
+    --repo) [[ $# -ge 2 ]] || { usage; exit 2; }; REPO="$2"; shift 2 ;;
+    --method) [[ $# -ge 2 ]] || { usage; exit 2; }; METHOD="$2"; shift 2 ;;
+    --bead) [[ $# -ge 2 ]] || { usage; exit 2; }; BEAD_OVERRIDE="$2"; shift 2 ;;
     --no-flake-rerun) FLAKE_RERUN="no"; shift ;;
-    -*) echo "unknown flag: $1" >&2; exit 2 ;;
-    *) PR="$1"; shift ;;
+    -*) echo "unknown flag: $1" >&2; usage; exit 2 ;;
+    *) [[ -z "$PR" ]] || { echo "only one PR number is allowed" >&2; usage; exit 2; }; PR="$1"; shift ;;
   esac
 done
-[[ -n "$PR" ]] || { echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method m] [--no-flake-rerun]" >&2; exit 2; }
+[[ "$PR" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "invalid --repo: $REPO" >&2; exit 2; }
+[[ "$METHOD" =~ ^(squash|merge|rebase)$ ]] || { echo "invalid --method: $METHOD" >&2; exit 2; }
+[[ -z "$BEAD_OVERRIDE" || "$BEAD_OVERRIDE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "invalid --bead: $BEAD_OVERRIDE" >&2; exit 2; }
 
 cd "$ROOT"
+pr_json="$(gh pr view "$PR" --repo "$REPO" --json title,state 2>/dev/null)" || { echo "cannot read PR $PR on $REPO" >&2; exit 1; }
+title="$(jq -er '.title | strings | select(length > 0)' <<<"$pr_json")" || { echo "malformed PR data for $REPO#$PR" >&2; exit 1; }
+state="$(jq -r '.state // empty' <<<"$pr_json")"
+[[ "$state" == "OPEN" ]] || { echo "PR $REPO#$PR is $state, not OPEN; refusing handoff" >&2; exit 1; }
 
-title="$(gh pr view "$PR" --repo "$REPO" --json title,state --jq '.title')" || { echo "cannot read PR $PR on $REPO" >&2; exit 1; }
-
-# Find an existing bead under either external-ref convention.
+# Canonical refs are repository-qualified.  The legacy shorthand is only ever
+# searched for the historical default repository, preventing same-number PRs
+# in other repositories from being adopted accidentally.
 bead="$BEAD_OVERRIDE"
-[[ -n "$bead" ]] || bead="$(bd list --json --external-ref "gh-pr-$PR" 2>/dev/null | jq -r '.[0].id // empty')"
 [[ -n "$bead" ]] || bead="$(bd list --json --external-ref "gh:$REPO#$PR" 2>/dev/null | jq -r '.[0].id // empty')"
-
+if [[ -z "$bead" && "$REPO" == "gastownhall/beads" ]]; then
+  bead="$(bd list --json --external-ref "gh-pr-$PR" 2>/dev/null | jq -r '.[0].id // empty')"
+fi
 if [[ -z "$bead" ]]; then
   bead="$(bd create --title="$title" \
     --description="Upstream PR: https://github.com/$REPO/pull/$PR — merge tail handed to pr-babysit patrol." \
     --type=task --priority=2 --external-ref="gh:$REPO#$PR" --json | jq -r '.id // .[0].id')"
+  [[ -n "$bead" ]] || { echo "could not create merge-tail bead" >&2; exit 1; }
   echo "created bead $bead"
 fi
 
 bd update "$bead" --claim --add-label merge-when-green \
-  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hands off here." >/dev/null
+  --set-metadata "pr_babysit_repo=$REPO" \
+  --set-metadata "pr_babysit_pr=$PR" \
+  --set-metadata "pr_babysit_method=$METHOD" \
+  --set-metadata "pr_babysit_flake_rerun=$FLAKE_RERUN" \
+  --set-metadata pr_babysit_rerun_head= \
+  --set-metadata pr_babysit_last_transition= \
+  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hand off here." \
+  >/dev/null
 
 echo "handed off: $REPO#$PR -> bead $bead (label merge-when-green, method=$METHOD, flake_rerun=$FLAKE_RERUN)"
 if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then

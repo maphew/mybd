@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Hermetic behavioural tests for pr-babysit and pr-handoff.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+FAKE_BIN="$TMP/bin"
+mkdir -p "$FAKE_BIN"
+
+cat >"$FAKE_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$FAKE_GH_LOG"
+case "${1:-} ${2:-}" in
+  "pr view")
+    if [[ -n "${FAKE_PR_BODY:-}" ]]; then printf '%s\n' "$FAKE_PR_BODY"; exit "${FAKE_PR_EXIT:-0}"; fi
+    state="${FAKE_PR_STATE:-OPEN}"
+    [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
+    printf '{"title":"Example PR","state":"%s","headRefOid":"%s"}\n' "$state" "${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    ;;
+  "pr checks") printf '%s\n' "${FAKE_CHECKS:-[]}"; exit "${FAKE_CHECKS_EXIT:-0}" ;;
+  "pr merge") touch "$FAKE_MERGE_MARK"; exit "${FAKE_MERGE_EXIT:-0}" ;;
+  "run rerun") exit "${FAKE_RERUN_EXIT:-0}" ;;
+  *) echo "unexpected gh invocation: $*" >&2; exit 64 ;;
+esac
+EOF
+cat >"$FAKE_BIN/bd" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$FAKE_BD_LOG"
+case "${1:-}" in
+  list)
+    if [[ " $* " == *" --label "* ]]; then cat "$FAKE_QUEUE"; else printf '[]\n'; fi
+    ;;
+  create) printf '{"id":"mybd-created"}\n' ;;
+  update)
+    bead="$2"; shift 2
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --set-metadata)
+          pair="$2"; key="${pair%%=*}"; value="${pair#*=}"
+          qtmp="$FAKE_QUEUE.tmp"
+          jq --arg id "$bead" --arg key "$key" --arg value "$value" \
+            'map(if .id == $id then .metadata = ((.metadata // {}) + {($key): $value}) else . end)' \
+            "$FAKE_QUEUE" >"$qtmp"
+          mv -f "$qtmp" "$FAKE_QUEUE"
+          shift 2 ;;
+        --append-notes) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    ;;
+  close|unclaim) ;;
+  *) echo "unexpected bd invocation: $*" >&2; exit 64 ;;
+esac
+EOF
+cat >"$FAKE_BIN/preflight" <<'EOF'
+#!/usr/bin/env bash
+exit "${FAKE_PREFLIGHT_EXIT:-0}"
+EOF
+cat >"$FAKE_BIN/systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemctl"
+
+export PATH="$FAKE_BIN:$PATH"
+export PR_BABYSIT_PREFLIGHT="$FAKE_BIN/preflight"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
+
+reset() {
+  local name="$1" metadata="${2-}" notes="${3:-}"
+  [[ -n "$metadata" ]] || metadata='{}'
+  CASE="$TMP/$name"; mkdir -p "$CASE"
+  export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged"
+  export XDG_STATE_HOME="$CASE/state"
+  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_POST_MERGE_STATE
+  export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  jq -cn --arg notes "$notes" --argjson metadata "$metadata" \
+    '[{id:"mybd-test", external_ref:"gh:gastownhall/beads#123", notes:$notes, metadata:$metadata}]' >"$FAKE_QUEUE"
+  : >"$FAKE_BD_LOG"; : >"$FAKE_GH_LOG"
+}
+
+run_patrol() { "$ROOT/scripts/pr-babysit"; }
+policy='{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed"}'
+
+# Pending checks wait and do not attempt a merge.
+reset pending "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""}]'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "pending checks merged"
+
+# A successful rerun is recorded once per exact head SHA.
+reset rerun "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/gastownhall/beads/actions/runs/42/job"}]'
+run_patrol; run_patrol
+[[ "$(count 'run rerun' "$FAKE_GH_LOG")" == 1 ]] || fail "rerun was not limited to one per head"
+[[ "$(jq -r '.[0].metadata.pr_babysit_rerun_head' "$FAKE_QUEUE")" == "$FAKE_HEAD" ]] || fail "successful rerun head was not recorded"
+
+# A changed head receives its own rerun budget.
+reset head-change '{"pr_babysit_flake_rerun":"allowed","pr_babysit_rerun_head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+export FAKE_HEAD=cccccccccccccccccccccccccccccccccccccccc
+export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/gastownhall/beads/actions/runs/43/job"}]'
+run_patrol
+[[ "$(count 'run rerun' "$FAKE_GH_LOG")" == 1 ]] || fail "head change did not reset rerun budget"
+
+# Direct green merges are pinned to the structured head and close only on MERGED.
+reset green "$policy"
+export FAKE_HEAD=dddddddddddddddddddddddddddddddddddddddd
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+grep -q -- "--match-head-commit $FAKE_HEAD" "$FAKE_GH_LOG" || fail "merge did not pin head SHA"
+grep -q '^close ' "$FAKE_BD_LOG" || fail "merged PR did not close bead"
+
+# gh may queue a merge while returning success; leave the bead under patrol.
+reset queued-merge "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_POST_MERGE_STATE=OPEN
+run_patrol
+[[ "$(count '^close ' "$FAKE_BD_LOG")" == 0 ]] || fail "open queued merge closed bead"
+grep -q 'merge-queued:' "$FAKE_BD_LOG" || fail "queued merge was not transitioned"
+
+# Bad PR data, unavailable checks, and unknown buckets all fail closed.
+reset malformed-pr "$policy"
+export FAKE_PR_BODY='not json'
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "malformed PR data merged"
+reset unavailable-checks "$policy"
+export FAKE_CHECKS='not json' FAKE_CHECKS_EXIT=1
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "unavailable checks merged"
+reset malformed-checks "$policy"
+export FAKE_CHECKS='not json'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "malformed checks merged"
+reset unknown-bucket "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"mystery","link":""}]'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "unknown check bucket merged"
+
+# Preflight blocks remain queued (the exit code cannot identify a red base).
+reset preflight "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1
+run_patrol; run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "preflight block merged"
+[[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "preflight annotations were not idempotent"
+
+# Waiting transitions are also idempotent across timer invocations.
+reset idempotent "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""}]'
+run_patrol; run_patrol
+[[ "$(count --append-notes "$FAKE_BD_LOG")" == 1 ]] || fail "waiting annotations were not idempotent"
+
+# Note-only handoffs from before pr_babysit_* metadata remain supported.
+reset legacy '{}' 'method=rebase flake_rerun=allowed'
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+grep -q -- '--rebase' "$FAKE_GH_LOG" || fail "legacy note-only method was not honored"
+
+# Handoff validates arguments and writes namespaced policy metadata.  A
+# non-default repository must never query the legacy gh-pr-N reference.
+if "$ROOT/scripts/pr-handoff" 12 --repo invalid >/dev/null 2>&1; then
+  fail "handoff accepted an invalid repository"
+else
+  status=$?
+  [[ "$status" == 2 ]] || fail "invalid handoff arguments returned $status, not 2"
+fi
+reset handoff '{}'
+"$ROOT/scripts/pr-handoff" 123 --repo owner/other --method rebase >/dev/null
+grep -q 'pr_babysit_repo=owner/other' "$FAKE_BD_LOG" || fail "handoff did not write policy metadata"
+! grep -q 'gh-pr-123' "$FAKE_BD_LOG" || fail "handoff used legacy reference for another repository"
+
+# Installation substitutes the real checkout path and leaves a finite patrol
+# timeout in the generated user service.
+install_config="$TMP/install-config"
+XDG_CONFIG_HOME="$install_config" "$ROOT/scripts/install-pr-babysit" >/dev/null
+grep -Fq "ExecStart=\"$ROOT/scripts/pr-babysit\"" "$install_config/systemd/user/pr-babysit.service" || fail "installer did not write actual root"
+grep -q '^TimeoutStartSec=10min$' "$install_config/systemd/user/pr-babysit.service" || fail "installed service lacks timeout"
+
+echo "pr-babysit behavioural tests: PASS"
