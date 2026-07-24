@@ -2,7 +2,7 @@
 
 Session: claude-code-fable-5 orchestrator; haiku freshness scouts (workflow), sonnet-5 builders,
 opus-4-8 reviewers. Third mybd session today; built on the earlier ready-sweep
-(reports/ready-sweep-and-fixmerge-2026-07-05.md), which had already swept 16 ready beads, so this
+(reports/2026-07-05-ready-sweep-and-fixmerge.md), which had already swept 16 ready beads, so this
 loop targeted the un-swept remainder.
 
 ## Freshness sweep (workflow `ready-freshness-phase-a`, 6 haiku scouts, ~202k haiku tokens)

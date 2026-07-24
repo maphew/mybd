@@ -97,5 +97,5 @@ android/Termux (#3538), and the release pipeline collapses to plain cross-builds
 ---
 
 *Drafted by _claude-opus-4-8-max on behalf of maphew_. Full analysis + repro:
-mybd `reports/cgo-enabled-build-divergence-root-cause-and-solution-2026-05-29`,
+mybd `reports/2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution`,
 experiment branch `experiment/cgo-purego-shim`.*

@@ -3,7 +3,7 @@
 Owner request: sweep mybd and beads activity over the last few days and recommend
 directions for the next agent batches. Sources: mybd git log, upstream
 gastownhall/beads PRs/CI (gh), bd database (serial reads), pr-babysit patrol log,
-reports/coffeegoddd-pr-sweep-2026-07-23.md.
+reports/2026-07-23-coffeegoddd-pr-sweep.md.
 
 ## TL;DR
 
@@ -27,7 +27,7 @@ which upstream may have just fixed out from under us.
   #5003 and then #4877 (2026-07-24T16:52Z) unattended — preflight, green checks,
   merge, bead closed, zero model tokens. Role split (sessions produce, patrol
   merges) held.
-- **coffeegoddd sweep** (mybd-lw0b, see coffeegoddd-pr-sweep-2026-07-23.md): 2
+- **coffeegoddd sweep** (mybd-lw0b, see 2026-07-23-coffeegoddd-pr-sweep.md): 2
   merged with maintainer fixes, 3 ancient PRs retired with attribution + re-cut
   requirements, follow-ups tracked in mybd-5bz2. Cross-vendor review again caught
   misses in both directions.

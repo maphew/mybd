@@ -5,7 +5,7 @@
 - **Upstream reference**: `gastownhall/beads@99ed06b6fb7ce3deedaaee2fbbdf61e37c66883f` (bd-main fast-forwarded from `e1e97e6c5` at assessment start)
 - **Scope**: read-only review of agent-facing docs (`AGENTS.md`, `AGENT_INSTRUCTIONS.md`, `CLAUDE.md`, `PR_MAINTAINER_GUIDELINES.md`, `docs/METADATA.md`, `docs/PROJECT_CHARTER.md`, integration docs, `internal/templates/agents/` and `cmd/bd/setup/` generated content)
 - **Method**: staged per bead metadata - two parallel read-only explorer sweeps, direct verification of every load-bearing claim, then upstream overlap scan (`scripts/pr-preflight.sh` plus issue search)
-- **Prior art**: `reports/agents-upstream-tuning-comparison-2026-05-28.md`, gastownhall/beads#3617 (merged), gastownhall/beads#3541 (closed)
+- **Prior art**: `reports/2026-05-28-agents-upstream-tuning-comparison.md`, gastownhall/beads#3617 (merged), gastownhall/beads#3541 (closed)
 
 ## Executive Summary
 

@@ -7,7 +7,7 @@
 > (status `diverged`, behind by 411-1006 commits). They are ordinary stale PRs that can be rebased
 > normally - none require reimplementation. The per-PR *classifications* (superseded / stale / live)
 > were verified against main's content and remain useful; the "cannot be rebased" framing does not.
-> See [reroot-investigation-2026-07-05.md](reroot-investigation-2026-07-05.md).
+> See [2026-07-05-reroot-investigation.md](2026-07-05-reroot-investigation.md).
 
 Full triage of **70 open PRs** on gastownhall/beads that are **orphaned by the late-May-2026 re-root of `main`** (no common ancestor; cannot be rebased, only reimplemented or `rebase --onto`). Advisory only - **nothing was closed, merged, or commented** on these PRs. Beads: mybd-bys5 (this inventory), mybd-q1c9 (re-root cause investigation), mybd-y7u0 / mybd-w15y (the two review sweeps that classified 19 of these in depth).
 

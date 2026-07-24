@@ -118,7 +118,7 @@ that ordering drift — not CGO — is what is currently failing CI on **#4243**
 > `Error 1105: column "depends_on_id" could not be found` when inserting
 > dependency edges — the committed `bd` 1.0.4-dev binary against the migrated
 > 1.0.5 dependencies-split schema. Another flavor of build/version drift; tracked
-> separately (see `reports/release-gate-1.0.5-dependencies-migration-2026-05-28`).
+> separately (see `reports/2026-05-28-release-gate-1.0.5-dependencies-migration`).
 
 ## 4. The reframe
 

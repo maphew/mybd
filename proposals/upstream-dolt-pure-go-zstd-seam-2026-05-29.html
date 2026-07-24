@@ -44,6 +44,6 @@
 <h2>What beads gets</h2>
 <p>A single pure-Go <code>CGO_ENABLED=0</code> build erases the <code>cgo/!cgo</code> split entirely: embedded + federation always present (no doc drift, #4203), the ~100 cgo-only test files always run, no pre-commit typecheck trap (#3402), embedded mode on android/Termux (#3538), and the release pipeline collapses to plain cross-builds (no zig sysroots, mingw/clang cross-toolchains, or <code>verify-cgo</code> hooks).</p>
 <hr>
-<p class="sig"><em>Drafted by <em>claude-opus-4-8-max on behalf of maphew</em>. Full analysis + repro: mybd <code>reports/cgo-enabled-build-divergence-root-cause-and-solution-2026-05-29</code>, experiment branch <code>experiment/cgo-purego-shim</code>.</em></p>
+<p class="sig"><em>Drafted by <em>claude-opus-4-8-max on behalf of maphew</em>. Full analysis + repro: mybd <code>reports/2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution</code>, experiment branch <code>experiment/cgo-purego-shim</code>.</em></p>
 </body>
 </html>

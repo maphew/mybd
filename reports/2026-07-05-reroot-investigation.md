@@ -54,7 +54,7 @@ premise of mybd-ufzk (orphan disposition).
 ## Remediation done in this session
 
 - `bd-main` unshallowed via `git fetch --unshallow upstream` (full history restored locally).
-- Erratum notice added to `reports/orphaned-pr-inventory-2026-07-05.md`.
+- Erratum notice added to `reports/2026-07-05-orphaned-pr-inventory.md`.
 - mybd-q1c9 closed with these findings; correction comment added to mybd-ufzk.
 
 ## Impact on related work

@@ -1,8 +1,8 @@
 # Orphan-band disposition decision - 2026-07-05 (bead mybd-ufzk)
 
 The shed-vs-salvage decision on the 54 still-open PRs from the former "orphaned" band
-(inventory: [orphaned-pr-inventory-2026-07-05.md](orphaned-pr-inventory-2026-07-05.md), premise
-corrected by [reroot-investigation-2026-07-05.md](reroot-investigation-2026-07-05.md): these are
+(inventory: [2026-07-05-orphaned-pr-inventory.md](2026-07-05-orphaned-pr-inventory.md), premise
+corrected by [2026-07-05-reroot-investigation.md](2026-07-05-reroot-investigation.md): these are
 ordinary stale PRs, 411-1006 commits behind, all with valid merge-bases).
 
 ## Decision: salvage the band. Zero new closes.

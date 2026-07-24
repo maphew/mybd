@@ -1,6 +1,6 @@
 # Is Dolt "a driver" to beads — and if so, why does it live inside the beads repo?
 
-**Question owner:** maphew · **Related beads:** mybd-ethh (enforcement follow-up), mybd-t7mk (CGO epic) · **Related report:** [cgo-enabled-build-divergence-root-cause-and-solution-2026-05-29.md](cgo-enabled-build-divergence-root-cause-and-solution-2026-05-29.md) · **Date:** 2026-05-28 · **Status:** analysis complete; recommendation = do **not** split into a separate git repo; cheap mechanical-enforcement option filed as mybd-ethh.
+**Question owner:** maphew · **Related beads:** mybd-ethh (enforcement follow-up), mybd-t7mk (CGO epic) · **Related report:** [2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution.md](2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution.md) · **Date:** 2026-05-28 · **Status:** analysis complete; recommendation = do **not** split into a separate git repo; cheap mechanical-enforcement option filed as mybd-ethh.
 
 ## TL;DR
 
