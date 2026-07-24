@@ -3,7 +3,7 @@
   "checkpoint_id": "d5f8c7ffb533",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 5,
+  "checkpoints_count": 6,
   "files_touched": [
     "reports/coffeegoddd-pr-sweep-2026-07-23.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/d5/f8c7ffb533/1/transcript.jsonl",
       "content_hash": "/d5/f8c7ffb533/1/content_hash.txt",
       "prompt": "/d5/f8c7ffb533/1/prompt.txt"
+    },
+    {
+      "metadata": "/d5/f8c7ffb533/2/metadata.json",
+      "transcript": "/d5/f8c7ffb533/2/full.jsonl",
+      "compact_transcript": "/d5/f8c7ffb533/2/transcript.jsonl",
+      "content_hash": "/d5/f8c7ffb533/2/content_hash.txt",
+      "prompt": "/d5/f8c7ffb533/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 269524,
-    "cache_creation_tokens": 108929,
-    "cache_read_tokens": 18686844,
-    "output_tokens": 75164,
-    "api_call_count": 156
+    "input_tokens": 269598,
+    "cache_creation_tokens": 215406,
+    "cache_read_tokens": 21985774,
+    "output_tokens": 116569,
+    "api_call_count": 193
   }
 }
