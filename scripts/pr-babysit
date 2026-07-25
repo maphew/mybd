@@ -59,6 +59,13 @@ RED_BASE_BLOCK_RE='^\[block\] Base branch .+ CI is RED(:.*)?$'
 TRANSIENT_BLOCK_LIMIT=3   # patrol passes before a transient-only block escalates
 CHECKS_UNAVAILABLE_LIMIT=10  # passes with no readable checks before escalation
 REARM_LIMIT=2             # automatic re-arms per head before a human owns it
+# Every merge flips mergeStateStatus to UNKNOWN for every other open PR, so a
+# green backlog would otherwise drain at one PR per pass while burning the
+# others' transient budgets.  On a transient-only block, wait briefly for
+# GitHub to recompute and re-run preflight once, bounded per pass so a fully
+# transient queue cannot run into the service timeout.
+SETTLE_DELAY="${PR_BABYSIT_SETTLE_DELAY:-10}"
+SETTLE_RETRIES_PER_PASS=12
 
 # Blocked tails whose observed condition has changed get one path back into
 # automation.  Only patrol-written, head-scoped verdicts are re-armable, and
@@ -168,6 +175,7 @@ cd "$ROOT" || exit 1
 rearm_sweep
 QUEUE="$(bd list --label merge-when-green --json 2>/dev/null)" || { log "bd unavailable; skipping"; exit 0; }
 if ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$QUEUE"; then log "bd returned malformed queue data"; exit 0; fi
+settle_budget=$SETTLE_RETRIES_PER_PASS
 
 while read -r item; do
   bead="$(jq -r '.id // empty' <<<"$item")"; ref="$(jq -r '.external_ref // empty' <<<"$item")"; notes="$(jq -r '.notes // empty' <<<"$item")"
@@ -290,11 +298,22 @@ while read -r item; do
     continue
   fi
 
-  preflight_out="$(PR_PREFLIGHT_BLOCK_RED_BASE=1 "$PREFLIGHT" "$pr" --repo "$repo" 2>&1)"; preflight_status=$?
-  [[ -n "$preflight_out" ]] && sed "s|^|$(date -u +%FT%TZ) [preflight $repo#$pr] |" <<<"$preflight_out" >>"$LOG"
-  if (( preflight_status != 0 )); then
+  settle_attempted=0
+  while :; do
+    preflight_out="$(PR_PREFLIGHT_BLOCK_RED_BASE=1 "$PREFLIGHT" "$pr" --repo "$repo" 2>&1)"; preflight_status=$?
+    [[ -n "$preflight_out" ]] && sed "s|^|$(date -u +%FT%TZ) [preflight $repo#$pr] |" <<<"$preflight_out" >>"$LOG"
+    (( preflight_status != 0 )) || break
     blocks="$(grep -F '[block]' <<<"$preflight_out" || true)"
     genuine="$(grep -vE "$RED_BASE_BLOCK_RE" <<<"$blocks" | grep -vE "$TRANSIENT_BLOCK_RE" || true)"
+    if [[ -n "$blocks" && -z "$genuine" ]] && ! grep -qE "$RED_BASE_BLOCK_RE" <<<"$blocks" \
+       && (( settle_attempted == 0 && settle_budget > 0 )); then
+      settle_attempted=1; settle_budget=$((settle_budget - 1))
+      sleep "$SETTLE_DELAY"
+      continue
+    fi
+    break
+  done
+  if (( preflight_status != 0 )); then
     if [[ -n "$blocks" && -n "$genuine" ]]; then
       block "$bead" "$metadata" "$notes" "preflight-policy:$head" "Preflight reported a non-red-base block; needs agent judgment."
     elif [[ -n "$blocks" ]] && grep -qE "$RED_BASE_BLOCK_RE" <<<"$blocks"; then

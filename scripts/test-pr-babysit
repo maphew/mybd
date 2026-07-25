@@ -94,6 +94,11 @@ esac
 EOF
 cat >"$FAKE_BIN/preflight" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${FAKE_PREFLIGHT_SETTLES:-0}" == 1 && -f "${FAKE_PREFLIGHT_MARK}.settled" ]]; then
+  printf '%s\n' '[pass] Base branch main CI is green (required checks passed)'
+  exit 0
+fi
+[[ "${FAKE_PREFLIGHT_SETTLES:-0}" == 1 ]] && touch "${FAKE_PREFLIGHT_MARK}.settled"
 touch "${FAKE_PREFLIGHT_MARK:-/dev/null}"
 if [[ "${FAKE_REVOKE_LABEL:-0}" == 1 ]]; then
   jq 'map(.labels = ((.labels // []) - ["merge-when-green"]))' "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
@@ -115,6 +120,7 @@ chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemct
 
 export PATH="$FAKE_BIN:$PATH"
 export PR_BABYSIT_PREFLIGHT="$FAKE_BIN/preflight"
+export PR_BABYSIT_SETTLE_DELAY=0
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
@@ -126,8 +132,8 @@ reset() {
   CASE="$TMP/$name"; mkdir -p "$CASE"
   export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged" FAKE_PREFLIGHT_MARK="$CASE/preflight" FAKE_SYSTEMD_ANALYZE_LOG="$CASE/analyze.log"
   export XDG_STATE_HOME="$CASE/state"
-  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS
-  rm -f "$FAKE_PREFLIGHT_MARK"
+  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS FAKE_PREFLIGHT_SETTLES
+  rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
     '[{id:"mybd-test", status:"in_progress", assignee:"maphew", labels:["merge-when-green"], external_ref:$ref, notes:$notes, metadata:$metadata}]' >"$FAKE_QUEUE"
@@ -342,6 +348,15 @@ jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail
 run_patrol
 jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "persistent transient block did not escalate"
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "transient block merged"
+
+# A transient block that settles is retried in-pass and merges immediately:
+# a merge flips every other PR to UNKNOWN, so without this a green backlog
+# drains at one PR per pass while burning the others' transient budgets.
+reset settle "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge state is UNKNOWN.' FAKE_PREFLIGHT_SETTLES=1
+run_patrol
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "settled transient did not merge in the same pass"
+[[ "$(jq -r '.[0].metadata.pr_babysit_transient // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "settled transient consumed the transient budget"
 
 # Red base plus transient retains without consuming the transient budget.
 reset transient-red "$policy"
