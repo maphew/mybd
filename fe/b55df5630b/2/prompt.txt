@@ -1,0 +1,10 @@
+Cross-vendor gate before maintainer commits are pushed to the contributor branch of gastownhall/beads PR #4897.
+
+Context: proxied bd ready route must emit pagination metadata under BD_JSON_ENVELOPE=1 with parity to the direct route (key only when truncated, Total unavailable on this backend); two proxied subtests (truncated asserts meta; not-truncated asserts key ABSENT).
+
+Inspect the maintainer fix commit in worktree .worktrees/beads/pr-4897-fix:
+  git -C .worktrees/beads/pr-4897-fix log --oneline -3
+  git -C .worktrees/beads/pr-4897-fix diff HEAD~1..HEAD
+plus surrounding source as needed. Read-only; post nothing; no bd/dolt commands.
+
+Assess: (1) correctness and CI-breakage risk; (2) test honesty — would the new tests fail if the fix were reverted, and did they demonstrably run (beware -run patterns that match nothing); (3) scope fit vs the review items claimed. First line exactly 'VERDICT: SHIP' or 'VERDICT: FIX', then terse file:line bullets.
