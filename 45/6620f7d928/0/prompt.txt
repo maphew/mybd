@@ -1,0 +1,5 @@
+end session
+
+---
+
+is that bd show thing a bug? if yes, is it filed on github?
