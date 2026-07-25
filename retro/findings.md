@@ -20,28 +20,28 @@ Phrasings and ask-structures with evidence they produce clean runs.
 - sightings: 1 (mechanical, high-severity) — patrol.log 07-22..25: 60× `Merge state is UNKNOWN` blocks; verified case mybd-340o/PR5022 blocked on UNKNOWN with green base; 18 beads in `merge-blocked` after the storms; 9 branches spinning "no checks reported" every pass; no re-arm when red base greens.
 - cost: automation converts to manual triage backlog; agents pay re-arm sweeps.
 - recommendation: patrol retains beads on UNKNOWN/UNSTABLE and re-checks next pass; re-arm red-base kicks when base greens; escalate no-check PRs after N passes; timestamp all patrol log lines.
-- promoted-to: bead (patrol hardening) + bead (re-arm sweep) — see reports/2026-07-25-session-machinery-retro-claude-second-opinion.md · verify-by: next retro round finds `merge-blocked` census near zero outside genuine conflicts.
+- promoted-to: scripts/pr-babysit hardening landed 2026-07-25 (mybd-pqs0: bounded transient retry, re-arm sweep, checks-unavailable escalation, timestamped logs; cross-vendor reviewed) + manual re-arm sweep executed (mybd-yay7 closed, 17/18 tails) · verify-by: next retro round finds `merge-blocked` census near zero outside genuine conflicts, and RE-ARMED lines in patrol.log.
 
 ### F-002 · [environment] delegation debris starves the host
 - status: recurring (2 sightings, both 2026-07-24)
 - sightings: claude/d41b072b: "The Bash tool can no longer spawn any process" — 45-min fd-exhaustion outage (20+ background tasks + leaked dolt test servers); claude/a7573951: "the A2 builder's cache pushed the user quota over" — /tmp EDQUOT from ~10 GB stale Go caches.
 - cost: hard session outages; human diagnosis time.
 - recommendation: enforce GOCACHE/GOTMPDIR under worktree .tmp/ in scripts/codex-agent (memory `codex-builder-tmp-quota` says MUST but wrapper doesn't); watch fd recurrence post-q6cz.
-- promoted-to: bead (codex-agent tmp defaults) · verify-by: no EDQUOT/fd incidents in next ~20 sessions.
+- promoted-to: scripts/codex-agent builder now enforces worktree-local GOCACHE/GOTMPDIR (mybd-jx3o closed 2026-07-25; env passthrough verified live; opt-out CODEX_AGENT_KEEP_GO_ENV=1) · verify-by: no EDQUOT/fd incidents in next ~20 sessions.
 
 ### F-003 · [tokenomics] Codex wait_agent polling burn
 - status: recurring (4 sightings)
 - sightings: codex/fd4998ac (07-24): 15+ 30–60s timeouts, ~150k tokens each, 10.2M total; codex/d90ba750 (07-25): ~2M tokens in wait cycles; codex/06050395, codex/b2c9db33: repeated timeout→success; codex/43e18dc2: ~40 min `gh run watch` yield loops.
 - cost: millions of tokens of idle waiting per heavy session (ChatGPT pool).
 - recommendation: longer/batched waits; delegate tail-watching to zero-token patterns (patrol); note in AGENTS.md Codex section.
-- promoted-to: bead (codex wait tuning) · verify-by: next Codex-heavy session shows waits <10% of token total.
+- promoted-to: AGENTS.md Codex-section wait-polling rule (mybd-dpio closed 2026-07-25) · verify-by: next Codex-heavy session shows waits <10% of token total.
 
 ### F-004 · [bad-tool] bd --json output shape drift (array vs object)
 - status: recurring (5 sightings)
 - sightings: claude/15466d7d "Cannot index object with number"; claude/8c29af54 "Cannot index array with string"; claude/f6c0822c (4+ retries); claude/d41b072b jq null-iteration; this audit session (07-25) used `.[0]` defensively.
 - cost: a few retries per session, every session that scripts bd.
 - recommendation: upstream issue for consistent shapes, or local normalizing helper.
-- promoted-to: bead (bd JSON shapes) · verify-by: zero shape-retry sightings after fix lands.
+- promoted-to: upstream issue gastownhall/beads#5054 + bd memory `bd-json-shapes` with normalizing jq idiom (mybd-au80 closed 2026-07-25) · verify-by: zero shape-retry sightings after fix lands.
 
 ### F-005 · [tokenomics] delegate outputs exceed 256 KB Read cap
 - status: recurring (3 sightings)
