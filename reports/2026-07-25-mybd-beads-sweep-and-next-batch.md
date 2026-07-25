@@ -1,7 +1,9 @@
 # mybd + Beads state sweep and next-batch orchestration
 
-Date: 2026-07-25  
-Window: 2026-07-21 through 2026-07-25  
+Date: 2026-07-25
+
+Window: 2026-07-21 through 2026-07-25
+
 Control bead: `mybd-9i93`
 
 ## Executive read
@@ -113,8 +115,10 @@ bd ready --parent mybd-9i93
 
 ### Parallel lane A: proxy reliability
 
-Bead: `mybd-4t6s`  
-Routing: mixed, staged, `gpt-5.6-sol`, xhigh  
+Bead: `mybd-4t6s`
+
+Routing: mixed, staged, `gpt-5.6-sol`, xhigh
+
 Parallel group: `batch-proxy-reliability`
 
 Own upstream issue #5012 as one semantic invariant. Reproduce or establish a
@@ -128,8 +132,10 @@ as part of this bead.
 
 ### Parallel lane B: quad341 author sweep
 
-Bead: `mybd-9i93.1`  
-Routing: mixed, staged, `gpt-5.6-sol`, high  
+Bead: `mybd-9i93.1`
+
+Routing: mixed, staged, `gpt-5.6-sol`, high
+
 Parallel group: `batch-pr-quad341`
 
 Review #5028, #5029, and #5030 together. They were clean with no bad checks at
@@ -139,8 +145,10 @@ through as easy wins.
 
 ### Parallel lane C: rjc123 author sweep
 
-Bead: `mybd-9i93.2`  
-Routing: mixed, staged, `gpt-5.6-sol`, high  
+Bead: `mybd-9i93.2`
+
+Routing: mixed, staged, `gpt-5.6-sol`, high
+
 Parallel group: `batch-pr-rjc123`
 
 Treat #5032 and #5035 as a paired CI-hygiene story, then assess #4815, #4821,
@@ -149,8 +157,10 @@ split that subset into a separate high-risk bead.
 
 ### Serial control-plane lane: Dependabot and merge tails
 
-Bead: `mybd-ysu1`  
-Routing: mixed, staged, `gpt-5.6-terra`, medium  
+Bead: `mybd-ysu1`
+
+Routing: mixed, staged, `gpt-5.6-terra`, medium
+
 Parallel group: `batch-merge-tails`
 
 This lane waits for #5038, confirms grouped PR creation and superseded
@@ -160,8 +170,10 @@ tails to `pr-babysit`. It owns reconciliation, not interactive merging. All
 
 ### Gated next author selection
 
-Bead: `mybd-9i93.3`  
-Routing: explorer, delegated, `gpt-5.6-terra`, medium  
+Bead: `mybd-9i93.3`
+
+Routing: explorer, delegated, `gpt-5.6-terra`, medium
+
 Parallel group: `batch-pr-next`
 
 This bead is blocked by the quad341 and rjc123 sweeps. It cheaply compares the
