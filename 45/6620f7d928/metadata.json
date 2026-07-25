@@ -3,8 +3,10 @@
   "checkpoint_id": "456620f7d928",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
-  "files_touched": null,
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-25-dependabot-pr-sweep.md"
+  ],
   "sessions": [
     {
       "metadata": "/45/6620f7d928/0/metadata.json",
@@ -12,13 +14,20 @@
       "compact_transcript": "/45/6620f7d928/0/transcript.jsonl",
       "content_hash": "/45/6620f7d928/0/content_hash.txt",
       "prompt": "/45/6620f7d928/0/prompt.txt"
+    },
+    {
+      "metadata": "/45/6620f7d928/1/metadata.json",
+      "transcript": "/45/6620f7d928/1/full.jsonl",
+      "compact_transcript": "/45/6620f7d928/1/transcript.jsonl",
+      "content_hash": "/45/6620f7d928/1/content_hash.txt",
+      "prompt": "/45/6620f7d928/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 130,
-    "cache_creation_tokens": 465201,
-    "cache_read_tokens": 8033884,
-    "output_tokens": 77605,
-    "api_call_count": 65
+    "input_tokens": 520,
+    "cache_creation_tokens": 1159740,
+    "cache_read_tokens": 39676751,
+    "output_tokens": 199793,
+    "api_call_count": 262
   }
 }

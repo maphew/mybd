@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "456620f7d928",
+  "session_id": "8c29af54-4c0d-4e6e-88b2-22da6d9798f4",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T23:15:04.534528423Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-25-dependabot-pr-sweep.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "9dda3620607b",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 390,
+    "cache_creation_tokens": 694539,
+    "cache_read_tokens": 31642867,
+    "output_tokens": 122188,
+    "api_call_count": 197
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T23:15:04.464144722Z",
+    "agent_lines": 31,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 31,
+    "total_lines_changed": 31,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
