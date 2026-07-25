@@ -215,6 +215,14 @@ Rules (the wrapper enforces the first two):
 - Codex runs in this repo trigger `bd prime` on session start, and bd/dolt
   must stay serial: do not fan out parallel Codex runs against the
   coordination repo; parallelize in beads source worktrees instead.
+- Waiting is the dominant Codex token cost here (retro F-003, 2026-07-25:
+  one session spent most of 10.2M tokens on 30-60s `wait_agent` timeout
+  cycles; another ~2M). From a Codex orchestrator session: use generous
+  subagent wait timeouts (minutes, not 30s) and batch waits for parallel
+  children rather than polling each in turn; never watch CI in-session —
+  `gh run watch`/rerun loops belong to `scripts/pr-handoff` + the pr-babysit
+  patrol, exactly as for Claude sessions; and fetch large CI logs to disk
+  once, then grep locally, instead of re-fetching pages through the model.
 
 ## Workflow Orchestration: standing opt-in
 
