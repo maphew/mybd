@@ -1,0 +1,1 @@
+sweep gh beads dependabot PRs and handle them intelligently (e.g. all in one, if that makes sense)
