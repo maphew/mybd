@@ -3,7 +3,7 @@
   "checkpoint_id": "897011531068",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 5,
+  "checkpoints_count": 10,
   "files_touched": [
     "reports/2026-07-25-upstream-ci-gating-proposal-draft.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/89/7011531068/0/transcript.jsonl",
       "content_hash": "/89/7011531068/0/content_hash.txt",
       "prompt": "/89/7011531068/0/prompt.txt"
+    },
+    {
+      "metadata": "/89/7011531068/1/metadata.json",
+      "transcript": "/89/7011531068/1/full.jsonl",
+      "compact_transcript": "/89/7011531068/1/transcript.jsonl",
+      "content_hash": "/89/7011531068/1/content_hash.txt",
+      "prompt": "/89/7011531068/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 693423,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 20686336,
-    "output_tokens": 52985,
-    "api_call_count": 168
+    "input_tokens": 693507,
+    "cache_creation_tokens": 268385,
+    "cache_read_tokens": 25170543,
+    "output_tokens": 108446,
+    "api_call_count": 210
   }
 }

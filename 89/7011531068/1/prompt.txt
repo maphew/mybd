@@ -1,0 +1,355 @@
+CI is consistently a bottleneck. why is that? why is it broken so much of the time? we have local tests and machinery, whose whole point is to make sure code is clean _before_ it goes up as a merge to main candidate. if we're forever waiting for what main CI says why bother with local tests? Main CI should be a rubber stamp affair, quick scans to add dots to i's and bars to t's, not catching fundamental mistakes. we have to make local testing actually work. every dev's machine should be catching the tests, distributing the work in parallel instead of having all contributors' work pile up on main because CI is broken again.
+
+---
+
+<task-notification>
+<task-id>a66d87b64fabbdec6</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/a66d87b64fabbdec6.output</output-file>
+<status>completed</status>
+<summary>Agent "Compare CI jobs vs local tests" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything needed. Final report below.
+
+---
+
+# 1. CI WORKFLOW INVENTORY
+
+Directory: `/var/home/matt/dev/mybd/bd-main/.github/workflows/`
+
+## `pr.yml` — name: **PR**
+Triggers: `pull_request` (branches: main), `merge_group`. Concurrency: cancel-in-progress. Env: `BD_DISABLE_METRICS=1`, `BD_DISABLE_EVENT_FLUSH=1`. No workflow-level path filters (deliberate — see `engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md`).
+
+| Job (id) | Display name | What it actually does |
+|---|---|---|
+| `build-artifacts` | Build Artifacts | Installs golangci-lint v2.10.1, runs `make ci-pr-policy` + `make ci-pr-lint`, sources `.buildflags`, builds `artifacts/bd-linux-gms-pure`, sha256sums it, uploads `ci-build-artifacts` (1-day retention). Note: unlike main.yml it does NOT build `bd-cmd-test`. |
+| `check-build-tags` | Check build-tag policy | `./scripts/check-build-tags.sh` + `./scripts/check-go-install-guidance.sh` (every go build/test carries `-tags=gms_pure_go`; ICU-linkage guard). |
+| `check-cmd-bd-puregeo-tests` | Check cmd/bd pure-Go tests compile (CGO_ENABLED=0) | `CGO_ENABLED=0 go build -tags gms_pure_go ./cmd/bd`; compiles test binaries for `./cmd/bd`, `./internal/storage/embeddeddolt`, `./internal/tracker`; runs a hand-listed `-run '^Test(Help\|CheckRemoteSafety\|...)'` `-short` subset. Catches cgo contamination of the pure-Go test compile. |
+| `check-version-consistency` | Check version consistency | `./scripts/check-versions.sh`. |
+| `check-migration-hygiene` | Check migration hygiene | `./scripts/check-migration-hygiene.sh` with `BASE_SHA` from PR base / merge_group base (dup versions, nondeterministic SQL, edits to frozen migrations). |
+| `check-doc-flags` | Check doc flags freshness | Builds `bd` CGO_ENABLED=0, runs `check-doc-flags.sh` + `check-doc-freshness.sh`; on failure uploads `cli-docs-freshness-patch` artifact (`DOC_DRIFT_PATCH_OUT`) consumed by docs-autofix.yml. **This is the docs-drift check.** |
+| `check-no-beads-changes` | Check for .beads changes | PR-only; fails if `.beads/issues.jsonl` is in the diff vs base. |
+| `detect-package-gates` | Detect package gates | `./scripts/ci/detect-package-gates.sh` → outputs `mcp_package`, `npm_package`. |
+| `package-mcp` | Package Gate (MCP) | If applicable: Python 3.14 + uv 0.11.16, downloads artifact, `make ci-package-mcp` (uv sync --locked, ruff, mypy, pytest, uv build). |
+| `package-npm` | Package Gate (npm) | If applicable: Node 24, downloads artifact, `make ci-package-npm` (npm install, `npm run test:all`, `npm pack --dry-run`). |
+| `pr-policy-wrapper` | PR Policy (wrapper timing) | `make ci-pr-policy` (duplicate of build-artifacts step, kept for timing). |
+| `pr-core-wrapper` | PR Core (wrapper timing) | Installs Dolt CLI, configures git+dolt identity, downloads artifact, `make ci-pr-core` → `go test -p4 -parallel4 -race -short -skip '^TestEmbedded' ./...`. **The main Go test gate on PRs.** |
+| `pr-lint-wrapper` | PR Lint (wrapper timing) | golangci-lint v2.10.1 install, `make ci-pr-lint` (`make fmt-check` + `golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...`). |
+| `test-domain-uow` | Test (storage domain + uow) | Dolt CLI + `docker pull dolthub/dolt-sql-server:2.2.0`, then `go test -tags gms_pure_go -race -count=1 -v ./internal/storage/domain/... ./internal/storage/uow/... ./internal/tracker/...`. Docker image pull is what stops TestDomainDB self-skipping. |
+| **`contract-corpus`** | **Contract corpus (golden + determinism + conformance)** | Dolt CLI + `docker pull dolthub/dolt-sql-server:2.2.0`; `BEADS_PROTOCOL_REQUIRE_DOLT=1 go test -tags gms_pure_go -count=1 -timeout 30m ./cmd/bd/protocol`. Runs the WHOLE package deliberately (golden corpus byte-compare vs `cmd/bd/protocol/testdata/corpus/`, double-run determinism, `TestProtocol_`/`TestJSONContract_` conformance). Comment states ~10 min and explicitly forbids reintroducing a `-run` filter (a filter previously let conformance sit red on main ~3 months). |
+| `fmt-check` | Check formatting | `make fmt-check`. |
+| `lint` | Lint | `golangci-lint-action` v9, `version: latest`, `--timeout=5m --build-tags=gms_pure_go` (note: different pin than the wrapper job's v2.10.1). |
+| `windows-make-shell` | Windows Make shell (native/msys2/cygwin) | windows-latest, `fail-fast: false`, 3-host matrix. Verifies the Makefile's Windows SHELL bootstrap under native GNU Make (choco make 4.4.1), MSYS2, and Cygwin: poisons `BASH_ENV`/`BASHOPTS`/`SHELLOPTS`/`GIT_EXEC_PATH`, profile paths with spaces, asserts resolved SHELL/sed/env. |
+| `ci-gate` | CI Gate / Required | `if: always()`; aggregates the 18 jobs above via `.github/scripts/ci-gate.sh`; `CHECK_NO_BEADS_CHANGES=skipped` allowed on merge_group. Branch-protection anchor. |
+
+## `pr-risk.yml` — name: **PR Risk**
+Triggers: `pull_request` (main), `merge_group`.
+
+| Job | Display name | What it does |
+|---|---|---|
+| `detect-ci-tier` | Detect CI tier | `.github/scripts/ci-embedded-tier.sh`: full embedded coverage on push/merge_group/unknown diff, or PR touching `cmd/`, `internal/`, `tests/`, `scripts/`, `.github/**`, any `*.go`, `go.mod/sum`, `Makefile`, nix files, or root agent docs. Docs-only PRs skip the matrix. |
+| `build-embedded` | Build (Embedded Dolt) | Builds 5 artifacts: `/tmp/bd-embedded-test` (`-race`), `/tmp/embeddeddolt-test` (`-race -c`), `/tmp/bd-cmd-test` (`-race -c`), `/tmp/bd-proxied` (non-race, used as test subprocess for speed), `/tmp/dolt-conformance-test` (`-tags=integration,gms_pure_go -c ./internal/storage/dolt/`, non-race). |
+| `test-embedded-storage` | Test (Embedded Dolt Storage) | Runs `embeddeddolt-test -test.timeout=30m -test.skip '^TestConformance$'` with `BEADS_TEST_EMBEDDED_DOLT=1`. |
+| `test-embedded-conformance` | Test (Embedded Dolt Conformance - core / audit) | 2-partition matrix, `timeout-minutes: 35`. core = `TestConformance` minus `Audit`; audit = `TestConformance/Audit` alone. Comment: combined suite exceeded 30m; each half ~15m. |
+| `test-server-storage` | Test (Server Dolt Conformance) | `timeout-minutes: 20`. Dolt CLI + `docker pull dolthub/dolt-sql-server:2.2.0`, then `dolt-conformance-test -test.run '^TestConformance$' -test.timeout=15m` — server-mode twin of the embedded conformance. |
+| `test-embedded-cmd` | Test (Embedded Dolt Cmd N/20) | 20 shards, `fail-fast: false`; `.github/scripts/embedded-test-shard.sh N 20` over `TestEmbedded*` in cmd/bd using committed manifest `embedded-cmd-test-shards.txt` (hash fallback for new tests). Includes `TestEmbeddedFederation`, `TestEmbeddedFederationConcurrent` (shard 11/12). |
+| `test-proxied-cmd` | Test (Proxied Dolt Cmd N/15) | 15 shards, `timeout-minutes: 20`; Dolt CLI + docker image pull; `.github/scripts/proxied-test-shard.sh N 15` over `TestProxiedServer*` with `BEADS_TEST_PROXIED_SERVER=1`, manifest `proxied-cmd-test-shards.txt`. |
+| `test-nix` | Test Nix Flake | `timeout-minutes: 10`; DeterminateSystems nix action; `nix run .#default -- --help` and asserts the exact first help line. |
+| `ci-gate` | CI Gate / Required | `always()`; embedded/proxied/server jobs may be `skipped` only when `full_embedded != true`. |
+
+## `main.yml` — name: **Main**
+Trigger: `push` to `main` only.
+
+Repeats most of pr.yml (`detect-ci-tier`, `check-migration-hygiene` with `BASE_SHA=github.event.before`, `build-artifacts` — which here ALSO builds `artifacts/bd-cmd-test`, `check-build-tags`, `check-cmd-bd-puregeo-tests`, `check-version-consistency`, `check-doc-flags` (no patch artifact upload), `detect-package-gates`, `package-mcp`, `package-npm`, the three wrapper jobs, `test-domain-uow`, `fmt-check`, `lint`). Main-only additions:
+
+| Job | Display name | What it does |
+|---|---|---|
+| `check-no-duplicate-migrations` | Check no duplicate migration versions | Inline find/sed/uniq over `internal/storage/schema/migrations/*.up.sql`. (Present in main.yml, not pr.yml — pr.yml covers it via `check-migration-hygiene`.) |
+| `test` | Test (ubuntu-latest / macos-latest) | 2-OS matrix, `fail-fast: false`. Linux: gotestsum + JUnit + `-tags gms_pure_go -race -short -coverprofile -skip '^TestEmbedded' ./...` → Codecov. macOS: `go test -tags gms_pure_go -v -race -short -skip '^TestEmbedded' ./...`, no coverage. Both install Dolt CLI. |
+| `main-linux-integration-packages` | Main Linux integration packages (N/6) | 6 shards, 30m timeout. `scripts/ci/go-test-shard-packages.sh` (excludes `cmd/bd`), then `BEADS_TEST_SKIP=dolt gotestsum -- -v -race -tags=integration,gms_pure_go -timeout=30m &lt;pkgs&gt;`. **No `-short`** — this is the promoted no-short integration lane. |
+| `main-linux-integration-cmd-bd` | Main Linux integration cmd/bd (N/8) | 8 shards, 30m; `scripts/ci/go-test-shard-names.sh` builds a `-run` regex over cmd/bd test names; same integration tags, `BEADS_TEST_SKIP=dolt`. |
+| `test-proxied-cmd` | Test (proxied-server cmd N/15) | Same as pr-risk but consumes `ci-build-artifacts` (bd-cmd-test); 20m timeout. |
+| `build-embedded` / `test-embedded-storage` / `test-embedded-conformance` / `test-embedded-cmd` | (as pr-risk) | Same, but `build-embedded` here builds only 3 binaries (no `bd-proxied`, no `dolt-conformance-test`) — i.e. **main.yml has no Server-Dolt-Conformance job**. |
+| `test-windows` | Test (Windows - smoke) | windows-latest: `go build -tags gms_pure_go -o bd.exe`, then `bd.exe version` and `bd.exe help`. Nothing else (comment: full suite times out, bd-bmev). |
+| `test-nix` | Test Nix Flake | Same as pr-risk (10m). |
+
+No `ci-gate` aggregate in main.yml.
+
+## Remaining workflows
+
+| File | Name | Triggers | Jobs |
+|---|---|---|---|
+| `conformance.yml` | Conformance | `pull_request` (main), `merge_group` | `conformance` — runs `./scripts/conformance.sh` verbatim (Tier 1: `BEADS_TEST_EMBEDDED_DOLT=1 go test -tags gms_pure_go -v ./internal/storage/embeddeddolt/ -run TestConformance` with anchored PASS/SKIP assertion; Tier 2: `go test -tags "gms_pure_go e2e" ./test/conformance/`). Header explicitly says "the same suite developers run locally". |
+| `nix-build.yml` | nix build | `pull_request` + `push main` **path-filtered** to go.mod/go.sum/default.nix/flake.nix/flake.lock/overlay.nix/packages.nix; `workflow_dispatch` | `nix-build` (10m): `nix build .#default --print-build-logs`. Explicitly must NOT be a required check (path filter). |
+| `regression.yml` | Regression Tests | `push main`, `pull_request` (main), `workflow_dispatch`. No merge_group. | `detect-regression-need` (labels `run-regression`/`skip-regression`, else path heuristic on `cmd/bd/`, `internal/storage/`, `internal/types/`, `tests/regression/`, Makefile, go.mod/sum); `regression` (25m): Dolt CLI + docker image pull + baseline cache, `go test -tags=regression,gms_pure_go -timeout=20m -v ./tests/regression/...` (baseline v0.49.6). |
+| `cross-version-smoke.yml` | Cross-Version Smoke Tests | tag push `v*`, `pull_request` (main), `workflow_dispatch` | `versions` (gh release list: 5 on PR, 30 on tag); `smoke` matrix per version, 15m, `fail-fast: false`: builds candidate, runs `scripts/upgrade-smoke-test.sh &lt;ver&gt;`. |
+| `migration-test.yml` | Migration Test Harness | tag push `v*`, `workflow_dispatch` | `migration-test` (45m): jq/sqlite3/Dolt install, builds candidate, `scripts/migration-test/run.sh` (direct-only / stepping-only modes). |
+| `nightly.yml` | Nightly Full Tests | `schedule` cron `0 2 * * *`, `workflow_dispatch` | `measure` (calls ci-measurements.yml for a chosen suite); `full-test` (45m): `go test -v -race -tags=integration,gms_pure_go -coverprofile -timeout=30m ./...` with `BEADS_TEST_SKIP=dolt`, then coverage threshold gate (fail &lt;30%, warn &lt;40%), Codecov upload `continue-on-error: true`. |
+| `proxied-local-smoke.yml` | Proxied Local Smoke | `workflow_dispatch`, `merge_group`, `push main` + `pull_request` path-filtered (proxied/doltserver/dbproxy/uow/configfile paths) | `managed-local-smoke` (25m): pinned Dolt 2.2.2, builds bd + cmd/bd test binary, asserts `TestManagedLocalProxiedLifecycleSmoke` is compiled in, then runs it under `sudo unshare --net` in a loopback-only netns and proves no outbound network. CGO_ENABLED=1. |
+| `docs-mintlify.yml` | Docs (Mintlify) checks | `pull_request` path-filtered (docs/**, engdocs/**, test/docsync/**, mint.sh, root md files) | `docsync`: `go test -tags=gms_pure_go ./test/docsync`; `broken-links`: Node 22, `.github/scripts/docs-render-check.sh $BASE_REF` (baseline-aware). Both skip drafts. |
+| `docs-autofix.yml` | Docs Autofix | `workflow_run` on workflow "PR" completed=failure | `autofix`: downloads `cli-docs-freshness-patch`, runs `scripts/docs-autofix-push.sh` — pushes regen commit to same-repo PR branches or comments an apply recipe on forks. Never checks out PR code. |
+| `ci-measurements.yml` | CI Measurements | `workflow_call` + `workflow_dispatch` (suite input) | Measurement-only lanes, all `if: inputs.suite == ...`: `pr-linux` (30m), `macos-short` (30m), `macos-candidates` (60m), `linux-integration` (45m), `linux-integration-sharded` (6, 30m), `linux-integration-hybrid-packages` (6, 30m), `linux-integration-hybrid-cmd-bd` (8), `...-16-cmd-bd` (16), `...-prebuilt-bd` + `...-prebuilt-cmd-bd` (8), `linux-integration-coverage` (45m), `cross-version-smoke` (20m), `nix` (20m), `mcp-package` (20m), `npm-package` (20m). Never gates anything. |
+| `release.yml` | Release | tag push `v*`, `workflow_dispatch`; all jobs guarded by `github.repository == 'gastownhall/beads'` | `verify-version-consistency`, `release-package-mcp`, `release-package-npm`, `goreleaser`, `goreleaser-macos` (macos-latest), `attest-release` (SBOM/attestations), `publish-pypi`, `publish-npm`. |
+| `test-pypi.yml` | Test PyPI Publish | `workflow_dispatch` only | `test-publish`: uv build + twine upload to TestPyPI. |
+| `update-flake-lock.yml` | Update flake.lock | `schedule` weekly Sun 00:00 UTC, `workflow_dispatch` | `nix flake update`, scope-verify diff is flake.lock only, open PR via GitHub App token. |
+| `update-vendor-hash.yml` | Update vendorHash for dependabot Go bumps | `pull_request_target` on go.mod/go.sum, dependabot-only | `scripts/update-nix-vendorhash.sh`, commit+push `default.nix` back to the dependabot branch (15m). |
+| `deploy-pages-redirect.yml` | Deploy legacy docs redirect | `push main` on `.github/pages-redirect/**`, `workflow_dispatch` | Static redirect artifact → GitHub Pages. |
+
+### Federation
+No federation-specific job, workflow, or build tag exists. Federation is split by cgo only: `cmd/bd/federation.go` (`//go:build cgo`) vs `cmd/bd/federation_nocgo.go` (`//go:build !cgo`, prints "requires CGO" stub). The `!cgo` stub's compile is covered incidentally by `check-cmd-bd-puregeo-tests`; behavior is covered by `TestEmbeddedFederation` / `TestEmbeddedFederationConcurrent`, which run ONLY inside `test-embedded-cmd` shards 11 and 12 (`.github/scripts/embedded-cmd-test-shards.txt:59-60`).
+
+---
+
+# 2. LOCAL TEST ENTRY POINTS
+
+## Build-tag / CGO contract (`/var/home/matt/dev/mybd/bd-main/.buildflags`)
+Sourced by every wrapper: `CGO_ENABLED=1` (unless caller set 0), `BEADS_BUILD_TAGS=gms_pure_go`, and appends `-tags=gms_pure_go` to `GOFLAGS`. A bare `CGO_ENABLED=1 go build ./cmd/bd` without the tag fails with an ICU C-linker error (`unicode/uregex.h`); `make doctor-build` diagnoses exactly this. Makefile hard-codes `export CGO_ENABLED := 1`, `BUILD_TAGS := gms_pure_go`, `GOTOOLCHAIN := go$(go.mod version)`.
+
+## Makefile targets (`/var/home/matt/dev/mybd/bd-main/Makefile`)
+
+| Target | Command | Scope |
+|---|---|---|
+| `build` | `go build -tags gms_pure_go ./cmd/bd` (+ macOS codesign) | build |
+| `doctor-build` | GOFLAGS/CGO/CC diagnostic | env check |
+| `test` | `TEST_COVER=1 ./scripts/test.sh` | broad unit; `-timeout 3m`, no `-race`, no `-short`, `.test-skip` applied, coverage on |
+| `test-icu-path` / `test-full-cgo` (deprecated) | `./scripts/test-icu-path.sh ./...` | maintainer-only ICU path; no CI equivalent |
+| `ci-pr-core` | `scripts/ci/pr-core.sh` | `go test -p4 -parallel4 -race -short -skip '^TestEmbedded' ./...` in hermetic env |
+| `ci-pr-policy` | `scripts/ci/pr-policy.sh` | build-tags, go-install guidance, versions, docs binary build, doc-flags, doc-freshness, testing.Short boundaries, .beads guard |
+| `ci-pr-lint` | `scripts/ci/pr-lint.sh` | `make fmt-check` + `golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...` |
+| `ci-package-mcp` | `scripts/ci/package-mcp.sh` | uv sync --locked, ruff, mypy, pytest, uv build (needs Python+uv) |
+| `ci-package-npm` | `scripts/ci/package-npm.sh` | npm install, `npm run test:all`, `npm pack --dry-run` (needs Node) |
+| `test-regression` | `go test -tags=regression,gms_pure_go -timeout=20m -v ./tests/regression/...` | differential vs v0.49.6 baseline; downloads/caches baseline binary |
+| `test-upgrade` | `CANDIDATE_BIN=./bd scripts/upgrade-smoke-test.sh` | release smoke |
+| `test-cross-version` | `CANDIDATE_BIN=./bd scripts/cross-version-smoke-test.sh` | last 30 tags |
+| `test-migration` | `CANDIDATE_BIN=./bd scripts/migration-test/run.sh` | migration fidelity, needs jq/sqlite3/dolt |
+| `corpus-regen` | `go test -tags gms_pure_go ./cmd/bd/protocol -run TestCorpusGolden -corpus.update -count=1` | regenerate golden corpus; comment says needs Docker (Dolt) |
+| `bench` / `bench-quick` | `go test -bench=. ./internal/storage/dolt/` (30m / 15m) | perf, manual only |
+| `fmt` / `fmt-check` | gofmt | formatting |
+| `check-docs` | CGO_ENABLED=0 build + check-doc-flags.sh + check-doc-freshness.sh + `go test -tags=gms_pure_go ./test/docsync` | docs drift (superset of two CI jobs) |
+| `check-testing-short` | `scripts/check-testing-short.sh` | -short boundary policy |
+| `diagrams-excalidraw`, `docs-dev` | npx excalidraw-cli / `./mint.sh dev` | docs authoring |
+| `clean`, `clean-test-tmp`, `install`, `install-force`, `help` | — | housekeeping |
+
+## Scripts runnable locally
+
+- `scripts/test.sh` — the documented local default. Sources `.buildflags` + `scripts/ci/lib/test-env.sh`; `-timeout 3m`, `-p 4 -parallel 4`, `.test-skip` regex (currently empty), optional `TEST_COVER`, optional `BEADS_TEST_SHARED_SERVER=1` shared dolt sql-server. **Note: `beads_test_env_enter` sets `BEADS_TEST_SKIP=dolt` unless `BEADS_TEST_ENV_RUN_DOLT=1`, and rewrites HOME/XDG/DOLT_ROOT_PATH/GIT_CONFIG_* into a temp root.**
+- `scripts/conformance.sh` — two-tier storage conformance; CI runs it verbatim. Hard-fails if top-level `TestConformance` skips.
+- `scripts/ci/pr-core.sh`, `pr-policy.sh`, `pr-lint.sh`, `package-mcp.sh`, `package-npm.sh` — the CI wrappers, all self-contained and repo-root-relative.
+- `scripts/ci/go-test-shard-packages.sh` / `go-test-shard-names.sh` — shard selectors (env: `GO_TEST_SHARD_TAGS`, `GO_TEST_SHARD_EXCLUDE_REGEX`).
+- `.github/scripts/embedded-test-shard.sh N TOTAL` — runnable locally; needs `BEADS_TEST_EMBEDDED_DOLT=1` and a prebuilt `BEADS_TEST_CMD_BINARY` (default `/tmp/bd-cmd-test`); `BEADS_TEST_SHARD_LIST_ONLY=1` to preview.
+- `.github/scripts/proxied-test-shard.sh N TOTAL` — same shape; needs `BEADS_TEST_PROXIED_SERVER=1`, `BEADS_TEST_BD_BINARY`, plus the Dolt sql-server docker image.
+- `.github/scripts/docs-render-check.sh &lt;base-ref&gt;` — baseline-aware Mintlify broken-link check (Node).
+- `scripts/check-*.sh` (build-tags, versions, migration-hygiene, doc-flags, doc-freshness, cli-docs-drift, testing-short, go-install-guidance) — all directly runnable.
+- `scripts/upgrade-smoke-test.sh`, `cross-version-smoke-test.sh`, `migration-test/run.sh`, `test-git-remote.sh`, `test-icu-path.sh`, `test-cgo.sh`, `verify-cgo.sh`, `clean-test-tmp.sh`.
+- `scripts/pr-preflight.sh` — read-only PR triage helper (gh required), not a test.
+- `.githooks/pre-commit` — gofmt -w on staged Go files + `CGO_ENABLED=0 golangci-lint run --new-from-rev=HEAD --fix` (installed by `make install` via `core.hooksPath`). `.githooks/pre-push` chains only the Entire CLI hook; **no test gate on push**.
+
+## Not runnable locally in any form
+`.github/scripts/ci-gate.sh` (needs `needs.*.result`), `ci-embedded-tier.sh` (needs `GITHUB_OUTPUT`/event), `docs-autofix-push.sh` (needs workflow_run artifact + tokens), `update-nix-vendorhash.sh` (needs nix).
+
+---
+
+# 3. CI JOB → LOCAL EQUIVALENT MAPPING
+
+| CI job (workflow) | Local equivalent | Status | Notes on divergence |
+|---|---|---|---|
+| PR Core wrapper (pr, main) | `make ci-pr-core` | **LOCAL-EQUIVALENT** | Identical script. CI additionally installs the Dolt CLI and sets `BEADS_TEST_BD_BINARY`; the wrapper's own env sets `BEADS_TEST_SKIP=dolt` either way unless `BEADS_TEST_ENV_RUN_DOLT=1`. |
+| PR Policy wrapper (pr, main) | `make ci-pr-policy` | **LOCAL-EQUIVALENT** | `.beads` guard needs `origin/main` or `CI_BEADS_DIFF_BASE`; degrades to a skip locally. |
+| PR Lint wrapper (pr, main) | `make ci-pr-lint` | **PARTIAL** | Wrapper needs `golangci-lint` on PATH; CI pins v2.10.1 while the separate `lint` job uses the action with `version: latest`. Two different linter versions can disagree. |
+| `fmt-check` (pr, main) | `make fmt-check` | **LOCAL-EQUIVALENT** | — |
+| `lint` (pr, main) | `golangci-lint run --timeout=5m --build-tags=gms_pure_go` | **PARTIAL** | CI resolves `latest`; local resolves whatever is installed. Pre-commit hook uses `--new-from-rev=HEAD --fix` + `CGO_ENABLED=0` — a third variant. |
+| `check-build-tags` | `./scripts/check-build-tags.sh` + `check-go-install-guidance.sh` | **LOCAL-EQUIVALENT** | Also inside `ci-pr-policy`. |
+| `check-version-consistency` | `./scripts/check-versions.sh` | **LOCAL-EQUIVALENT** | — |
+| `check-migration-hygiene` | `BASE_SHA=&lt;merge-base&gt; ./scripts/check-migration-hygiene.sh` | **PARTIAL** | Needs manual `BASE_SHA`; not in any make target and not in `ci-pr-policy`. |
+| `check-no-duplicate-migrations` (main) | inline find/sed/uniq | **PARTIAL** | Logic lives only in main.yml YAML; no script to invoke. |
+| `check-doc-flags` (docs drift) | `make check-docs` or `scripts/check-doc-flags.sh ./bd` + `check-doc-freshness.sh` | **PARTIAL** | Local reproduction is imperfect by design — the CI job builds with the pinned canonical toolchain and emits `cli-docs-freshness-patch`; comments say contributors should `git apply` the CI patch "instead of reproducing CI's environment locally". Docs-autofix then pushes it. |
+| `check-no-beads-changes` | `check_no_beads_jsonl_changes` in `ci-pr-policy` | **LOCAL-EQUIVALENT** | Needs `origin/main` fetched. |
+| `check-cmd-bd-puregeo-tests` | `CGO_ENABLED=0 go build/test -tags gms_pure_go ...` (hand-copied from YAML) | **PARTIAL** | The 3-binary compile plus the 13-name `-run` regex exist only in the workflow; no script or make target. |
+| `check-testing-short` (inside policy) | `make check-testing-short` | **LOCAL-EQUIVALENT** | — |
+| `build-artifacts` | `make build` | **PARTIAL** | Local build lacks the sha256 manifest / `bd-cmd-test` compile / artifact contract; downstream jobs' `BEADS_TEST_BD_BINARY` wiring is CI-only plumbing. |
+| **`contract-corpus` (pr)** | `go test -tags gms_pure_go -count=1 -timeout 30m ./cmd/bd/protocol` (+ `docker pull dolthub/dolt-sql-server:2.2.0`, `BEADS_PROTOCOL_REQUIRE_DOLT=1`); regen via `make corpus-regen` | **PARTIAL** | Command is reproducible, but requires Docker + the exact image; without it `requireDoltStore` self-skips and the gate silently passes locally (CI sets `BEADS_PROTOCOL_REQUIRE_DOLT=1` to make that a hard failure — there is no make target that sets it). `make corpus-regen` only covers the golden-update half, not the determinism/conformance halves. |
+| `conformance` (conformance.yml) | `./scripts/conformance.sh` | **LOCAL-EQUIVALENT** | Explicitly designed as the same entrypoint. Needs CGO + embedded Dolt only, no Docker. |
+| `test-domain-uow` (pr, main) | `go test -tags gms_pure_go -race -count=1 -v ./internal/storage/domain/... ./internal/storage/uow/... ./internal/tracker/...` | **PARTIAL** | Needs `docker pull dolthub/dolt-sql-server:2.2.0` or `TestDomainDB` self-skips; no make target. |
+| `test-embedded-storage` (pr-risk, main) | `go test -tags gms_pure_go -race -c ./internal/storage/embeddeddolt` then run with `BEADS_TEST_EMBEDDED_DOLT=1 -test.skip '^TestConformance$'` | **PARTIAL** | Reproducible but 2-step compile-then-run and env var are workflow-only knowledge; `make test` explicitly skips nothing here but `pr-core` excludes `^TestEmbedded`. |
+| `test-embedded-conformance` core/audit | `scripts/conformance.sh` Tier 1 (unpartitioned) | **PARTIAL** | Local runs both halves in one process (~30m+); CI splits at the `Audit` seam across 2 runners with 35m job timeouts. |
+| `test-server-storage` (pr-risk only) | `go test -tags=integration,gms_pure_go -c ./internal/storage/dolt/` + run `-test.run '^TestConformance$'` with Dolt image | **PARTIAL** | Needs Docker image; no script/target; not present in main.yml at all. |
+| `test-embedded-cmd` N/20 | `BEADS_TEST_EMBEDDED_DOLT=1 BEADS_TEST_CMD_BINARY=... .github/scripts/embedded-test-shard.sh N 20` | **PARTIAL** | Script is local-runnable and has `BEADS_TEST_SHARD_LIST_ONLY=1`, but you must first build `/tmp/bd-cmd-test` and `/tmp/bd-embedded-test` yourself and loop 20 shards serially (CI wall-clock tail ~400s per shard). This is where the only federation behavior tests live. |
+| `test-proxied-cmd` N/15 | `BEADS_TEST_PROXIED_SERVER=1 ... .github/scripts/proxied-test-shard.sh N 15` | **PARTIAL** | Same shape, plus needs Docker + Dolt CLI. |
+| `managed-local-smoke` (proxied-local-smoke) | compile then `sudo unshare --net` netns run | **CI-ONLY** (practically) | Requires root, `unshare --net`, pinned Dolt 2.2.2, and a proven-offline namespace. Reproducible only on Linux with sudo. |
+| `test` (ubuntu-latest, main) | `make ci-pr-core` (≈ same flags) | **PARTIAL** | main adds gotestsum/JUnit + `-coverprofile` + Codecov. Otherwise identical `-race -short -skip '^TestEmbedded' ./...`. |
+| `test` (macos-latest, main) | — | **CI-ONLY** unless the dev is on macOS | Same command, different OS. |
+| `test-windows` (main) | — | **CI-ONLY** unless on Windows | Build + `version` + `help` only; trivially reproducible on a Windows box, impossible elsewhere. |
+| `windows-make-shell` native/msys2/cygwin (pr) | — | **CI-ONLY** | Needs Windows plus three distinct Make hosts (choco make 4.4.1, MSYS2, Cygwin) and hostile env fixtures. |
+| `main-linux-integration-packages` N/6 | `GO_TEST_SHARD_TAGS=integration,gms_pure_go GO_TEST_SHARD_EXCLUDE_REGEX='^github.com/steveyegge/beads/cmd/bd$' scripts/ci/go-test-shard-packages.sh N 6` then `go test -race -tags=integration,gms_pure_go -timeout=30m` | **PARTIAL** | Scripts are local-runnable; no make target; **no `-short`**, so this lane runs tests `make test` and `ci-pr-core` never reach. `BEADS_TEST_SKIP=dolt` is set in CI. |
+| `main-linux-integration-cmd-bd` N/8 | `scripts/ci/go-test-shard-names.sh N 8 ./cmd/bd` + `-run` regex | **PARTIAL** | Same; cmd/bd owns the wall-clock tail per the audit doc. |
+| `nightly full-test` | `go test -v -race -tags=integration,gms_pure_go -coverprofile -timeout=30m ./...` with `BEADS_TEST_SKIP=dolt` | **PARTIAL** | Command is copyable, but no target wraps it and the ≥30% coverage gate is inline shell. |
+| `regression` (regression.yml) | `make test-regression` | **LOCAL-EQUIVALENT** | Same tags/timeout. CI additionally pulls the Dolt image to avoid the embedded-Dolt TempDir cleanup flake; locally you'd hit that flake path. |
+| `smoke` (cross-version-smoke.yml) | `make test-cross-version` / `scripts/upgrade-smoke-test.sh &lt;ver&gt;` | **PARTIAL** | Local target sweeps last 30 tags serially; CI fans out one runner per version (5 on PR). |
+| `migration-test` | `make test-migration` | **PARTIAL** | Same script; needs jq, sqlite3, dolt CLI, and pulls old release binaries (CI caches `~/.cache/beads-regression`). |
+| `package-mcp` / `release-package-mcp` | `make ci-package-mcp` | **PARTIAL** | Needs Python 3.14 + uv 0.11.16 (`uv sync --locked` will fight a different uv/Python). |
+| `package-npm` / `release-package-npm` | `make ci-package-npm` | **PARTIAL** | Needs Node 24; wrapper forces `CI=1` so postinstall doesn't fetch a published release. |
+| `docsync` (docs-mintlify) | `go test -tags=gms_pure_go ./test/docsync` (also in `make check-docs`) | **LOCAL-EQUIVALENT** | — |
+| `broken-links` (docs-mintlify) | `.github/scripts/docs-render-check.sh origin/main` | **PARTIAL** | Node + network; baseline-aware against a base ref. |
+| `nix-build` / `test-nix` | `nix build .#default` / `nix run .#default -- --help` | **CI-ONLY** for most devs | No nix in the repo toolchain assumptions; nothing in the Makefile references nix. |
+| `detect-ci-tier` / `detect-package-gates` / `detect-regression-need` | — | **CI-ONLY** | Pure GitHub-event routing (`GITHUB_OUTPUT`, PR labels, base/head SHAs). |
+| `ci-gate` (pr, pr-risk) | — | **CI-ONLY** | Consumes `needs.*.result`. |
+| `docs-autofix` | — | **CI-ONLY** | `workflow_run` + artifact + write token. |
+| `update-vendor-hash`, `update-flake-lock` | `scripts/update-nix-vendorhash.sh` / `nix flake update` | **CI-ONLY** | Needs nix + repo write tokens. |
+| `release.yml` (goreleaser, goreleaser-macos, attest, publish-pypi, publish-npm), `deploy-pages-redirect`, `test-pypi` | — | **CI-ONLY** | Signing keys, macOS runner, OIDC attestation, registry tokens. |
+| `ci-measurements.yml` (all 15 suites) | — | **CI-ONLY** | Measurement instrumentation; not a gate. |
+
+### Coverage-gap summary (things CI checks that have NO make target)
+`contract-corpus` with `BEADS_PROTOCOL_REQUIRE_DOLT=1`; `test-domain-uow`; `test-server-storage`; the embedded/proxied shard lanes; the no-`-short` `integration`-tagged main lanes; `check-cmd-bd-puregeo-tests`; `check-migration-hygiene`; `check-no-duplicate-migrations`; nightly's integration+coverage sweep; every nix, Windows, and macOS lane.
+
+### Things local can run that CI never runs
+`make test` / `scripts/test.sh` itself (CI runs direct `go test`, never the `.test-skip`/3m-timeout wrapper — documented as P0 divergence in `engdocs/CI_TEST_SURFACE_AUDIT.md`); `make test-icu-path`; `make bench` / `bench-quick`; `make test-upgrade` (only cross-version variant is in CI); `e2e`-tagged tests outside `test/conformance/`; `scripttests` and `chaos` build tags (audit: "No routine CI gate observed").
+
+---
+
+# 4. CI DURATION AND FLAKE MITIGATION
+
+## Explicit timeouts
+- Job `timeout-minutes`: pr-risk `test-proxied-cmd` 20, `test-embedded-conformance` 35, `test-server-storage` 20, `test-nix` 10; main `main-linux-integration-*` 30, `test-proxied-cmd` 20, `test-embedded-conformance` 35, `test-nix` 10; nix-build 10; regression 25; nightly 45; migration-test 45; cross-version smoke 15; proxied-local-smoke 25; update-vendor-hash 15; ci-measurements 20–60.
+- Go-level: `contract-corpus` `-timeout 30m` (comment: package "runs well past `go test`'s 10m default; without it a slow runner reports a panic, not a verdict"); embedded storage/conformance `-test.timeout=30m` under a 35m job timeout, deliberately so a stall dumps goroutines before Actions kills the job; integration shards `-timeout=30m`; regression `-timeout=20m`; nightly `-timeout=30m`; proxied-local-smoke `-test.timeout 15m`; golangci-lint `--timeout=5m`; local `scripts/test.sh` default 3m, `REGRESSION_TIMEOUT ?= 20m`, `make bench` 30m.
+
+## Documented / commented durations
+- `contract-corpus` comment: "~10 min: each test builds an isolated Dolt-backed workspace."
+- `test-embedded-conformance` comment: combined suite "has exceeded 30m under runner variance; each half currently takes ~15m."
+- `engdocs/CI_CLEANUP_PLAN.md` measured samples: `pr-core` 593s job / 577s command; `pr-lint` 211s (143s lint + 54s tool install); `pr-policy` 91s (53s docs-binary build); existing Linux short test job 607s; macOS short 383s; Windows smoke 237s; embedded tail — storage 355s, cmd 19/20 403s, cmd 7/20 387s, cmd 4/20 334s; cross-version-smoke 171s; npm-package 212s; mcp-package 264s; linux-integration-coverage 856s. Stated budget: "wall-clock target is about 25 minutes total."
+- `engdocs/TESTING.md`: local full-suite compilation ~180s dominates.
+
+## Flake mitigation present
+- `fail-fast: false` on every matrix (pr windows-make-shell; main test/integration/embedded/proxied; pr-risk proxied/conformance/embedded; cross-version smoke; all measurement matrices) — one shard failing does not cancel siblings.
+- `continue-on-error: true` on all Codecov uploads (main.yml lines 478, 487; nightly.yml 101) plus `fail_ci_if_error: false`; coverage is explicitly non-blocking ("Coverage Signal Policy" in engdocs/TESTING.md).
+- Pre-pulling `dolthub/dolt-sql-server:2.2.0` in `test-domain-uow`, `contract-corpus`, `test-server-storage`, `test-proxied-cmd`, and `regression` — comments state this converts silent self-skips into real runs, and in regression.yml specifically avoids "the embedded Dolt with HOME=&lt;tmpdir&gt; ... known cleanup race (TestCreateWithParentFlag TempDir RemoveAll 'directory not empty' flake)".
+- Non-race `/tmp/bd-proxied` subprocess binary built alongside the `-race` test binary purely to keep proxied runs inside the timeout.
+- Binary caches: `actions/cache` on `~/.cache/beads-regression` in regression, cross-version-smoke, migration-test.
+- Concurrency `cancel-in-progress: true` on pr, pr-risk, main, conformance, cross-version-smoke, docs-mintlify, docs-autofix (but `cancel-in-progress: false` on update-vendor-hash and the Pages deploy).
+- `nightly`/measurement workflows were changed to "continue independent commands after a failure and exit nonzero at the end, so later samples still collect lint timing when core flakes."
+- `ci-gate` treats `cancelled` as failure; `skipped` is accepted only for the explicitly enumerated tier/event cases.
+- **No retry actions anywhere** — no `nick-fields/retry`, no `max_attempts`, no `-count=N` reruns. Retry is manual re-run only.</result>
+<usage><subagent_tokens>135626</subagent_tokens><tool_uses>27</tool_uses><duration_ms>258428</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>af7172169569fe918</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/af7172169569fe918.output</output-file>
+<status>completed</status>
+<summary>Agent "Mine reports for CI incidents" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## 1. Incident taxonomy
+
+| Date | Job / workflow that failed | Class | One-line description | Source file |
+|---|---|---|---|---|
+| 2026-05-07 (filed) → recurring | Embedded Dolt shard (`TestEmbeddedInitConcurrent`) | d | Standing flake: test disallows the "CI runner timeout-kills a process" third outcome; upstream issue #3811, fix PR #3812 never landed | /var/home/matt/dev/mybd/reports/2026-05-10-beads-untriaged-triage-v1.0.4.md:179 |
+| 2026-05-16 | Embedded-Dolt tests (#3906, #3943), doc-freshness (#3908) | g | Backlog PRs "unstable due embedded test failures in one run" / "doc freshness failure in its observed CI"; blocked triage decisions | /var/home/matt/dev/mybd/reports/2026-05-16-beads-pr-backlog-and-dolt-sync-analysis.md:100-106 |
+| 2026-05-27 | `Check doc flags freshness` (PR #4194) | f | Contributor edited `closeCmd.Long` without running `generate-cli-docs.sh`; 1 of 42 checks red, hard merge block | /var/home/matt/dev/mybd/reports/2026-05-27-pr-4194-review.md:12,23,81 |
+| 2026-05-27 | `cmd/bd` parallel run (PR #4193) | d | `TestResolveWhereBeadsDir_UsesInitializedDBPath` parallel-run flake from missing env/flag isolation; test-only fix | /var/home/matt/dev/mybd/reports/2026-05-27-pr-4193-review.md:19,25,51 |
+| 2026-05-27 | Package Gate (MCP): pytest / mypy / ruff / build | f | beads-mcp baseline rotten (hard-coded `/Users/stevey/...` cwd, `build` missing from dev group); every dependabot/contributor MCP PR reviewed through the noise | /var/home/matt/dev/mybd/reports/2026-05-27-pr-4195-review.md:25-29 |
+| 2026-05-29 | doc-freshness + `llms-full.txt` ordering (PR #4243) | e | CGO build-mode divergence changes the CLI surface, and `generate-llms-full.sh` concatenates in shell glob order → CI-only doc drift | /var/home/matt/dev/mybd/reports/2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution.md:111-115,199 |
+| 2026-06-10 | Lint / PR Lint / Build Artifacts (errcheck on `fmt.Fprint`) | f | Main red on errcheck; fix PR #4360 merged same day; `.golangci.yml` excludes added | /var/home/matt/dev/mybd/.beads/interactions.jsonl (mybd-q55q) |
+| 2026-06-12 ~15:42Z | Embedded-Dolt routed-write + dep cycle-check tests | **a** | Failing "on every run" after a series of Steve Yegge commits pushed straight to main with no PR refs (`914ac3c12`, `1825cf357`, bd-6dnrw.44 items) | /var/home/matt/dev/mybd/reports/2026-06-16-github-repro-worklist.md:110 (upstream #4391) + `bd-main` git log |
+| 2026-06-12 ~21:59Z | Check formatting, doc flags freshness, Build Artifacts, PR Lint/Policy | **a** | Four gates red "since bc909834c" — a direct-to-main test commit with no PR number, i.e. never ran PR CI | /var/home/matt/dev/mybd/reports/2026-06-16-github-repro-worklist.md:109 (upstream #4392) |
+| 2026-07-06 (PR #4366) | 6 red checks: routed-store tests, upgrade-smoke | g | Not real: all six were attempt-2 reruns pinned to the June-10 merge commit; upgrade-smoke resolves its release matrix at runtime, so the rerun was a disguised downgrade | /var/home/matt/dev/mybd/reports/2026-07-06-pr-4366-fail-loud-metadata.md:23-32 |
+| **2026-07-05 → 07-07 (~33h red)** | multiple: Lint, PR Policy, Build Artifacts, Embedded Dolt Cmd shards 5&amp;19, Main integration `-race` | **b** | Umbrella incident: ~50 salvaged PRs merged while base was red; "these failures are pre-existing" let 4 independent breakages stack; batch-fixed by #4623 + #4624 | /var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md:86-105; `bd-main` commit 331bdc30c |
+| ┗ 2026-07-07 (part of above) | Lint / PR Lint / Build Artifacts | f | errcheck: unchecked `outputJSON` error in the formula schema command | `bd-main` 7a0078077 (#4623) |
+| ┗ 2026-07-07 (part of above) | PR Policy / Build Artifacts | f | Quiet embedded test gated on `testing.Short` instead of embedded Dolt (policy violation) + latent ID-parse bug meant the test never actually ran | `bd-main` 7a0078077 (#4623) |
+| ┗ 2026-07-07 (part of above) | Embedded Dolt Cmd shards 5 &amp; 19 | **c** | Unclaim tests carried stale `--json` / claim-error assertions after #4614 landed — two individually-green changes, semantically conflicting | `bd-main` 7a0078077 (#4623) |
+| ┗ 2026-07-07 (part of above) | Main integration `cmd/bd` shard (`-race`) | **e** | `TestPruneLargeFixture`'s &lt;5s wall-clock budget is invalid under the race detector (~20s vs ~1.2s); only the `-race` lane sees it | `bd-main` d84fb1e5e (#4624) |
+| 2026-07-07 ~07:49→09:28 (~1.5h) | `Check doc flags freshness` | f | `64d67e09` (#3618) changed `clean-databases` help text without regenerating docs; fixed by #4631 | `bd-main` c3d68d9f9; /var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md:91 |
+| 2026-07-08 | Package Gate (MCP) `uv sync --locked`; go.mod conflicts; nix vendorHash; `action_required` stalls | e | dependabot `pip` ecosystem never regenerates `uv.lock` → structurally unable to pass CI "forever"; go bumps CONFLICTING since May; bot pushes stall runs | /var/home/matt/dev/mybd/reports/2026-07-08-dependabot-batch.md:21-52 |
+| 2026-07-12 | Embedded Dolt: `TestEmbeddedMigrateConvergesUnderConcurrentInterruptedRetries_4566` | **c** | #4518 (green) merged; its checks predated #4611 landing the #4566 convergence test → deterministic red on main and on every PR merge-ref; fixed forward by #4744 same session | /var/home/matt/dev/mybd/reports/2026-07-12-pr-sweep-stop-the-line.md:23-39 |
+| 2026-07-13 | doc-flags, Build Artifacts, PR Policy (PR #4229) | **c** | Branch-refresh trap: green checks predating the Mintlify docs-layout migration went red after `gh pr update-branch`; one stale doc line = all 3 red checks | /var/home/matt/dev/mybd/reports/2026-07-13-pr-sweep-and-agent-hooks.md:15,41-43 |
+| 2026-07-13 | Upgrade smoke (PR #4232) | d | Go-module-proxy flake; rerun green; merged | /var/home/matt/dev/mybd/reports/2026-07-13-pr-sweep-and-agent-hooks.md:23 |
+| 2026-07-13 | `cmd/bd/protocol` contract test (PR #4095) | f | Reviewer fixed the pagination fixtures but missed `TestProtocol_ReadyDefaultOrdering`/`r2Less`; CI caught it, second repair round needed | /var/home/matt/dev/mybd/reports/2026-07-13-pr-sweep-and-agent-hooks.md:16,37-40 |
+| 2026-07-14 | Embedded Dolt (PR #3758) | d | Stale red gate cleared by update-branch; sole remaining failure was the known #3811 flake; rerun green | /var/home/matt/dev/mybd/.beads/interactions.jsonl (mybd-8chd.9) |
+| 2026-07-14 | CI on PR #4774 | d | Sole failure was a newly confirmed flake, `TestNewDoltServerUOWProvider_ConcurrentInstantiation`, filed upstream as #4775 | /var/home/matt/dev/mybd/.beads/interactions.jsonl (mybd-svus) |
+| 2026-07-24 01:54Z (**main nix red ~2h**) | Nix build (`default.nix` vendorHash / go-modules FOD) | **b** (+e) | A parallel same-user session merged #4942 (Go 1.26.5) with red nix while another session was mid-review; healed only when dependabot #4701's auto-computed vendorHash landed | /var/home/matt/dev/mybd/reports/2026-07-23-coffeegoddd-pr-sweep.md:17,70-77; /var/home/matt/dev/mybd/AGENTS.md:451-458 |
+| 2026-07-24 05:52→16:52 (~11h) | pr-babysit patrol on #4702 (nix stale-commit artifacts + `Test (Proxied Dolt Cmd 1/15)`) | g | Patrol looped BLOCKED every 12 min without the "leave for agent judgment" path reaching an agent; a session had to merge main into the branch by hand | /var/home/matt/dev/mybd/reports/2026-07-24-mybd-beads-state-sweep.md:44-47 |
+| 2026-07-24 | Proxied-Dolt job (PR #4929) | d | Flaked; maintainer rerun of run 30089571462 unblocked the approval | /var/home/matt/dev/mybd/reports/2026-07-24-ecuthiell-pr-sweep.md:22 |
+| 2026-07-24 | `PR Risk` (proxied cmd timeout, PR #4897) | d | Flake rerun | /var/home/matt/dev/mybd/reports/2026-07-24-singleton-pr-sweep.md:61 |
+| 2026-07-20/21 → 07-24 | no checks at all (PRs #4933, #4940) | g | First-time-contributor runs stuck `action_required`; invisible in the PR list, PRs sat 3-4 days | /var/home/matt/dev/mybd/reports/2026-07-24-singleton-pr-sweep.md:58-60 |
+| 2026-07-25 (**main red, blocked all merges**) | Nightly Full Tests — `TestInitCancel_E2E` | f | First judged "load-induced flake"; the rerun failed identically — 5s prompt deadline races embedded-dolt store creation, which crept 4.71→4.92→5.02s over three nightlies (margin exhaustion). Fix: 60s hang guard, PR #5039 | /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:8-12,76-79 |
+| 2026-07-25 | `Contract corpus (golden + determinism + conformance)` — `TestProtocol_GrantingReplicaRoundTripsJSONL` | f | Test asserts non-reclamation via `strings.Contains` on *combined* output, but `warnReplica`'s stderr audit line echoes the id → deterministic failure on every PR since its first outing | /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:81-87 |
+| 2026-07-25 | 1 embedded shard, `TestProxiedServerConfigSetMany` (#5015, #5016) | d | Same flaky shard on two dependabot PRs; handed to patrol reruns | /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:30-31 |
+| 2026-07-10 → 07-25 (2 weeks + 1 day) | gomod/nix `update-vendor-hash.yml` cycle (PR #4702) | e | Every gomod bump invalidates the nix vendorHash → bot commit → dependabot refuses rebase → GITHUB_TOKEN pushes don't retrigger CI ("no checks"); ended `merge-blocked` | /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:13-21 |
+| 2026-07-25 | Shard 11 — `TestProxiedServerReady/gated_empty_case` (PR #5027) | f | PR deleted proxied-only `emitGatedEmpty()` for shared embedded wording, orphaning the assertion; deterministic, not flake — "slipped because his test plan ran proxied Mol\|Wisp\|Pour but not Ready" | /var/home/matt/dev/mybd/reports/2026-07-25-pr5027-mol-proxied-review.md:16-26 |
+| 2026-07-25 | `PR Core (wrapper timing)` + `CI Gate / Required` (PR #4828) | g | Red at head, root cause unrecorded in this repo | /var/home/matt/dev/mybd/reports/2026-07-25-author-head-delta-scout-raw.md:3,33 |
+| 2026-07-24/25 (ongoing) | Proxied fresh-init (upstream #5012) | d | Intermittent dirty pre-existing schema state + MySQL busy-buffer; "the same infrastructure failure contaminates otherwise viable contributor PRs" | /var/home/matt/dev/mybd/reports/2026-07-25-mybd-beads-sweep-and-next-batch.md:99-102 |
+| 2026-07-05 | dbproxy job (PR #3778) | d | "only red CI is an unrelated dbproxy flake" | /var/home/matt/dev/mybd/reports/2026-07-05-pr-review-sweep-oldest-batch2.md:16 |
+| standing (unlanded) | `TestProxy_IdleTimeout_Fires` | d | `listenWait` still 2s on main; the 2s→10s flake fix (PR #3987) sat orphaned | /var/home/matt/dev/mybd/reports/2026-07-05-orphaned-pr-inventory.md:88 |
+| 2026-06-20 | golangci-lint (PR #4462) | f | Final CI blocker was a misspell lint ("recognised"), fixed in 78a223b3d | /var/home/matt/dev/mybd/.beads/interactions.jsonl (mybd-9k2a.1) |
+| 2026-07-08 | Embedded-Dolt CI shards, mid-run | g | Shards show transient FAILURE conclusions mid-run; all four observed "mass Dolt failures" evaporated at completion — judge only at zero pending checks | /var/home/matt/dev/mybd/reports/2026-07-08-dependabot-batch.md:47-49 |
+
+## 2. Counts per root-cause class
+
+| Class | Count | Rows |
+|---|---:|---|
+| **a** — bad commit direct-pushed to main, bypassing PR CI | **2** | 2026-06-12 ×2 (upstream #4391, #4392) |
+| **b** — merged while checks red / process violation | **2** | 2026-07-05..07 33h stacking window; 2026-07-24 #4942 red-nix merge |
+| **c** — semantic conflict between two individually-green PRs | **3** | #4623 unclaim-vs-#4614; #4518-vs-#4611; #4229-vs-Mintlify migration |
+| **d** — flaky test / infra flake | **11** | #3811, #4193, #4232 module-proxy, #3758, #4775, #4929, #4897, #5015/#5016 shard, #5012, #3778 dbproxy, #3987 idle-timeout |
+| **e** — environment-only failure (no local equivalent) | **4** | CGO/doc-gen divergence (#4243); `-race` prune budget (#4624); dependabot pip/uv + nix vendorHash (07-08); #4702 vendorHash cycle |
+| **f** — genuine bug local tests should have caught | **11** | #4194 docs, MCP baseline, 06-10 errcheck, #4623 errcheck, #4623 testing.Short, #4631 docs, #4095 contract test, `TestInitCancel_E2E`, replica-guard contract test, #5027 Ready assertion, #4462 misspell |
+| **g** — other / unknown | **6** | 05-16 unstable band; #4366 stale reruns; 11h #4702 patrol loop; `action_required` invisible runs; #4828; transient mid-run shard FAILUREs |
+| **Total** | **39** | |
+
+Time-in-red where stated: **~33h** (2026-07-05..07), **~2h** (nix, 2026-07-24), **~1.5h** (#4631 docs, 2026-07-07), **~11h** patrol loop (not main-red), **2 weeks + 1 day** merge-blocked (#4702).
+
+## 3. Explicit statements about why local testing did not catch it
+
+- "Local pre-merge validation had run the schema suite but not the embedded-dolt convergence suite — the gap is now a `bd remember` (`stale-green-checks-merge-hazard-learned-2026-07`): refresh any PR whose green checks predate recent main commits before merging; **base-green preflight does not test the PR+base composition**." — /var/home/matt/dev/mybd/reports/2026-07-12-pr-sweep-stop-the-line.md:33-39
+- "Deterministic, not flake; **slipped because his test plan ran proxied Mol|Wisp|Pour but not Ready**." — /var/home/matt/dev/mybd/reports/2026-07-25-pr5027-mol-proxied-review.md:22
+- "The #4095 reviewer caught the domain/db fixtures but missed the protocol contract test — CI caught it. **Contract tests (`cmd/bd/protocol`) are a standing blind spot for ordering changes**." — /var/home/matt/dev/mybd/reports/2026-07-13-pr-sweep-and-agent-hooks.md:37-40
+- "#4229 showed the branch-refresh trap: green checks that predate a docs-layout migration (Mintlify) go red after `gh pr update-branch` when the PR adds CLI surface." — same file:41-43
+- "A green `CGO_ENABLED=0 go test ./...` skips ~100 embedded-Dolt test files. **'Tests pass' means two different things.**" — /var/home/matt/dev/mybd/reports/2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution.md:97-98
+- "**Lint divergence.** `.githooks/pre-commit` lints at `CGO_ENABLED=0`, no tags; CI lints at cgo + `gms_pure_go`; `.pre-commit-config.yaml` inherits whatever is in the environment. **Findings differ between local hook and CI.**" — same:99-102
+- "**Non-deterministic doc generator.** `scripts/generate-cli-docs.sh` silently *reuses an existing `./bd`* of unknown provenance, else builds one at `CGO_ENABLED=0`. **Output depends on how you last built.**" — same:103-105
+- "at session close both PRs had ~27 checks green, ~25 pending (embedded-Dolt test matrix — **the coverage that cannot build locally**)." — /var/home/matt/dev/mybd/reports/2026-07-05-ready-sweep-and-fixmerge.md:41-42
+- "A locally-built combined PR was considered and rejected: **no nix on this machine to compute vendorHash**, and the workflow only fires for dependabot-authored PRs." — /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:22-24
+- CI coverage gaps enumerated as the reason a release gate had to be verified by hand: cross-version-smoke's "dataset has **no dependencies** and it runs **no blocker queries**"; migration-test only baselines "**≤ v0.63.3**" and verifies "via `bd list` / `bd show` only"; "`is_blocked` / ready / blocked logic is unit-tested only on **fresh-schema** DBs"; "Rollback (`.down.sql` for 0041–0045) exists but is **not exercised by any CI job**"; verdict "Confirmed by hand, **which is stronger than the (absent) CI coverage**." — /var/home/matt/dev/mybd/reports/2026-05-28-release-gate-1.0.5-dependencies-migration.md:80-104
+- "**No PR-triggered CI exists for beads-mcp**, so the description's pytest/ruff claims are unverified." — /var/home/matt/dev/mybd/reports/2026-07-07-pr-review-sweep.md:39
+- MCP baseline: test "hard-coded `/Users/stevey/src/dave/beads/integrations/beads-mcp` as the subprocess `cwd` … so the test **silently produced empty stdout on any non-`stevey` machine**." — /var/home/matt/dev/mybd/reports/2026-05-27-pr-4195-review.md:25
+- "**CGO-off builds silently pass with zero managed-local tests** … `testing: warning: no tests to run / PASS` … The workflow is still fail-open: a runner/toolchain/env change turns the dedicated gate into a green no-op." Also: image "not cached locally …, skipping Dolt tests". — /var/home/matt/dev/mybd/reports/2026-07-23-pr-5004-adversarial-review.md:34-60,103-105
+- "the round-trip test was **silently SKIPPING** (needs `-tags cgo` for the container test server) and leaked three globals not covered by `saveAndRestoreGlobals`." — /var/home/matt/dev/mybd/reports/2026-07-24-singleton-pr-sweep.md:44-46
+- "A normal local build failed because this machine lacks ICU headers … That non-repro is not decisive. Linux normally has GNU `timeout` … the reported hard path is stock macOS without `timeout`, and #3626's test is cgo/embedded-only." — /var/home/matt/dev/mybd/reports/2026-05-16-beads-pr-backlog-and-dolt-sync-analysis.md:46-49
+- "golangci-lint pin drift (CI v2.9.0 vs pre-commit v2.10.1) surfaces 8 gosec findings **only under the newer pin**." — /var/home/matt/dev/mybd/reports/2026-07-05c-ready-processing-loop.md:40-41
+- "the 5s prompt deadline in `TestInitCancel_E2E` races embedded-dolt store creation, which crept 4.71s → 4.92s → 5.02s across three nightlies. **Margin exhaustion.**" (only visible under full-suite nightly load) — /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:76-79
+- "Upgrade-smoke resolves its release matrix at **runtime**: the re-run pitted late-June v1.1.0-family releases against a June-10 candidate binary — a disguised downgrade. (Now in `bd remember`: `stale-pr-ci-reruns-test-pinned-merge`.)" — /var/home/matt/dev/mybd/reports/2026-07-06-pr-4366-fail-loud-metadata.md:28-32
+- "Root cause confirmed: **harness git-identity gap, not product**" (`TestCommitBeadsConfigSkipsGitHooks` failing on ambient git config) — /var/home/matt/dev/mybd/.beads/interactions.jsonl (mybd-icvk)
+- The stacking mechanism itself: "every PR inherits red checks, and **'these failures are pre-existing' reasoning lets new breakage stack on top of old**" — /var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md:88-92
+
+## 4. Existing proposals / beads about local testing and CI gating
+
+**Landed / operational**
+- `mybd-8wqf` — stop-the-line for red upstream main. Mechanical half = upstream #4630 `pr-preflight.sh` base-branch health (per-workflow newest *decisive* run; cancelled runs ignored); policy half = "Base-Branch Health (stop-the-line)" in /var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md:86-105 and `PR_PREFLIGHT_BLOCK_RED_BASE=1` in /var/home/matt/dev/mybd/AGENTS.md:265-269. Commit b519d66cd; upstream implementation `bd-main` 331bdc30c.
+- **pr-babysit / pr-handoff patrol** — zero-token systemd timer that merges only after blocking preflight, one flake rerun, then `merge-blocked` relabel + unclaim. /var/home/matt/dev/mybd/AGENTS.md:435-462; scripts commits d5d43558 → 1e33d268 → 88f3fafd4. Open follow-through **`mybd-nfrv`** ("fail-closed pr-babysit — before the patrol gets more merge responsibility; the 11h #4702 loop shows the escalation hatch doesn't escalate").
+- **Local Verification Queue** — `scripts/verify-enqueue` / `verify-next` / `verify-status`, with `verify_state` / `verify_head` written back to the bead; "the bead is not complete until verification passes for the recorded `verify_head`". /var/home/matt/dev/mybd/AGENTS.md:404-433.
+- **`mybd-ethh`** — depguard storage-boundary rule: "turns 'reaching across the storage boundary' from a review catch into a **CI failure**, with no restructuring"; shipped as upstream PR #4589. /var/home/matt/dev/mybd/reports/2026-05-28-dolt-as-driver-should-it-be-a-subrepo.md:123,143; /var/home/matt/dev/mybd/reports/2026-07-05c-ready-processing-loop.md:28-41.
+- **`mybd-q6cz`** — leaked test `dolt sql-server` reaping (`Pdeathsig` + `SweepOrphanedTestServers` in six TestMains, incl. a new TestMain for `internal/doltserver`) → PR #4592. Same file:43-60.
+- **`mybd-t7mk.1`** (from the CGO report's T1) — auto `gms_pure_go` GOFLAGS in devcontainer setup + `make doctor-build` preflight; merged upstream as #4587. /var/home/matt/dev/mybd/.beads/interactions.jsonl.
+
+**Open / proposed**
+- **CGO divergence fix plan T1–T5 + S1** — T2 build-invariant `federation` CLI surface, **T3 deterministic doc generators** (sort the `generate-llms-full.sh` glob; pin or refuse to reuse a stray `./bd`), **T4 "make verification honest"** (unify the three golangci-lint invocations to one mode + one tag set; have the test harness announce its mode/subset: "embedded tests: ENABLED (cgo)" vs "SKIPPED — run `make test`"), T5 `bd doctor` reports `cgo:` / `embedded:`. /var/home/matt/dev/mybd/reports/2026-05-29-cgo-enabled-build-divergence-root-cause-and-solution.md:139-175.
+- **`mybd-kpd7`** — golangci-lint pin drift, CI v2.9.0 vs pre-commit v2.10.1. /var/home/matt/dev/mybd/reports/2026-07-05c-ready-processing-loop.md:40.
+- **upstream #5038** (`mybd-8usj` → `mybd-ysu1`, chained from `mybd-9rgr`) — dependabot `groups` config so one grouped gomod PR = one bot-computed vendorHash = one CI cycle; plus raising `open-pull-requests-limit` to 10 and a separate `testcontainers` group. The `mybd-ysu1` lane explicitly owns "ensures CI runs on bot vendor-hash heads". /var/home/matt/dev/mybd/reports/2026-07-25-dependabot-pr-sweep.md:41-58; /var/home/matt/dev/mybd/reports/2026-07-25-mybd-beads-sweep-and-next-batch.md:158-169.
+- **upstream #5039** (`mybd-kney`) — "test: fix red main": 60s hang-guard for `TestInitCancel_E2E` + JSON-payload parsing for the replica-guard contract test; the policy-sanctioned only-mergeable PR while main is red.
+- **PR #5004 review asks (anti-fail-open CI gating)** — set `CGO_ENABLED: "1"` explicitly, and **fail unless `-test.list '^Test…$'` returns the expected test before running it**; pre-pull the pinned Dolt image so the lane can't silently skip. /var/home/matt/dev/mybd/reports/2026-07-23-pr-5004-adversarial-review.md:34-60,103-107.
+- **`mybd-5zvr`** — `scripts/dolt-compat-matrix` harness; remaining work includes "multiple runs for flake margin, **wire into CI as the psxg.4 'tested-through' producer**". /var/home/matt/dev/mybd/reports/2026-07-25-dolt-compat-matrix-first-run.md:57-66.
+- **`mybd-9i93.2`** — "Treat #5032 and #5035 as a paired **CI-hygiene story**". /var/home/matt/dev/mybd/reports/2026-07-25-mybd-beads-sweep-and-next-batch.md:154.
+- **`mybd-4t6s`** — own upstream #5012 (proxied fresh-init dirty schema / busy buffer) "as one semantic invariant … reproduce or establish a defensible non-reproduction window". Same file:116-132.
+- CI-cost note (not yet a bead): "paths-filters could trim the three new always-on required CI matrices (doc-freshness 3-OS, windows-make-shell, worktree-remove-windows)". /var/home/matt/dev/mybd/reports/2026-07-24-ecuthiell-pr-sweep.md:46-50.
+- Standing `bd remember` memories acting as gating heuristics: `stale-green-checks-merge-hazard-learned-2026-07`, `stale-pr-ci-reruns-test-pinned-merge`, `dependabot-maintenance-gotchas`, `pr-babysit-pattern`, `git-stash-shared-across-worktrees`, `claim-actor-mismatch`.</result>
+<usage><subagent_tokens>145670</subagent_tokens><tool_uses>52</tool_uses><duration_ms>441270</duration_ms></usage>
+</task-notification>
+
+---
+
+35 to 70 min per run builds incentive to merge to main, skip tests, and merge while red. i think the reason you found main gate plumbing exists is because at one time it was used but then turned off as it was blocking development. ... auto-revert on fail sounds like a sane measure, as does merge batches. we should do those, but they're interim and we'll keep ending up here if we can't resolve the underlying issues.
+
+---
+
+proposed issue title is too technical and jargony. this is about 'why is CI consistently jammed and what can we do about it'. other than that i think it's good to go. post and flag maintainers
