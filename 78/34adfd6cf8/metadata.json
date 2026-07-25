@@ -3,7 +3,7 @@
   "checkpoint_id": "7834adfd6cf8",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-25-pr5027-mol-proxied-review.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/78/34adfd6cf8/0/transcript.jsonl",
       "content_hash": "/78/34adfd6cf8/0/content_hash.txt",
       "prompt": "/78/34adfd6cf8/0/prompt.txt"
+    },
+    {
+      "metadata": "/78/34adfd6cf8/1/metadata.json",
+      "transcript": "/78/34adfd6cf8/1/full.jsonl",
+      "compact_transcript": "/78/34adfd6cf8/1/transcript.jsonl",
+      "content_hash": "/78/34adfd6cf8/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 72,
-    "cache_creation_tokens": 47965,
-    "cache_read_tokens": 4692833,
-    "output_tokens": 27404,
-    "api_call_count": 36
+    "input_tokens": 116,
+    "cache_creation_tokens": 83068,
+    "cache_read_tokens": 7642830,
+    "output_tokens": 41185,
+    "api_call_count": 58
   }
 }
