@@ -344,6 +344,13 @@ Why: on 2026-05-29 two agents shared the root checkout (no worktree); one ran
 `git checkout` to a new branch mid-session, racing the other's commits. Working
 from a per-task worktree keeps each agent's index and HEAD isolated.
 
+Worktrees do NOT isolate `git stash`: the stash stack is shared repo-wide
+across all linked worktrees. On 2026-07-24 two parallel builders each ran bare
+`git stash`/`git stash pop` and popped each other's entries, cross-contaminating
+their worktrees. Agents working in parallel worktrees must not use bare
+`git stash` — use `git stash push -m "<branch>-<purpose>"` and apply by exact
+ref, or commit WIP instead.
+
 A tracked, **opt-in** `.githooks/` tree backs this convention. It is the single
 composed hook path for the repo: the root-commit guard (`.githooks/pre-commit`,
 fires only in the MAIN checkout - linked worktrees are a no-op, warns by
