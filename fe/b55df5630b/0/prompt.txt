@@ -1,0 +1,7 @@
+Adversarially verify a maintainer verdict for gastownhall/beads PR #4862 before it is acted on. Try to REFUTE it.
+
+The verdict and its key claims: RETIRE with credit. Claim: the PR's per-database advisory-lock serialization of concurrent claims is superseded — upstream main already prevents double-claims via the row_lock fence + retry in internal/storage/issueops/claim.go:53-58 (since GH-3570/#4537), regression-tested by TestConcurrentWorkQueueDrain (internal/storage/dolt/concurrent_test.go), and #5006 (verify-by-re-read) + #5008 (--if-assignee/--if-status) merged 2026-07-24 harden the same path. The PR's 6-concurrent-claims harness data predates/ignores the row_lock fence. Retiring live contributor value is the costly error — check hard whether the advisory lock solves ANY residual problem main's mechanism does not (e.g. embedded-mode lock contention, non-claim write paths), and whether the PR contains unique test value worth absorbing before closure.
+
+Check with gh (--repo gastownhall/beads: pr view/diff, reviews, comments) and the local clone bd-main/ (git -C bd-main; upstream remote = gastownhall/beads; read source at upstream/main). Read-only; post nothing; no bd/dolt commands.
+
+First line exactly 'VERDICT: CONFIRM' or 'VERDICT: REFUTE', then terse file:line bullets on anything material.
