@@ -112,8 +112,12 @@ rearm_sweep() {
       eligible=1; why="PR head moved since the block verdict"
     else
       case "$class" in
-        preflight-policy) ;;  # genuine policy blocks need a new head, not a retry
-        preflight-transient-persistent)
+        # preflight-policy blocks may record a since-settled transient (base
+        # pushes flip mergeStateStatus to UNKNOWN repo-wide) or a cleared
+        # policy condition; a settled CLEAN state earns a budgeted retry —
+        # the main loop re-blocks genuine conditions and REARM_LIMIT bounds
+        # the flap at two cycles per head.
+        preflight-policy|preflight-transient-persistent)
           if [[ "$msstatus" == CLEAN || "$msstatus" == HAS_HOOKS ]]; then
             eligible=1; why="merge state settled to $msstatus"
           fi ;;
@@ -223,9 +227,16 @@ while read -r item; do
   fi
 
   checks_err="$STATE_DIR/gh-checks.err"
-  if ! checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$checks_err")" || ! jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.name | type == "string") and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"${checks:-}"; then
+  checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$checks_err")"; checks_status=$?
+  if (( checks_status != 0 )) || ! jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.name | type == "string") and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"${checks:-}"; then
     [[ -s "$checks_err" ]] && log "$bead: gh pr checks stderr: $(tr '\n' ' ' <"$checks_err" | cut -c1-200)"
     rm -f "$checks_err"
+    if (( checks_status == 8 )); then
+      # gh documents exit 8 as "checks pending" — a real wait state, never a
+      # data problem; it must not consume the unavailable-escalation budget.
+      transition "$bead" "$metadata" "$notes" "checks-pending-status:$head" "gh reports checks still pending (exit 8); retained under patrol." || log "$bead: transition failed"
+      continue
+    fi
     checksun_prev="$(jq -r '.pr_babysit_checksun // empty' <<<"$metadata")"
     checksun_n="$(counter_for_head "$checksun_prev" "$head")"
     if (( checksun_n + 1 >= CHECKS_UNAVAILABLE_LIMIT )); then
