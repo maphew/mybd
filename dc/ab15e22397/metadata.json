@@ -3,7 +3,7 @@
   "checkpoint_id": "dcab15e22397",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "AGENTS.md"
   ],
@@ -13,6 +13,13 @@
       "transcript": "/dc/ab15e22397/0/full.jsonl",
       "compact_transcript": "/dc/ab15e22397/0/transcript.jsonl",
       "content_hash": "/dc/ab15e22397/0/content_hash.txt",
+      "prompt": ""
+    },
+    {
+      "metadata": "/dc/ab15e22397/1/metadata.json",
+      "transcript": "/dc/ab15e22397/1/full.jsonl",
+      "compact_transcript": "/dc/ab15e22397/1/transcript.jsonl",
+      "content_hash": "/dc/ab15e22397/1/content_hash.txt",
       "prompt": ""
     }
   ],
