@@ -1,0 +1,109 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "feb55df5630b",
+  "session_id": "d41b072b-60a1-4514-9833-47e37aa7b046",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T00:17:26.789005029Z",
+  "branch": "main",
+  "checkpoints_count": 6,
+  "save_step_count": 5,
+  "files_touched": [
+    "AGENTS.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "035d2a6857f9",
+  "checkpoint_transcript_start": 1026,
+  "transcript_lines_at_start": 1026,
+  "compact_transcript_start": 218,
+  "token_usage": {
+    "input_tokens": 207,
+    "cache_creation_tokens": 434107,
+    "cache_read_tokens": 39296445,
+    "output_tokens": 64192,
+    "api_call_count": 104
+  },
+  "session_metrics": {
+    "turn_count": 19
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T00:17:26.634168005Z",
+    "agent_lines": 7,
+    "agent_removed": 0,
+    "human_added": 77,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 84,
+    "total_lines_changed": 84,
+    "agent_percentage": 8.333333333333332,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 7,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 7,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 7,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

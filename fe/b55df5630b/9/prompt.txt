@@ -1,0 +1,167 @@
+proceed with singleton fix cluster
+
+---
+
+<task-notification>
+<task-id>wze71yccg</task-id>
+<tool-use-id>toolu_018hwTMN64k1kmD1f6nmNVXk</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/wze71yccg.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Review 14 singleton-author PRs on gastownhall/beads (sonnet reviewers; codex verifies later)" completed</summary>
+<result>{"reviews":[{"action_plan":"1) Apply the targeted fix in cmd/bd/create.go: in the `if file != \"\" { ... }` block (PR-head lines 57-68) and the `if graphFile != \"\" { ... }` block (lines 71-86), add a guard before dispatching to createIssuesFromMarkdown/createIssuesFromGraph:\n   ```go\n   if cmd.Flags().Changed(\"allow-empty-description\") {\n       return HandleError(\"--allow-empty-description is not valid with --file (markdown templates supply per-issue fields)\")\n   }\n   ```\n   (graph block: same check, message says \"--graph\"). This closes the exact gap the CHANGES_REQUESTED review flagged: direct-mode (non-proxied) --file/--graph dispatch returns before create.go:124's `validateDescriptionUpdate` call, so `bd create --file plan.md --allow-empty-description` currently accepts-and-silently-ignores the flag in direct mode while the proxied path (create_input.go, via gatherCreateInput -&gt; rejectSingleIssueFlagsForMarkdown/ForGraph, which already includes \"allow-empty-description\" in singleIssueOnlyFlags) correctly rejects it. Scope the fix to this one flag only — do NOT wire the full rejectSingleIssueFlagsForMarkdown/ForGraph call into direct mode, since that would newly reject many other flags (title, priority, skills, etc.) in direct mode that currently succeed silently; that broader \"hoist above the mode/batch dispatch\" is explicitly the shared #4918 follow-up the review names, not required for this PR.\n2) Add regression tests in cmd/bd/create_input_test.go or a create_test.go: (a) direct-mode `bd create --file &lt;path&gt; --allow-empty-description` errors; (b) same for --graph; (c) a successful single-issue `--allow-empty-description` create round-trip (the review's nit that no test exercises the opt-in succeeding). This addresses should-fix #2 (thin coverage) from the review.\n3) Optional/low-priority nit from the review: rename `validateDescriptionUpdate` to something create-neutral (e.g. `validateDescriptionInput`) since it is now called from create.go as well as update paths — cosmetic, include only if convenient during the fix-merge, not blocking.\n4) Rebase PR branch (180f786) onto current upstream/main — it is 88 commits behind. `git merge-tree upstream/main FETCH_HEAD` shows one conflict, in cmd/bd/test_repo_beads_guard_test.go (a test-repo-count fixture unrelated to this PR's actual diff — the PR only touches cmd/bd/create.go, cmd/bd/create_input.go, cmd/bd/create_input_test.go). None of the 88 intervening commits touch create.go/create_input.go except graph-plumbing refactors (581d3593d, a95605b2e, 190e35868, 24e349a49, 1285242c1, 3d0031aad, 4103d985d) that are additive/orthogonal to this PR's description-validation logic, so the rebase itself should be low-risk once the fixture conflict is resolved.\n5) Re-run: `go test -tags gms_pure_go ./cmd/bd -run 'Test(CreateCommand|GatherCreateInputRejectsEmptyBodyFile|ValidateDescriptionUpdate)' -count=1` plus the new direct-mode tests, then merge (squash), crediting davevan2 for the original fix and root-cause diagnosis (fixes #4983); note in the merge/PR that the maintainer session closed the direct-mode gap the review raised.\n6) maintainerCanModify=true, so this can be pushed directly to the contributor's branch rather than opened as a separate superseding PR — prefer that path per the contributor-protection guidance.","behind_main":"88 commits behind upstream/main (base fcdcae1ce4 -&gt; upstream/main 0251a4d71); only graph-plumbing/create refactors among those touch cmd/bd/create.go or create_input.go, and merge-tree shows a single conflict in the unrelated cmd/bd/test_repo_beads_guard_test.go fixture (three-way conflict, not touched by this PR's diff) — a routine rebase, not a real logic conflict.","changes_requested_state":"maphew (org member) posted CHANGES_REQUESTED on 2026-07-23T23:15:43Z against commit 180f7860 (a cross-vendor Codex/Claude adjudicated review). It demanded: (1) should-fix — direct-mode (non-proxied) `--file`/`--graph` dispatch in create.go bypasses the new `validateDescriptionUpdate`/`--allow-empty-description` validation entirely, since that dispatch returns from RunE (create.go:57-86) before reaching the validation call (create.go:124-130), so the flag is silently accepted-and-ignored in direct mode while rejected in proxied mode — the exact silent-discard class this PR exists to fix; (2) should-fix — no test covers direct-mode execution, a successful `--allow-empty-description` create, the error text, or batch parity; (3) nit — rename `validateDescriptionUpdate` to a create-neutral name. The PR's headRefOid is still 180f7860 (its only commit, created 2026-07-23T03:54:17Z) — verified by re-reading create.go and create_input.go at FETCH_HEAD: the direct-mode gap in finding (1) is confirmed still present and unaddressed (rejectSingleIssueFlagsForMarkdown/ForGraph, which do include \"allow-empty-description\" in singleIssueOnlyFlags, are only ever invoked via gatherCreateInput, which only runs on the proxied path). No test additions beyond what shipped with the original commit, so finding (2) is also unaddressed. Author has not pushed since the review.","supersession":"none — no other merged PR or upstream/main commit closes gastownhall/beads#4983 or fixes the create-input-discard class of bug for `bd create`. The 88 intervening upstream/main commits touching create.go/create_input.go are unrelated --graph plumbing refactors (581d3593d, a95605b2e, 190e35868, 24e349a49, 1285242c1) and global-ID validation (3d0031aad, 4103d985d).","findings":[{"file":"cmd/bd/create.go","line":57,"issue":"Direct-mode (non-proxied) --file dispatch returns before the new validateDescriptionUpdate/--allow-empty-description check at create.go:124-130, so `bd create --file plan.md --allow-empty-description` is silently accepted and the flag is ignored -- the same silent-discard bug class this PR exists to eliminate. Confirmed still present at head 180f7860 (no push since the 2026-07-23 CHANGES_REQUESTED review that raised this).","fix":"Before `return createIssuesFromMarkdown(cmd, file)`, add: `if cmd.Flags().Changed(\"allow-empty-description\") { return HandleError(\"--allow-empty-description is not valid with --file (markdown templates supply per-issue fields)\") }`.","blocking":true},{"file":"cmd/bd/create.go","line":71,"issue":"Same gap as above for the --graph dispatch path: direct-mode returns via createIssuesFromGraph before validateDescriptionUpdate runs, so --allow-empty-description is silently ignored with --graph too.","fix":"Add the mirrored guard in the `if graphFile != \"\"` block: `if cmd.Flags().Changed(\"allow-empty-description\") { return HandleError(\"--allow-empty-description is not valid with --graph (graph plans supply per-node fields)\") }` before calling createIssuesFromGraph.","blocking":true},{"file":"cmd/bd/create_input_test.go","line":53,"issue":"No test exercises direct-mode --file/--graph with --allow-empty-description (the exact gap above), and no test exercises a successful --allow-empty-description create (opt-in path is only asserted to register as a flag, never exercised end-to-end).","fix":"Add TestCreateDirectModeRejectsAllowEmptyDescriptionWithFile, TestCreateDirectModeRejectsAllowEmptyDescriptionWithGraph, and a success-path test that an empty description with --allow-empty-description actually creates the issue.","blocking":false},{"file":"cmd/bd/create_input.go","line":128,"issue":"validateDescriptionUpdate is now called from the create path but its name implies update-only semantics, which will mislead future readers/editors of update.go into thinking it's update-specific.","fix":"Rename to validateDescriptionInput (or similar create-neutral name) at both call sites (create.go:128, create_input.go) and its definition.","blocking":false}],"pr":4984,"classification":"fix-merge","maintainer_can_edit":true,"risk":"low"},{"pr":4985,"classification":"needs-author","maintainer_can_edit":true,"behind_main":"Base 3f5e1ba3 is 74 commits behind u
+... (truncated 85230 chars, full result in /tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/wze71yccg.output)</result>
+<diagnostics>Per-agent results: /var/home/matt/.claude/projects/-var-home-matt-dev-mybd/d41b072b-60a1-4514-9833-47e37aa7b046/subagents/workflows/wf_f133986b-4c4/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/var/home/matt/.claude/projects/-var-home-matt-dev-mybd/d41b072b-60a1-4514-9833-47e37aa7b046/workflows/scripts/singleton-pr-sweep-wf_f133986b-4c4.js', resumeFromRunId: 'wf_f133986b-4c4'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>14</agent_count><agents_done>14</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>983946</subagent_tokens><tool_uses>271</tool_uses><duration_ms>302503</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0fe21ef6898590f3</task-id>
+<tool-use-id>toolu_01Vvi3jM8d6VGpk5XGiEttjv</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/a0fe21ef6898590f3.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix-merge PR 4897 branch" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Summary
+
+Worked in `/var/home/matt/dev/mybd/.worktrees/beads/pr-4897-fix` (branch `fixmerge2/pr-4897`, confirmed linked worktree: `git-dir` = `.../.bare/worktrees/pr-4897-fix` differs from `git-common-dir` = `.../.bare`).
+
+1. **Merge**: `git merge upstream/main --no-edit` (upstream tip `0251a4d71`) applied cleanly with **zero conflicts** — matches the spec's prediction. No manual conflict resolution was needed.
+
+2. **Blocker fix**: `cmd/bd/ready_proxied_server.go`, `runReadyProxiedList` — replaced the bare `outputJSON(results)` with `outputJSONWithPagination(results, pag)`, where `pag := &amp;PaginationMeta{Returned: len(results), Truncated: page.HasMore &amp;&amp; in.filter.Limit &gt; 0}`, `Total` left unset (0) with a comment explaining the backend has no cheap total-count equivalent on this path, unlike the direct route in `ready.go` (which populates `Total` via `CountReadyWork`). Followed the finding's literal prescription: `pag` is built unconditionally (not nil'd out when not truncated), so the proxied route always emits a `pagination` key under `BD_JSON_ENVELOPE=1` — this differs slightly from the direct route (which omits the key entirely when not truncated) but matches the task's "follow the spec's exact prescription" instruction for the literal fix code. Flagging this as a judgment call in case the orchestrator wants exact parity with the direct route's nil-when-not-truncated behavior instead.
+
+3. **Tests added** in `cmd/bd/ready_proxied_integration_test.go` (within `TestProxiedServerReady`): `pagination_envelope_truncated` (4 issues, `--limit 2`, asserts `pagination.truncated == true`, `returned == 2`) and `pagination_envelope_not_truncated` (1 issue, `--limit 10`, asserts `pagination.truncated == false`, `returned == 1`), both run with `BD_JSON_ENVELOPE=1` via `bdProxiedRunBuffersWithEnv`.
+
+4. **Validation**:
+   - `gofmt -l` on both changed files: empty output.
+   - `CGO_ENABLED=1 go build -tags gms_pure_go ./...`: clean.
+   - `go vet -tags gms_pure_go ./cmd/bd/`: clean.
+   - `CGO_ENABLED=1 go test -tags gms_pure_go -count=1 -run 'Pagination|Envelope' -v ./cmd/bd/`: 7/7 PASS (`TestWrapWithSchemaVersion_Envelope_*`, `TestOutputJSONWithPagination_*`).
+   - `BEADS_TEST_PROXIED_SERVER=1 CGO_ENABLED=1 go test -tags gms_pure_go -count=1 -run 'TestProxiedServerReady$' -v ./cmd/bd/`: full `TestProxiedServerReady` suite PASS (43.66s), confirmed by name: `--- PASS: TestProxiedServerReady/pagination_envelope_truncated (23.44s)` and `--- PASS: TestProxiedServerReady/pagination_envelope_not_truncated (11.58s)`.
+
+5. **Commit**: `f9b70c5d6 fix(ready): emit pagination metadata on the proxied route too`, trailer `Agent-Signature: claude-sonnet-5-medium on behalf of maphew` as given literally in the task spec (the `scripts/agent-sig.sh` helper lives in the mybd coordination-repo root, outside the worktree I was scoped to; I used the exact trailer text the task specified rather than reaching outside scope). `git log --oneline -3`:
+```
+f9b70c5d6 fix(ready): emit pagination metadata on the proxied route too
+5ea617f7f Merge remote-tracking branch 'upstream/main' into fixmerge2/pr-4897
+0251a4d71 Merge pull request #5014 from coffeegoddd/db/purge
+```
+
+Did not touch CI/reruns, docs/reference/json-schema.md, or the stale `Closes #4892` trailer — those are the non-blocking should-fix items explicitly out of scope per the task instructions.
+
+Working tree is clean; no push performed (per instructions).</result>
+<usage><subagent_tokens>80458</subagent_tokens><tool_uses>32</tool_uses><duration_ms>253737</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a04c420fb5683dbe0</task-id>
+<tool-use-id>toolu_01EsmYXJxJEVXDFYmmcXSYdf</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/a04c420fb5683dbe0.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix-merge PR 4984 branch" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Summary
+
+Worked in `/var/home/matt/dev/mybd/.worktrees/beads/pr-4984-fix` (branch `fixmerge2/pr-4984`), confirmed as a linked worktree (`git-dir` differs from `git-common-dir`).
+
+**Steps completed:**
+
+1. **Merge**: `git merge upstream/main --no-edit` completed with **zero conflicts** (git auto-resolved `cmd/bd/test_repo_beads_guard_test.go` cleanly, contrary to the spec's `merge-tree`-predicted single conflict — no manual resolution was needed). Merge commit: `1c8d8b492`.
+
+2. **Guards added** in `/var/home/matt/dev/mybd/.worktrees/beads/pr-4984-fix/cmd/bd/create.go`: two `cmd.Flags().Changed("allow-empty-description")` checks before `createIssuesFromMarkdown`/`createIssuesFromGraph`, with the exact error messages from the spec. Scoped to only this flag, per instructions (did not wire the broader `rejectSingleIssueFlags*` calls).
+
+3. **Tests added** in new file `/var/home/matt/dev/mybd/.worktrees/beads/pr-4984-fix/cmd/bd/create_dispatch_test.go`:
+   - `TestCreateDirectModeRejectsAllowEmptyDescriptionWithFile`
+   - `TestCreateDirectModeRejectsAllowEmptyDescriptionWithGraph`
+   - `TestCreateSingleIssueAllowEmptyDescriptionRoundTrip`
+
+4. **Skipped** the `validateDescriptionUpdate` rename nit, as instructed.
+
+5. **Validation:**
+   - `gofmt -l .` — empty (clean)
+   - `CGO_ENABLED=1 go build -tags gms_pure_go ./...` — clean
+   - `CGO_ENABLED=1 go vet -tags gms_pure_go ./cmd/bd/` — clean
+   - `CGO_ENABLED=1 go test -tags gms_pure_go -count=1 -run 'Create' ./cmd/bd/ -v` — all three new tests **PASS**. One pre-existing, unrelated failure: `TestCreateRemoteRepoSkipsLocalDatabaseGuard` (fails on a schema-migration-gate message mismatch in the remote-repo/dolt-CLI path — confirmed unrelated to this diff; it touches no code this PR changes).
+
+6. **Committed**: `4d4d79eeb fix(create): reject --allow-empty-description on direct-mode --file/--graph dispatch`, with the `Agent-Signature: claude-sonnet-5-medium on behalf of maphew` trailer as specified in the task.
+
+**Important incident during the session** (fully resolved, no data lost): mid-session I ran `git stash` to verify a baseline, unaware that `git stash` is a **repo-wide shared stack across all worktrees** of this bare repo. A concurrent agent session working on branch `fixmerge2/pr-4930` had pushed its own stash entry; my `git stash pop` popped *their* entry instead of mine, applying unrelated changes (`store_factory.go`, `readonly_server_policy_test.go`, `internal/storage/dolt/store.go`, `remote_migrate_gate_test.go`) into my worktree with conflicts. I did **not** commit any of that. I recovered by:
+- `git reset --hard HEAD` to clear the contamination (HEAD was my own merge commit, so nothing of mine was lost by this).
+- Confirming the other session's stash entry (`stash@{0}: WIP on fixmerge2/pr-4930...`) was **left intact** — git had refused to drop it because the pop hit conflicts, so their WIP is still recoverable by them.
+- Recovering my own lost stash entry via `git fsck --unreachable --dangling` (found dangling commit `83d4b74a8`, "WIP on fixmerge2/pr-4984"), and restoring my `create.go` edit from it with `git checkout 83d4b74... -- cmd/bd/create.go`.
+- My new untracked test file was never touched by any of this (stash without `-u` doesn't move untracked files).
+
+Flagging this for the orchestrator: `git stash` is unsafe to use bare (without `--` naming or `stash show`/apply-by-name) when multiple agent sessions share this bare-repo's worktrees — worth a note in AGENTS.md alongside the existing bd/dolt serialization warning.
+
+**Files touched:**
+- `/var/home/matt/dev/mybd/.worktrees/beads/pr-4984-fix/cmd/bd/create.go`
+- `/var/home/matt/dev/mybd/.worktrees/beads/pr-4984-fix/cmd/bd/create_dispatch_test.go` (new)
+
+**git log --oneline -3:**
+```
+4d4d79eeb fix(create): reject --allow-empty-description on direct-mode --file/--graph dispatch
+1c8d8b492 Merge remote-tracking branch 'upstream/main' into fixmerge2/pr-4984
+0251a4d71 Merge pull request #5014 from coffeegoddd/db/purge
+```
+
+No push performed (out of scope, per instructions).</result>
+<usage><subagent_tokens>144129</subagent_tokens><tool_uses>101</tool_uses><duration_ms>683008</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>blnxcjxw8</task-id>
+<tool-use-id>toolu_014aStAWsHuReKWtThYE1b3Z</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/blnxcjxw8.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run serial Codex verification of three verdicts" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a968425e7813b776f</task-id>
+<tool-use-id>toolu_01Gx7ZDam4bJ3muvBxJXevb6</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/a968425e7813b776f.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix-merge PR 4896 branch" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Summary
+
+Worked entirely in `/var/home/matt/dev/mybd/.worktrees/beads/pr-4896-fix` (branch `fixmerge2/pr-4896`, linked worktree confirmed via differing `git-dir`/`git-common-dir`). No bd/dolt commands, no push.
+
+**1. Merge (`git merge upstream/main --no-edit`)**: Produced exactly the expected single conflict in `internal/storage/metadata.go`. Resolved by keeping both sides: the PR's always-quote+escape `JSONMetadataPath`/`jsonPathEscaper` immediately followed by main's `MergeMetadataJSON`/`ApplyMetadataEdits`/`MetadataEditValue` from #4732 (8ebd53e88). Verified no conflict markers remain and no other files had unmerged conflicts (`git status --short | grep UU` → only metadata.go, now resolved).
+
+**2. Tests**: Added end-to-end extraction-level tests in `cmd/bd/metadata_filter_test.go`'s existing `TestMetadataFilterSuite` (the harness that creates issues via the real embedded Dolt store and queries them back through `store.SearchIssues`, i.e., through `AppendMetadataClauses` → `JSONMetadataPath` → actual go-mysql-server/Dolt JSON path parser):
+- `MetadataFieldMatchSlashKey` — issue with metadata key `"jira/sprint"`, queried back and matched.
+- `MetadataFieldMatchMixedCaseKey` — two issues with keys differing only by case (`"McTeam"` vs `"mcteam"`), proving no case-folding collision end-to-end.
+
+For quote/backslash-containing keys: **I took the "not practical, narrow the doc comment" option.** Confirmed via code inspection that `internal/storage/sqlbuild/filter.go`'s `AppendMetadataClauses` and `ApplyMetadataEdits` both call `storage.ValidateMetadataKey` (which rejects `"`/`\`) before any key reaches `JSONMetadataPath` — so an end-to-end test with such a key would only prove the validation gate fires, not that escaping round-trips through the real SQL engine. Left the existing string-level unit test in `metadata_jsonpath_test.go` (`ke"y`, `ke\y`) as-is, and narrowed `JSONMetadataPath`'s doc comment in `internal/storage/metadata.go` to state the escaping branches are unreachable via any production caller today and are "defense-in-depth, not a proven contract."
+
+**3. Validation**:
+- `gofmt -l` on all changed `.go` files vs `upstream/main`: empty (clean).
+- `CGO_ENABLED=1 go build -tags gms_pure_go ./...`: clean, no output.
+- `go vet -tags gms_pure_go ./internal/storage/ ./cmd/bd/`: clean, no output.
+- `CGO_ENABLED=1 go test -tags gms_pure_go -count=1 -run 'Metadata' ./internal/storage/...`: all pass, including `TestJSONMetadataPath` (with `ke"y`/`ke\y` subtests).
+- `CGO_ENABLED=1 go test -tags gms_pure_go -count=1 -run 'Metadata' ./cmd/bd/`: new subtests confirmed by name and passing — `TestMetadataFilterSuite/MetadataFieldMatchSlashKey` and `TestMetadataFilterSuite/MetadataFieldMatchMixedCaseKey` both `--- PASS`. **Caveat**: the overall package run reports `FAIL` because of `TestInitDoltMetadataNoGit` ("Dolt database directory was not created") — this test predates the PR by months (git-blamed to 2026-02-14, in `cmd/bd/init_test.go`, unrelated to `metadata.go`/query code), is not touched by this diff, and appears to be a pre-existing environment/docker-testcontainer flake in this sandbox, not something introduced by this merge. I also had to `-skip` `TestInitDoltMetadata`, `TestE2E_InitDoltMetadataRoundtrip`, `TestE2E_DoctorFixMetadataRoundtrip`, `TestE2E_MigrateDoltMetadata` because they set a fake `github.com/test/repo.git` remote and hung for 10+ minutes on what looks like a blocked network call in this sandbox — same category, unrelated to the scope of this fix.
+
+**4. Commit**: `407556c2f` on `fixmerge2/pr-4896`, message `fix(query): make slash and mixed-case metadata keys queryable — rebase over #4732, prove via query-path tests` with a body explaining the merge resolution and the test/doc-comment decisions, and trailer `Agent-Signature: claude-sonnet-5-medium on behalf of maphew`.
+
+```
+407556c2f fix(query): make slash and mixed-case metadata keys queryable — rebase over #4732, prove via query-path tests
+0251a4d71 Merge pull request #5014 from coffeegoddd/db/purge
+9d2a8793f /cmd/bd: isolate the proxied clean-databases test from the shared server
+```
+
+Working tree is clean (`git status` → "nothing to commit, working tree clean").
+
+Files touched: `/var/home/matt/dev/mybd/.worktrees/beads/pr-4896-fix/internal/storage/metadata.go`, `/var/home/matt/dev/mybd/.worktrees/beads/pr-4896-fix/cmd/bd/metadata_filter_test.go`.
+
+No spec/code mismatch encountered — did not act on the docs item (`cmd/bd/help_all.go` / `metadata.&lt;key&gt;` help text) from the full spec's `action_plan`, since it was outside the four explicit Steps given in this task's instructions; flagging it in case the orchestrator intended it as a separate follow-up task.</result>
+<usage><subagent_tokens>131093</subagent_tokens><tool_uses>82</tool_uses><duration_ms>1109426</duration_ms></usage>
+</task-notification>
