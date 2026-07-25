@@ -92,4 +92,35 @@ in-session merge → workflow_dispatch nightly full-test → base green → patr
 merges #5038 + remaining singles (#5016, #5023 already landed mid-session) →
 dependabot regroups. Bead chain: mybd-kney → mybd-8usj → mybd-ysu1.
 
+## Finale (2026-07-25 ~23:30Z)
+
+Timeline after #5039 merged (squash 96522c1e9) and the dispatched nightly went
+green: upstream broke main again mid-flight with the #5030 temp-boundary work
+(macOS `/var/folders` + Linux proxied shards); deliberately stayed out — a
+parallel maphew session (#5046/#5050/#5051) and upstream (#5044/#5047) owned
+that lane; posted the two-mode diagnostic on #5044. Main greened at af076b628.
+
+Patrol then merged #5038 and #5022 (one patrol quirk each: a transient
+"merge state UNKNOWN" block cleared by pre-warming mergeability via
+`gh pr view`, and a failed bead auto-close done manually). Dependabot reacted
+to the config within a minute:
+
+| Grouped PR | Contents | Path |
+|---|---|---|
+| #5055 testcontainers | root + modules/dolt 0.43 (was #5017 + stuck #4702) | vendorHash bot commit → close/reopen CI cycle → patrol (mybd-o7bv) |
+| #5056 go-deps | go-sqlmock, anthropic-sdk-go 1.61, goldmark + bonus x/sys, x/term | same → patrol (mybd-8uij) |
+| #5057 actions | setup-go 7, setup-python 7 (was #5015/#5019) | patrol (mybd-41xs) |
+
+Dependabot auto-closed #4702 (ending its two-week loop) and the actions
+singles; the pre-config gomod singles (#5017/#5018/#5020/#5021) needed manual
+closes with supersession comments — exactly the codex review's prediction.
+Confirmed mechanics recorded in bd memory `beads-nix-vendorhash-gosum`:
+close/reopen does fire pull_request workflows on the bot-commit head.
+
+Final ledger: 10 original PRs → 3 merged as singles (#5016, #5022, #5023),
+7 superseded into 3 grouped PRs riding fresh CI under patrol ownership.
+Plus landed on main: #5038 (groups config) and #5039 (two fix-for-main test
+bugs). Open watch item: anthropic-sdk-go 1.45→1.61 compile risk rides #5056
+CI; patrol escalates via merge-blocked if red.
+
 _claude-fable-5-high on behalf of matt wilkie_
