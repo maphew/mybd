@@ -1,0 +1,13 @@
+report on pr-babysitter's activity of past 4 hrs, and what's coming in the queue. everything look healthy?
+
+---
+
+apply remedy
+
+---
+
+https://github.com/gastownhall/beads/pull/5028#issuecomment-5080289761
+
+---
+
+5028 merged
