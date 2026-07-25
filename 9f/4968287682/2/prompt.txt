@@ -1,0 +1,3 @@
+retrospect sessions across all agents (codex, claude, amp, kilocode) from the last 3
+  days and assess how they went. we're not interested in what they did, but how they
+  did; a.k.a. is the machinery running well? are there fix or tuning opportunities?

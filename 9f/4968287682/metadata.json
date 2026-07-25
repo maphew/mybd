@@ -3,7 +3,7 @@
   "checkpoint_id": "9f4968287682",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 4,
+  "checkpoints_count": 5,
   "files_touched": [
     "reports/2026-07-25-session-machinery-retro-claude-second-opinion.md",
     "retro/findings.md",
@@ -23,13 +23,20 @@
       "compact_transcript": "/9f/4968287682/1/transcript.jsonl",
       "content_hash": "/9f/4968287682/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/9f/4968287682/2/metadata.json",
+      "transcript": "/9f/4968287682/2/full.jsonl",
+      "compact_transcript": "/9f/4968287682/2/transcript.jsonl",
+      "content_hash": "/9f/4968287682/2/content_hash.txt",
+      "prompt": "/9f/4968287682/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 4,
-    "cache_creation_tokens": 225530,
-    "cache_read_tokens": 224944,
-    "output_tokens": 688,
-    "api_call_count": 3
+    "input_tokens": 90,
+    "cache_creation_tokens": 433366,
+    "cache_read_tokens": 6012056,
+    "output_tokens": 62745,
+    "api_call_count": 46
   }
 }
