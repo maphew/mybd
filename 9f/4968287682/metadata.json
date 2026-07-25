@@ -1,0 +1,21 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "9f4968287682",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-25-session-machinery-retro-claude-second-opinion.md",
+    "retro/findings.md",
+    "retro/ledger.tsv"
+  ],
+  "sessions": [
+    {
+      "metadata": "/9f/4968287682/0/metadata.json",
+      "transcript": "/9f/4968287682/0/full.jsonl",
+      "compact_transcript": "/9f/4968287682/0/transcript.jsonl",
+      "content_hash": "/9f/4968287682/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
