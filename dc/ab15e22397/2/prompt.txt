@@ -1,0 +1,9 @@
+if i said 'time for housekeeping' what would you do?
+
+---
+
+i don't see anything about stale worktrees, old temp files, caches, merged branches. ... i wonder, does have a specific list of housekeeping things in agents.md prevent agents from considering general things?
+
+---
+
+yes, draft please
