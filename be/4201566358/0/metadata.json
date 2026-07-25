@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "be4201566358",
+  "session_id": "019f9b70-110a-7c81-8103-8c69e258c78a",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T23:04:30.097996525Z",
+  "branch": "feat/retro-tuning",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "scripts/codex-agent",
+    "scripts/pr-babysit",
+    "scripts/test-pr-babysit"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "3bdc33601633",
+  "checkpoint_transcript_start": 99,
+  "transcript_lines_at_start": 99,
+  "compact_transcript_start": 23,
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T23:04:30.073116157Z",
+    "agent_lines": 137,
+    "agent_removed": 27,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 137,
+    "total_lines_changed": 164,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}

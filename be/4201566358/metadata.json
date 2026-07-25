@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "be4201566358",
+  "strategy": "manual-commit",
+  "branch": "feat/retro-tuning",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "scripts/codex-agent",
+    "scripts/pr-babysit",
+    "scripts/test-pr-babysit"
+  ],
+  "sessions": [
+    {
+      "metadata": "/be/4201566358/0/metadata.json",
+      "transcript": "/be/4201566358/0/full.jsonl",
+      "compact_transcript": "/be/4201566358/0/transcript.jsonl",
+      "content_hash": "/be/4201566358/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
