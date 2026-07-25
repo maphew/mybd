@@ -16,8 +16,7 @@ uniformly healthy across runtimes.
 - Codex sessions showed the best close discipline and isolation. Their tuning
   need is efficiency, not correctness.
 - Claude sessions were productive and responsive, but large workflow fan-outs
-  exceeded their documented budget and accumulated stop-hook and result-shape
-  churn.
+  accumulated stop-hook and result-shape churn.
 - Amp is the material weak point. Recent operational logs show missing semantic
   transcript retention, no observable approval events, a permissive
   `dangerouslyAllowAll` setting, and at least one violation of the serial-Dolt
@@ -26,8 +25,8 @@ uniformly healthy across runtimes.
   machinery cannot be assessed.
 
 This is a "keep operating, harden two weak seams" result, not a stop-the-line
-result. The two high-priority seams are Amp policy parity and workflow budget /
-aggregate-result gates.
+result. The two high-priority seams are Amp policy parity and workflow stage /
+aggregate-result validation.
 
 ## Evidence and confidence
 
@@ -127,20 +126,26 @@ observable.
 **Action:** `mybd-lq8i.3` — harden Amp guidance, serialized Dolt access,
 authorization posture, close evidence, and live signature metadata.
 
-### 2. Workflow fan-out is outgrowing its guardrails
+### 2. Workflow fan-out needs stage and result validation, not a hard 200k ceiling
 
 Two recent Claude workflows reported approximately 208k and 284k tokens against
 the documented 200k default target. The larger run used 52 agents, then hit a
 malformed/null aggregate shape and a batch of failed bead closures.
 
-The problem is not "multi-agent is bad." Smaller, role-separated review and
-builder groups worked well. The failure mode is fan-out continuing past the
-budget target before the orchestrator has validated intermediate result shapes
-and mutation readiness.
+Owner clarification after this audit: 200k is a soft performance-tuning target,
+not a reliability ceiling. Exceptions are acceptable and runs around 500k have
+worked well. The 208k/284k totals are useful efficiency observations, not
+evidence that token volume caused the malformed result.
 
-**Action:** `mybd-lq8i.4` — enforce budget checks between stages, stop spawning
-near the threshold, validate aggregate schemas before mutations, and log
-coverage intentionally dropped.
+The actual reliability concerns are independent: aggregate schemas were not
+validated before mutation, and a separate multi-workflow session silently
+skipped a required verification stage because `budget.spent()` included an
+earlier workflow's spend. Soft-target overruns should be logged and tuned, not
+used by themselves to suppress required stages.
+
+**Action:** `mybd-lq8i.4` — isolate per-workflow accounting, preserve required
+stages across soft-target overruns, validate aggregate schemas before mutations,
+and continue to report budget efficiency.
 
 ### 3. Claude stop/goal machinery is noisy at scale
 
@@ -211,8 +216,9 @@ transcripts, and inactive runtimes.
 1. **P1 — Amp parity (`mybd-lq8i.3`).** This is the only finding combining
    permissive execution, a concrete policy breach, and inadequate retained
    evidence.
-2. **P1 — workflow gates (`mybd-lq8i.4`).** Budget overshoot plus malformed
-   aggregates can turn useful fan-out into incorrect batch mutations.
+2. **P1 — workflow stage/result gates (`mybd-lq8i.4`).** A shared counter
+   silently skipped verification and malformed aggregates reached closure
+   logic. Budget overrun alone is not a reliability concern.
 3. **P2 — normalized telemetry (`mybd-lq8i.5`).** Without it, every audit pays
    the same classification cost and can miscount Codex or miss Amp evidence.
 4. **P2 — stop-hook measurement (`mybd-lq8i.6`).** Likely efficiency win, but

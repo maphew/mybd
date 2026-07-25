@@ -50,9 +50,10 @@ Phrasings and ask-structures with evidence they produce clean runs.
 - recommendation: delegates write structured/paginated outputs; orchestrators request summaries + on-disk detail.
 
 ### F-006 · [process] turn-wide budget guard misfires in multi-workflow sessions
-- status: recurring (2 sightings, cross-vendor convergence)
-- sightings: claude/d41b072b: "no adversarial verification actually ran" — later workflow silently skipped verify stage because an earlier one spent the shared budget; codex audit (lq8i.2): workflows at ~208k/284k vs 200k target.
-- recommendation: per-workflow budget deltas + stage gates.
+- status: candidate (1 concrete sighting; high consequence)
+- sightings: claude/d41b072b: "no adversarial verification actually ran" — later workflow silently skipped verify stage because an earlier one spent the shared budget.
+- owner clarification: 200k is a soft performance-tuning target, not a reliability ceiling; exceptions are acceptable and runs around 500k have worked well. An overrun is not a failure sighting.
+- recommendation: per-workflow budget deltas + required-stage gates; log soft-target overruns but do not silently suppress verification. Explicit user hard budgets still win.
 - promoted-to: mybd-lq8i.4 (already filed) · verify-by: no silent stage skips in next multi-workflow session.
 
 ### F-007 · [process] bd prime truncation hid active profile

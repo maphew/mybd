@@ -163,11 +163,17 @@ for shape consistency, or a repo helper that normalizes. Filed.
 
 **Agreements (independent convergence — treat as high-confidence):** control
 plane strong and worth protecting; close/recovery discipline real; cross-vendor
-review keep; workflow budget gates needed (`mybd-lq8i.4` — my evidence adds
-d41b072b, where a turn-wide `budget.spent()` silently skipped a verification
-stage); Amp is the policy/observability weak point (`dangerouslyAllowAll`
+review keep; per-workflow accounting and required-stage gates needed
+(`mybd-lq8i.4` — d41b072b shows a turn-wide `budget.spent()` silently skipping
+a verification stage); Amp is the policy/observability weak point
+(`dangerouslyAllowAll`
 verified directly; local thread transcripts genuinely absent — server-side
 now); Kilocode inactive.
+
+**Owner clarification after the audit:** 200k is a soft performance target, not
+a reliability ceiling; exceptions are acceptable and runs around 500k have
+worked well. The defect is the shared counter silently suppressing a required
+stage, not exceeding 200k.
 
 **This report adds:** the patrol transient-state bug and the 18 stranded
 tails (the Codex report praised the patrol's blocking behavior without
