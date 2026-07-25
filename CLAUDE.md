@@ -108,6 +108,13 @@ For more details, see README.md and https://github.com/gastownhall/beads/blob/ma
 
 The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
 
+**This repo runs team-maintainer** (owner directive maphew 2026-07-08:
+`agent.profile=team-maintainer` in bd config; see the
+`agent-profile-team-maintainer` bd memory). Commit, sync, and push are routine
+work here — an explicit in-prompt "do not commit"/"do not push" still
+overrides. The generic profile descriptions below are reference only; do not
+fall back to Conservative just because it is labeled "default".
+
 - **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
 - **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
 - **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
