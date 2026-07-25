@@ -3,7 +3,7 @@
   "checkpoint_id": "a481afcb40aa",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 3,
   "files_touched": [
     ".beads/PRIME.md"
   ],
@@ -14,6 +14,20 @@
       "compact_transcript": "/a4/81afcb40aa/0/transcript.jsonl",
       "content_hash": "/a4/81afcb40aa/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/a4/81afcb40aa/1/metadata.json",
+      "transcript": "/a4/81afcb40aa/1/full.jsonl",
+      "compact_transcript": "/a4/81afcb40aa/1/transcript.jsonl",
+      "content_hash": "/a4/81afcb40aa/1/content_hash.txt",
+      "prompt": "/a4/81afcb40aa/1/prompt.txt"
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 12780,
+    "cache_read_tokens": 1088603,
+    "output_tokens": 9495,
+    "api_call_count": 7
+  }
 }
