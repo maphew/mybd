@@ -1,0 +1,3 @@
+sweep mybd and beads and report what's been happening over last few
+  days. the good, bad, and ugly. what's your feel on the best (and
+  worst) directions to send the next batch of agents.
