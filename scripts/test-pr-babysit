@@ -21,7 +21,7 @@ case "${1:-} ${2:-}" in
     [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
     rollup="${FAKE_ROLLUP:-}"
     [[ -n "$rollup" ]] || rollup='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]'
-    jq -cn --arg state "$state" --arg head "$head" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, statusCheckRollup:$rollup}'
+    jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
     [[ -f "$FAKE_MERGE_MARK" ]] && exit "${FAKE_POST_PR_EXIT:-0}"
     exit "${FAKE_PR_EXIT:-0}"
     ;;
@@ -46,7 +46,8 @@ printf '%s\n' "$*" >>"$FAKE_BD_LOG"
 case "${1:-}" in
   list)
     if [[ " $* " == *" --label "* ]]; then
-      cat "$FAKE_QUEUE"
+      lbl=""; for arg in "$@"; do [[ "${next:-}" == 1 ]] && lbl="$arg" && unset next; [[ "$arg" == "--label" ]] && next=1; done
+      jq --arg l "$lbl" '[.[] | select((.labels // []) | index($l))]' "$FAKE_QUEUE"
     else
       ref=""; for arg in "$@"; do [[ "${next:-}" == 1 ]] && ref="$arg" && unset next; [[ "$arg" == "--external-ref" ]] && next=1; done
       jq --arg ref "$ref" '[.[] | select(.external_ref == $ref)]' "$FAKE_QUEUE"
@@ -66,6 +67,10 @@ case "${1:-}" in
             "$FAKE_QUEUE" >"$qtmp"
           mv -f "$qtmp" "$FAKE_QUEUE"
           shift 2 ;;
+        --unset-metadata)
+          key="$2"; qtmp="$FAKE_QUEUE.tmp"
+          jq --arg id "$bead" --arg key "$key" 'map(if .id == $id then .metadata = ((.metadata // {}) | del(.[$key])) else . end)' "$FAKE_QUEUE" >"$qtmp"
+          mv -f "$qtmp" "$FAKE_QUEUE"; shift 2 ;;
         --external-ref)
           ref="$2"; qtmp="$FAKE_QUEUE.tmp"
           jq --arg id "$bead" --arg ref "$ref" 'map(if .id == $id then .external_ref = $ref else . end)' "$FAKE_QUEUE" >"$qtmp"
@@ -121,7 +126,7 @@ reset() {
   CASE="$TMP/$name"; mkdir -p "$CASE"
   export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged" FAKE_PREFLIGHT_MARK="$CASE/preflight" FAKE_SYSTEMD_ANALYZE_LOG="$CASE/analyze.log"
   export XDG_STATE_HOME="$CASE/state"
-  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL
+  unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS
   rm -f "$FAKE_PREFLIGHT_MARK"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
@@ -325,5 +330,127 @@ grep -q 'authorization-mismatch' "$FAKE_BD_LOG" || fail "authorization skip was 
 reset legacy-identity '{}' '[pr-handoff 2026-01-01T00:00:00Z] repo=other/repo pr=999 method=squash flake_rerun=allowed — patrol owns the merge'
 export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'; run_patrol
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "mismatched legacy identity merged"
+
+# --- transient merge-state handling -----------------------------------------
+
+# Transient-only preflight blocks are retried, not blocked, until the limit.
+reset transient "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge state is UNKNOWN.'
+run_patrol; run_patrol
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "transient block removed queue label early"
+[[ "$(jq -r '.[0].metadata.pr_babysit_transient' "$FAKE_QUEUE")" == "$FAKE_HEAD:2" ]] || fail "transient counter did not track passes"
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "persistent transient block did not escalate"
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "transient block merged"
+
+# Red base plus transient retains without consuming the transient budget.
+reset transient-red "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1
+export FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED: Main failed at 2026-07-24T00:00:00Z
+[block] Merge state is UNKNOWN.'
+run_patrol; run_patrol; run_patrol; run_patrol
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "red-base storm consumed transient budget"
+[[ "$(jq -r '.[0].metadata.pr_babysit_transient // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "red-base pass incremented transient counter"
+
+# A genuine policy block alongside a transient one blocks immediately.
+reset transient-genuine "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1
+export FAKE_PREFLIGHT_OUTPUT='[block] Merge state is UNKNOWN.
+[block] PR is draft.'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "genuine+transient mix did not block"
+
+# Preflight output lines land in the patrol log timestamped and attributed.
+grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z \[preflight gastownhall/beads#123\] \[block\]' "$XDG_STATE_HOME/pr-babysit/patrol.log" || fail "preflight log lines are not timestamped"
+
+# --- checks-unavailable escalation -------------------------------------------
+
+reset no-checks "$policy"
+export FAKE_CHECKS='[]'
+for _ in 1 2 3 4 5 6 7 8 9; do run_patrol; done
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "checks-unavailable escalated before the limit"
+[[ "$(jq -r '.[0].metadata.pr_babysit_checksun' "$FAKE_QUEUE")" == "$FAKE_HEAD:9" ]] || fail "checks-unavailable counter did not track passes"
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "checks-unavailable never escalated"
+
+# Readable checks clear the unavailable counter.
+reset no-checks-recover "$policy"
+export FAKE_CHECKS='[]'
+run_patrol; run_patrol
+export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""}]'
+run_patrol
+[[ "$(jq -r '.[0].metadata.pr_babysit_checksun // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "recovered checks did not clear unavailable counter"
+
+# --- re-arm sweep -------------------------------------------------------------
+
+head_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+head_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+make_blocked() { # $1=last_transition [$2=assignee] [$3=extra metadata json]
+  local extra="${3-}"; [[ -n "$extra" ]] || extra='{}'
+  jq -cn --arg lt "$1" --arg assignee "${2:-}" --argjson extra "$extra" \
+    '[{id:"mybd-test", status:"open", assignee:$assignee, labels:["merge-blocked"], external_ref:"gh:gastownhall/beads#123", notes:"",
+       metadata:({pr_babysit_method:"squash", pr_babysit_flake_rerun:"allowed", pr_babysit_last_transition:$lt} + $extra)}]' >"$FAKE_QUEUE"
+}
+
+# checks-persistent with green checks on the same head is re-armed and merged.
+reset rearm-green "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "green blocked tail was not re-armed"
+[[ "$(jq -r '.[0].metadata.pr_babysit_rearm' "$FAKE_QUEUE")" == "$head_a:1" ]] || fail "re-arm budget was not recorded"
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "re-armed tail did not proceed to merge in the same pass"
+
+# A moved head re-arms even for genuine policy blocks.
+reset rearm-head-move "$policy"
+make_blocked "preflight-policy:$head_b"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "moved head was not re-armed"
+
+# The same head with a genuine policy block stays blocked.
+reset rearm-policy-same "$policy"
+make_blocked "preflight-policy:$head_a"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "same-head policy block was re-armed"
+
+# The per-head re-arm budget is respected.
+reset rearm-cap "$policy"
+make_blocked "checks-persistent:$head_a" "" "{\"pr_babysit_rearm\":\"$head_a:2\"}"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "re-arm exceeded per-head budget"
+
+# A claimed blocked bead belongs to an agent; the sweep leaves it alone.
+reset rearm-claimed "$policy"
+make_blocked "checks-persistent:$head_a" "maphew"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "claimed blocked bead was re-armed"
+
+# A blocked tail whose PR merged elsewhere is closed by the sweep.
+reset rearm-merged "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_PR_STATE=MERGED
+run_patrol
+grep -q '^close ' "$FAKE_BD_LOG" || fail "merged blocked tail was not closed"
+
+# Transient-persistent blocks re-arm once the merge state settles, not before.
+reset rearm-transient "$policy"
+make_blocked "preflight-transient-persistent:$head_a"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_MSS=UNKNOWN
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "unsettled transient block was re-armed"
+export FAKE_MSS=CLEAN
+run_patrol
+jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "settled transient block was not re-armed"
+
+# Foreign merge-blocked beads without patrol verdicts are never touched.
+reset rearm-foreign "$policy"
+jq -cn '[{id:"mybd-test", status:"open", assignee:"", labels:["merge-blocked"], external_ref:"gh:gastownhall/beads#123", notes:"", metadata:{}}]' >"$FAKE_QUEUE"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "foreign blocked bead was re-armed"
 
 echo "pr-babysit behavioural tests: PASS"
