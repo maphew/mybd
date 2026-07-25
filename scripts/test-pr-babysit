@@ -377,9 +377,30 @@ jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "c
 reset no-checks-recover "$policy"
 export FAKE_CHECKS='[]'
 run_patrol; run_patrol
+[[ "$(jq -r '.[0].metadata.pr_babysit_checksun' "$FAKE_QUEUE")" == "$FAKE_HEAD:2" ]] || fail "unavailable counter was not accumulating before recovery"
 export FAKE_CHECKS='[{"name":"unit","bucket":"pending","link":""}]'
 run_patrol
 [[ "$(jq -r '.[0].metadata.pr_babysit_checksun // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "recovered checks did not clear unavailable counter"
+
+# The mid-pass counter clear must not trip the merge-authorization comparison:
+# an unavailable pass followed by a green pass merges on that green pass.
+reset counter-clear-cas "$policy"
+export FAKE_CHECKS='[]'
+run_patrol
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "counter clear blocked the merge via authorization mismatch"
+! grep -q 'authorization-mismatch' "$FAKE_BD_LOG" || fail "counter clear raised a false authorization alarm"
+
+# A healthy preflight resets the transient budget (consecutive, not lifetime).
+reset transient-consecutive "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge state is UNKNOWN.'
+run_patrol
+[[ "$(jq -r '.[0].metadata.pr_babysit_transient' "$FAKE_QUEUE")" == "$FAKE_HEAD:1" ]] || fail "transient counter missing before healthy pass"
+unset FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT
+run_patrol
+[[ "$(jq -r '.[0].metadata.pr_babysit_transient // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "healthy preflight did not clear transient counter"
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "healthy pass after transient did not merge"
 
 # --- re-arm sweep -------------------------------------------------------------
 
@@ -400,6 +421,7 @@ run_patrol
 jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "green blocked tail was not re-armed"
 [[ "$(jq -r '.[0].metadata.pr_babysit_rearm' "$FAKE_QUEUE")" == "$head_a:1" ]] || fail "re-arm budget was not recorded"
 [[ -f "$FAKE_MERGE_MARK" ]] || fail "re-armed tail did not proceed to merge in the same pass"
+grep -q -- '--claim --add-label merge-when-green' "$FAKE_BD_LOG" || fail "re-arm did not re-claim the bead for the patrol"
 
 # A moved head re-arms even for genuine policy blocks.
 reset rearm-head-move "$policy"
@@ -408,22 +430,29 @@ export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
 run_patrol
 jq -e '.[0].labels | index("merge-when-green")' "$FAKE_QUEUE" >/dev/null || fail "moved head was not re-armed"
 
-# The same head with an unsettled merge state stays blocked.
+# A same-head policy block is a durable stop: no re-arm regardless of merge
+# state (with no server-side review gate, CLEAN carries no human judgment).
 reset rearm-policy-same "$policy"
 make_blocked "preflight-policy:$head_a"
 export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_MSS=DIRTY
 run_patrol
-jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "same-head unsettled policy block was re-armed"
-
-# A settled merge state earns a budgeted retry even for policy blocks, and a
-# genuinely persistent block flaps at most REARM_LIMIT times before resting.
-reset rearm-policy-flap "$policy"
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "same-head policy block (DIRTY) was re-armed"
+reset rearm-policy-clean "$policy"
 make_blocked "preflight-policy:$head_a"
-export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] PR is draft.'
-run_patrol; run_patrol; run_patrol; run_patrol
-jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "persistent policy block did not come to rest blocked"
-[[ "$(jq -r '.[0].metadata.pr_babysit_rearm' "$FAKE_QUEUE")" == "$head_a:2" ]] || fail "policy flap did not stop at the re-arm budget"
-[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "flapping policy block merged"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_MSS=CLEAN
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "same-head policy block (CLEAN) was re-armed"
+[[ "$(jq -r '.[0].metadata.pr_babysit_rearm // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "policy block consumed re-arm budget"
+
+# A transient-persistent tail with a persistently flapping merge state comes
+# to rest blocked once the per-head re-arm budget is spent.
+reset rearm-transient-flap "$policy"
+make_blocked "preflight-transient-persistent:$head_a" "" "{\"pr_babysit_transient\":\"$head_a:2\"}"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_MSS=CLEAN FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge state is UNKNOWN.'
+for _ in 1 2 3 4 5 6 7 8 9 10; do run_patrol; done
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "flapping transient tail did not come to rest blocked"
+[[ "$(jq -r '.[0].metadata.pr_babysit_rearm' "$FAKE_QUEUE")" == "$head_a:2" ]] || fail "transient flap did not stop at the re-arm budget"
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "flapping transient tail merged"
 
 # gh exit 8 (checks pending) is a wait state, never unavailable-data.
 reset checks-exit8 "$policy"
@@ -470,5 +499,42 @@ jq -cn '[{id:"mybd-test", status:"open", assignee:"", labels:["merge-blocked"], 
 export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
 run_patrol
 jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "foreign blocked bead was re-armed"
+
+# A checks-unavailable-persistent re-arm clears the stale counter so the
+# retry can actually observe the recovered checks.
+reset rearm-checksun "$policy"
+make_blocked "checks-unavailable-persistent:$head_a" "" "{\"pr_babysit_checksun\":\"$head_a:9\"}"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "checks-unavailable re-arm did not reach merge"
+[[ "$(jq -r '.[0].metadata.pr_babysit_checksun // "absent"' "$FAKE_QUEUE")" == absent ]] || fail "re-arm kept the stale unavailable counter"
+
+# The sweep never trusts a non-empty unparseable ref, even with metadata
+# present — no close, no re-arm, no durable mutation.
+reset rearm-badref "$policy"
+jq -cn --arg lt "checks-persistent:$head_a" \
+  '[{id:"mybd-test", status:"open", assignee:"", labels:["merge-blocked"], external_ref:"gh:not a ref", notes:"",
+     metadata:{pr_babysit_method:"squash", pr_babysit_flake_rerun:"allowed", pr_babysit_repo:"gastownhall/beads", pr_babysit_pr:"123", pr_babysit_last_transition:$lt}}]' >"$FAKE_QUEUE"
+export FAKE_PR_STATE=MERGED
+run_patrol
+[[ "$(count '^close ' "$FAKE_BD_LOG")" == 0 ]] || fail "sweep closed a bead with an unparseable ref"
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "sweep mutated a bead with an unparseable ref"
+
+# Ref/metadata identity disagreement disqualifies the bead from the sweep.
+reset rearm-mismatch "$policy"
+jq -cn --arg lt "checks-persistent:$head_a" \
+  '[{id:"mybd-test", status:"open", assignee:"", labels:["merge-blocked"], external_ref:"gh:gastownhall/beads#123", notes:"",
+     metadata:{pr_babysit_method:"squash", pr_babysit_flake_rerun:"allowed", pr_babysit_repo:"other/repo", pr_babysit_pr:"999", pr_babysit_last_transition:$lt}}]' >"$FAKE_QUEUE"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "sweep re-armed a bead with mismatched identity"
+
+# A CLOSED (unmerged) PR leaves the blocked bead for a human decision.
+reset rearm-closed "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_PR_STATE=CLOSED FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "sweep mutated a closed-unmerged blocked bead"
+[[ "$(count '^close ' "$FAKE_BD_LOG")" == 0 ]] || fail "sweep closed a closed-unmerged bead"
 
 echo "pr-babysit behavioural tests: PASS"

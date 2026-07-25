@@ -457,6 +457,18 @@ failure relabels the bead `merge-blocked` and unclaims it so `bd ready`
 surfaces it for agent judgment. Patrol log:
 `~/.local/state/pr-babysit/patrol.log`.
 
+Blocking is deliberate, not trigger-happy (hardened 2026-07-25, bead
+mybd-pqs0): transient merge states (UNKNOWN/UNSTABLE/checks-pending) get 3
+patrol passes before escalating; unreadable/absent checks get 10. A budgeted
+re-arm sweep (2 per head) restores `merge-blocked` tails to patrol when the
+PR head moves, failing checks recover, or a transient-persistent merge state
+settles — re-armed beads are re-claimed, so they do not surface in `bd ready`.
+Genuine policy blocks (draft, changes-requested, conflicts) on an unmoved
+head stay parked: `merge-blocked` remains the durable stop for those, and
+only an agent or a new head releases it. If you pick up a `merge-blocked`
+bead to work on it, **claim it first** — the sweep never touches claimed
+beads, so the claim is what keeps the patrol out of your lane.
+
 Role split, not claims: `bd update --claim` is idempotent for the same user,
 and all local sessions run as the same user, so claims cannot mutually exclude
 parallel sessions (2026-07-24: one session merged gastownhall/beads#4942 with a

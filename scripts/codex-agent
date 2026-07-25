@@ -50,6 +50,12 @@ for i in "${!args[@]}"; do
     -C?*)    workdir="${args[$i]#-C}" ;;
   esac
 done
+# Absolutize: a relative -C would otherwise produce a relative GOCACHE below,
+# which Go rejects outright ("GOCACHE is not an absolute path").
+if ! workdir="$(cd "$workdir" 2>/dev/null && pwd)"; then
+  echo "codex-agent: working directory does not exist: ${workdir}" >&2
+  exit 2
+fi
 
 # reviewer --diff routes to `codex review` (structured diff review) instead
 # of a free-form exec prompt. `codex review` takes no -C/--cd flag, so the

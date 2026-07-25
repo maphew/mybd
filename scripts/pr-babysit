@@ -83,23 +83,36 @@ rearm_sweep() {
       *) continue ;;
     esac
     [[ "$blocked_head" =~ ^[0-9a-fA-F]{7,64}$ ]] || continue
+    # Identity rules mirror the main loop: metadata is a fallback only for an
+    # EMPTY external_ref, a non-empty unparseable ref is never trusted, and a
+    # ref/metadata disagreement disqualifies the bead from any mutation.
     ref="$(jq -r '.external_ref // empty' <<<"$item")"
     repo=""; pr=""
     if [[ "$ref" =~ ^gh:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
       repo="${BASH_REMATCH[1]}"; pr="${BASH_REMATCH[2]}"
     elif [[ "$ref" =~ ^gh-pr-([1-9][0-9]*)$ ]]; then
       repo="gastownhall/beads"; pr="${BASH_REMATCH[1]}"
+    elif [[ -n "$ref" ]]; then
+      continue
     else
       repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
     fi
     valid_repo_pr "$repo" "$pr" || continue
-    pr_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,mergeStateStatus 2>>"$LOG")" || continue
+    meta_repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; meta_pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
+    if { [[ -n "$meta_repo" || -n "$meta_pr" ]]; } && { [[ "$meta_repo" != "$repo" || "$meta_pr" != "$pr" ]]; }; then
+      continue
+    fi
+    sweep_err="$STATE_DIR/gh-sweep.err"
+    pr_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,mergeStateStatus 2>"$sweep_err")" || { [[ -s "$sweep_err" ]] && log "$bead: sweep gh pr view stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"; rm -f "$sweep_err"; continue; }
+    rm -f "$sweep_err"
     jq -e 'type == "object" and (.state | type == "string") and (.headRefOid | type == "string")' >/dev/null 2>/dev/null <<<"$pr_json" || continue
     state="$(jq -r .state <<<"$pr_json")"; head="$(jq -r .headRefOid <<<"$pr_json")"
     msstatus="$(jq -r '.mergeStateStatus // empty' <<<"$pr_json")"
     if [[ "$state" == MERGED ]]; then
       if bd close "$bead" --reason "PR $repo#$pr merged (observed by pr-babysit re-arm sweep)." >/dev/null 2>&1; then
         log "$bead: $repo#$pr merged while blocked; bead closed"
+      else
+        log "$bead: close failed (merged while blocked)"
       fi
       continue
     fi
@@ -112,18 +125,21 @@ rearm_sweep() {
       eligible=1; why="PR head moved since the block verdict"
     else
       case "$class" in
-        # preflight-policy blocks may record a since-settled transient (base
-        # pushes flip mergeStateStatus to UNKNOWN repo-wide) or a cleared
-        # policy condition; a settled CLEAN state earns a budgeted retry —
-        # the main loop re-blocks genuine conditions and REARM_LIMIT bounds
-        # the flap at two cycles per head.
-        preflight-policy|preflight-transient-persistent)
+        # Genuine policy blocks (draft, changes-requested, conflicts, .beads
+        # data) re-enter automation only via a new head: with no server-side
+        # review requirement upstream, mergeStateStatus CLEAN says nothing
+        # about human judgment, so a same-head retry would erase the durable
+        # stop that merge-blocked exists to provide.
+        preflight-policy) ;;
+        preflight-transient-persistent)
           if [[ "$msstatus" == CLEAN || "$msstatus" == HAS_HOOKS ]]; then
             eligible=1; why="merge state settled to $msstatus"
           fi ;;
         *)
-          checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>>"$LOG")" || continue
-          jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"$checks" || continue
+          sweep_err="$STATE_DIR/gh-sweep.err"
+          checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$sweep_err")" || { [[ -s "$sweep_err" ]] && log "$bead: sweep gh pr checks stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"; rm -f "$sweep_err"; continue; }
+          rm -f "$sweep_err"
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.name | type == "string") and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"$checks" || continue
           if [[ "$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<<"$checks")" == 0 ]]; then
             eligible=1; why="checks no longer failing on the blocked head"
           fi ;;
@@ -131,11 +147,14 @@ rearm_sweep() {
     fi
     (( eligible )) || continue
     # Reserve the re-arm budget before restoring the label: a crash after the
-    # reservation conservatively spends one re-arm for this head.
-    if ! bd update "$bead" --set-metadata "pr_babysit_rearm=$head:$((n + 1))" --unset-metadata pr_babysit_transient >/dev/null 2>&1; then
+    # reservation conservatively spends one re-arm for this head.  Both patrol
+    # retry counters reset so the re-armed head gets a fresh assessment.
+    if ! bd update "$bead" --set-metadata "pr_babysit_rearm=$head:$((n + 1))" --unset-metadata pr_babysit_transient --unset-metadata pr_babysit_checksun >/dev/null 2>&1; then
       log "$bead: re-arm reservation failed"; continue
     fi
-    if bd update "$bead" --add-label merge-when-green --remove-label merge-blocked \
+    # --claim keeps the tail out of bd ready: a re-armed bead is patrol-owned,
+    # exactly as pr-handoff leaves it (2026-07-24 incident shape otherwise).
+    if bd update "$bead" --claim --add-label merge-when-green --remove-label merge-blocked \
          --set-metadata "pr_babysit_last_transition=re-armed:$head" \
          --append-notes "[pr-babysit $(date -u +%FT%TZ)] transition=re-armed:$head — $why; restored to patrol." >/dev/null 2>&1; then
       log "$bead: RE-ARMED ($why)"
@@ -228,9 +247,9 @@ while read -r item; do
 
   checks_err="$STATE_DIR/gh-checks.err"
   checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$checks_err")"; checks_status=$?
+  [[ -s "$checks_err" ]] && log "$bead: gh pr checks stderr: $(tr '\n' ' ' <"$checks_err" | cut -c1-200)"
+  rm -f "$checks_err"
   if (( checks_status != 0 )) || ! jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.name | type == "string") and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"${checks:-}"; then
-    [[ -s "$checks_err" ]] && log "$bead: gh pr checks stderr: $(tr '\n' ' ' <"$checks_err" | cut -c1-200)"
-    rm -f "$checks_err"
     if (( checks_status == 8 )); then
       # gh documents exit 8 as "checks pending" — a real wait state, never a
       # data problem; it must not consume the unavailable-escalation budget.
@@ -247,7 +266,6 @@ while read -r item; do
     fi
     continue
   fi
-  rm -f "$checks_err"
   if [[ "$(jq -r '.pr_babysit_checksun // empty' <<<"$metadata")" == "$head":* ]]; then
     bd update "$bead" --unset-metadata pr_babysit_checksun >/dev/null 2>&1 || log "$bead: checks-unavailable counter clear failed"
   fi
@@ -304,6 +322,11 @@ while read -r item; do
     transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
     continue
   fi
+  # A fully healthy preflight resets the transient budget: the counter tracks
+  # consecutive transient sightings, not lifetime ones.
+  if [[ "$(jq -r '.pr_babysit_transient // empty' <<<"$metadata")" == "$head":* ]]; then
+    bd update "$bead" --unset-metadata pr_babysit_transient >/dev/null 2>&1 || log "$bead: transient counter clear failed"
+  fi
   # Checks and preflight may take time; re-read head and rollup atomically.
   if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
     transition "$bead" "$metadata" "$notes" "premerge-pr-unavailable:$head" "Could not revalidate PR before merge; retained under patrol." || log "$bead: transition failed"
@@ -311,7 +334,10 @@ while read -r item; do
   fi
   final_head="$(jq -r .headRefOid <<<"$final_json")"
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
-  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and (. [0].metadata == $queued.metadata)' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
+  # Patrol-owned retry counters (checksun/transient/rearm) are excluded from
+  # the metadata comparison: the patrol legitimately clears them mid-pass, and
+  # they carry no merge-authorization meaning.
+  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'def scrub: (. // {}) | del(.pr_babysit_checksun, .pr_babysit_transient, .pr_babysit_rearm); length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and ((.[0].metadata | scrub) == ($queued.metadata | scrub))' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
     # Surface the skip on the bead (once per head): a persistent mismatch here
     # would otherwise livelock visibly only in the local patrol log.
     transition "$bead" "$metadata" "$notes" "authorization-mismatch:$head" "Bead changed between queue read and merge, or bd was unavailable; merge skipped; retained under patrol." || log "$bead: transition failed"
