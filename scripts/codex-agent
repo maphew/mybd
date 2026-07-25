@@ -90,6 +90,17 @@ case "$tier" in
     exec codex exec -s read-only -m gpt-5.6-terra \
       -c model_reasoning_effort='"medium"' --ephemeral "$@" ;;
   builder)
+    # Go build caches from delegated builds stay under the target worktree,
+    # never /tmp: two stale caches exhausted the per-user /tmp quota on
+    # 2026-07-24, killing both the build and the calling shell (bd memory
+    # codex-builder-tmp-quota, bead mybd-jx3o).  Pre-set GOCACHE/GOTMPDIR or
+    # CODEX_AGENT_KEEP_GO_ENV=1 to opt out.
+    if [ "${CODEX_AGENT_KEEP_GO_ENV:-0}" != "1" ]; then
+      : "${GOCACHE:=$workdir/.tmp/gocache}"
+      : "${GOTMPDIR:=$workdir/.tmp/gotmp}"
+      mkdir -p "$GOCACHE" "$GOTMPDIR"
+      export GOCACHE GOTMPDIR
+    fi
     exec codex exec -s workspace-write -m gpt-5.6-terra \
       -c model_reasoning_effort='"medium"' "$@" ;;
   reviewer)
