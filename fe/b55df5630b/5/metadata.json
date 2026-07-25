@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "feb55df5630b",
+  "session_id": "019f9688-fc27-7812-ae8e-f798a0186887",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T00:17:22.274353366Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "AGENTS.md"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "4eb99e40c360",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 59221,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 557056,
+    "output_tokens": 7458,
+    "api_call_count": 12
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T00:17:22.254691276Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 77,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 77,
+    "total_lines_changed": 77,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43,
+        "AGENTS.md": 7
+      }
+    }
+  ]
+}
