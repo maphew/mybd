@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "d4e7a0b00730",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-25-author-head-delta-scout-raw.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/d4/e7a0b00730/0/metadata.json",
+      "transcript": "/d4/e7a0b00730/0/full.jsonl",
+      "compact_transcript": "/d4/e7a0b00730/0/transcript.jsonl",
+      "content_hash": "/d4/e7a0b00730/0/content_hash.txt",
+      "prompt": "/d4/e7a0b00730/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 141,
+    "cache_creation_tokens": 180584,
+    "cache_read_tokens": 7867438,
+    "output_tokens": 53622,
+    "api_call_count": 71
+  }
+}

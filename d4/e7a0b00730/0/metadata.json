@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "d4e7a0b00730",
+  "session_id": "b342548b-c790-484b-a21d-8fd8ded97712",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T16:51:18.841919257Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "reports/2026-07-25-author-head-delta-scout-raw.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "f023e88bb256",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 141,
+    "cache_creation_tokens": 180584,
+    "cache_read_tokens": 7867438,
+    "output_tokens": 53622,
+    "api_call_count": 71
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T16:51:18.780003307Z",
+    "agent_lines": 37,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 37,
+    "total_lines_changed": 37,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 37,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
