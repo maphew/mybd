@@ -1,0 +1,10 @@
+Cross-vendor gate before maintainer commits are pushed to the contributor branch of gastownhall/beads PR #4984.
+
+Context: direct-mode --file/--graph must reject --allow-empty-description (narrow guards only; broader flag-hoist is PR 4918's separate scope); three new tests incl. a success round-trip.
+
+Inspect the maintainer fix commit in worktree .worktrees/beads/pr-4984-fix:
+  git -C .worktrees/beads/pr-4984-fix log --oneline -3
+  git -C .worktrees/beads/pr-4984-fix diff HEAD~1..HEAD
+plus surrounding source as needed. Read-only; post nothing; no bd/dolt commands.
+
+Assess: (1) correctness and CI-breakage risk; (2) test honesty — would the new tests fail if the fix were reverted, and did they demonstrably run (beware -run patterns that match nothing); (3) scope fit vs the review items claimed. First line exactly 'VERDICT: SHIP' or 'VERDICT: FIX', then terse file:line bullets.
