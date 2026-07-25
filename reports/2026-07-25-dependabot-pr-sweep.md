@@ -58,4 +58,38 @@ cycle, and dependabot auto-closes the superseded singles when it regroups
 
 Nightly rerun and #5038 CI were in progress at session close.
 
+## Addendum: bring-home session (same day)
+
+Owner asked for an independent review of #5038 and to see the sweep through.
+
+**Dual review of #5038** (claude reviewer: approve-as-is; codex gpt-5.6-sol:
+fix-first). Codex caught two real gaps, both incorporated (commit 2a732e082):
+
+- testcontainers-go + modules/dolt must bump in lockstep and break in 0.x
+  "minors", so they got their own `testcontainers` group, excluded from
+  `go-deps` — coupled together, never blocking routine bumps.
+- The five open gomod singles exactly saturated `open-pull-requests-limit: 5`,
+  and dependabot opens no new version PR at the limit — the grouped PR could
+  be wedged out. Raised to 10. PR body's auto-supersession promise softened to
+  a verified migration plan (mybd-ysu1).
+
+**The nightly "flake" wasn't one.** The rerun failed identically: the 5s
+prompt deadline in `TestInitCancel_E2E` races embedded-dolt store creation,
+which crept 4.71s → 4.92s → 5.02s across three nightlies. Margin exhaustion.
+Fix: 60s hang-guard deadline.
+
+**#5039's own CI then exposed a second latent red**: the wy-jpd3.7 replica-guard
+test `TestProtocol_GrantingReplicaRoundTripsJSONL` asserts non-reclamation via
+`strings.Contains` on *combined* output, but `warnReplica`'s stderr audit line
+echoes the issue id — a correctly-declined reclaim fails the test
+deterministically, on every PR's Contract corpus job from its first outing.
+Fix: parse reclaimed ids from the JSON payload (stdout is the machine truth);
+fails-before/passes-after verified locally.
+
+Both fixes travel as gastownhall/beads#5039 (`test: fix red main`), the
+policy-sanctioned only-mergeable PR while main is red. Chain: #5039 green →
+in-session merge → workflow_dispatch nightly full-test → base green → patrol
+merges #5038 + remaining singles (#5016, #5023 already landed mid-session) →
+dependabot regroups. Bead chain: mybd-kney → mybd-8usj → mybd-ysu1.
+
 _claude-fable-5-high on behalf of matt wilkie_
