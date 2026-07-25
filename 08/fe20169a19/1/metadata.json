@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "08fe20169a19",
+  "session_id": "019f9665-56dc-70b0-a7e0-39502584cd43",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T15:38:05.251831941Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-25-dependabot-pr-sweep.md"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "d52caa253e76",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 89230,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1782272,
+    "output_tokens": 8913,
+    "api_call_count": 30
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T15:38:05.222805817Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 61,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 61,
+    "total_lines_changed": 61,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+Adversarially verify a maintainer verdict for gastownhall/beads PR #4913 before it is acted on. Try to REFUTE it.
+
+The verdict and its key claims: MERGE as-is. Claim: docs-only PR fixing plugins/beads/skills/beads/resources/ASYNC_GATES.md; my 2026-07-23 changes-requested review (3 should-fixes + 1 nit: resolve-vs-escalate semantics, --timeout scope, find-gate-by-reason recipe, missing flag) is fully addressed by the author's follow-up commit 5f557ea6 (current head), and every documented command/flag matches cmd/bd/gate.go on current upstream/main. Verify the corrected doc claims against actual gate.go behavior and that no review item is left unaddressed.
+
+Check with gh (--repo gastownhall/beads: pr view/diff, reviews, comments) and the local clone bd-main/ (git -C bd-main; upstream remote = gastownhall/beads; read source at upstream/main). Read-only; post nothing; no bd/dolt commands.
+
+First line exactly 'VERDICT: CONFIRM' or 'VERDICT: REFUTE', then terse file:line bullets on anything material.
