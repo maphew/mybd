@@ -84,6 +84,31 @@ both and reconcile manually before changing metadata. Use
 accidental `.beads/metadata.json` changes away from `mybd`; intentional
 database renames require `MYBD_ALLOW_DB_RENAME=1`.
 
+### General hygiene pass
+
+The pinned routine above is a **floor, not a ceiling** — each item encodes a
+past incident, but housekeeping is not defined by the list. After the pinned
+checks, spend one pass on general hygiene and use judgment about what else
+looks crufty. Examples (not exhaustive):
+
+```bash
+git worktree list                 # stale/abandoned worktrees (both repos: root and bd-main)
+git branch --merged main          # local branches already merged
+git branch -vv | grep ': gone'    # local branches whose upstream was deleted
+git stash list                    # forgotten stashes (shared across worktrees!)
+du -sh .worktrees/beads/.verify-logs 2>/dev/null   # verification log buildup
+git status --ignored=matching -- . 2>/dev/null | tail -20  # stray untracked cruft
+```
+
+Posture: **notice and report; delete only the obviously dead.** This repo has
+parallel sessions, a shared stash stack, and a babysitter timer that owns merge
+tails — an "old-looking" worktree or stash may be another session's live state.
+Anything ambiguous goes in the handoff (or a bead) instead of the trash.
+
+Close the pass with the open question, same style as the Cold-start handoff
+self-asks: **"What did I notice that isn't on any list?"** — and put the answer
+in the session report.
+
 When working on beads, spawn agents according to their metadata hints.
 The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
 
