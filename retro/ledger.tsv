@@ -18,3 +18,33 @@ mybd	claude-code	8d01abad-0db8-43c5-976a-5b8cdfac4c4e	2026-06-20	261	pending
 mybd	claude-code	cca2fbe7-52a8-4f10-8055-9e25a7b3442c	2026-06-19	899	pending		
 mybd	claude-code	8571c16a-b44e-412e-8bd5-0d227832fa51	2026-06-19	600	pending		
 mybd	claude-code	510f4d95-a925-4f21-a4ae-c46b3385f03f	2026-06-18	2529	pending		
+mybd	claude-code	cb56a7f0-5d89-4e80-89fe-13f370d9a134	2026-07-23	1265	digested	sweep-3d	machinery sweep 2026-07-25
+mybd	claude-code	2088f1c0-82e2-4d07-b6f2-fd18207b0356	2026-07-24	1014	digested	sweep-3d	
+mybd	claude-code	29536753-9bb2-4947-855e-731a96ee9cc6	2026-07-24	1072	digested	sweep-3d	
+mybd	claude-code	e06b7792-c8f4-4f69-bbd5-ad33ea7ebc53	2026-07-24	3068	digested	sweep-3d	
+mybd	claude-code	15466d7d-b852-45df-bfa4-796ecf48168a	2026-07-24	2013	digested	sweep-3d	
+mybd	claude-code	c20b120d-b5ce-4d0a-837e-e1f841fbd2d5	2026-07-24	858	digested	sweep-3d	
+mybd	claude-code	4818896e-828f-4bbb-9a60-23c941f712b4	2026-07-24	197	digested	sweep-3d	
+mybd	claude-code	8e87e066-aec5-48c3-a505-92fccf61e15c	2026-07-24	242	digested	sweep-3d	
+mybd	claude-code	d41b072b-60a1-4514-9833-47e37aa7b046	2026-07-24	2778	digested	sweep-3d	fd-exhaustion incident
+mybd	claude-code	a7e557b0-34cb-4f37-bb75-4e6b9cf0908c	2026-07-24	563	digested	sweep-3d	
+mybd	claude-code	a7573951-87eb-4668-97bf-c1ac2040569e	2026-07-24	1468	digested	sweep-3d	/tmp quota incident
+mybd	claude-code	19c94550-8ba6-4da6-b983-abcbcf815b2f	2026-07-24	119	digested	sweep-3d	
+mybd	claude-code	14e39d13-c88a-4cb1-970a-f5293f50fa10	2026-07-24	300	digested	sweep-3d	
+mybd	claude-code	8c29af54-4c0d-4e6e-88b2-22da6d9798f4	2026-07-25	1389	digested	sweep-3d	
+mybd	claude-code	f6c0822c-b894-4135-8798-77413720814e	2026-07-25	2636	digested	sweep-3d	
+mybd	claude-code	b342548b-c790-484b-a21d-8fd8ded97712	2026-07-25	786	digested	sweep-3d	
+mybd	claude-code	7c0a9e9e-2c70-46ee-ac80-b9c2f4c342e8	2026-07-25	831	digested	sweep-3d	prime-truncation find
+mybd	claude-code	b943fbbb-db5d-47f2-bad4-95841d5b6adb	2026-07-24	90	skipped-trivial	sweep-3d	
+mybd	claude-code	b7fca1f7-8626-4c9e-baf4-59e5b46342ef	2026-07-25	24	skipped-trivial	sweep-3d	
+mybd	claude-code	ca11a7ab-9889-4762-9487-da28f6c03780	2026-07-25	104	skipped-inflight	sweep-3d	this audit session
+mybd	codex	019f8f94-674a-b2c9db33	2026-07-23	1625	digested	sweep-3d	
+mybd	codex	019f91be-8802-d4d8a086	2026-07-23	810	digested	sweep-3d	
+mybd	codex	019f91c4-cea6-06050395	2026-07-23	1538	digested	sweep-3d	
+mybd	codex	019f9251-e4e5-43e18dc2	2026-07-23	761	digested	sweep-3d	
+mybd	codex	019f9504-d6c5-fd4998ac	2026-07-24	931	digested	sweep-3d	
+mybd	codex	019f9530-6514-0e22e5e9	2026-07-24	922	digested	sweep-3d	
+mybd	codex	019f9a18-f9ae-d90ba750	2026-07-25	1692	digested	sweep-3d	
+mybd	codex	019f9b26-6ebe-5bf7ff1d	2026-07-25	436	digested	sweep-3d	codex-side machinery retro (lq8i.2)
+mybd	amp	T-019f8f5b+4more	2026-07-22..24	0	skipped-no-transcript	sweep-3d	5 threads server-side only; cli.log clean
+mybd	kilocode	none	-	0	skipped-inactive	sweep-3d	no activity since 2026-01/03
