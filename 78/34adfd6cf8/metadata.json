@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "7834adfd6cf8",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-25-pr5027-mol-proxied-review.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/78/34adfd6cf8/0/metadata.json",
+      "transcript": "/78/34adfd6cf8/0/full.jsonl",
+      "compact_transcript": "/78/34adfd6cf8/0/transcript.jsonl",
+      "content_hash": "/78/34adfd6cf8/0/content_hash.txt",
+      "prompt": "/78/34adfd6cf8/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 47965,
+    "cache_read_tokens": 4692833,
+    "output_tokens": 27404,
+    "api_call_count": 36
+  }
+}
