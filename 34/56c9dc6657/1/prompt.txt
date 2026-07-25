@@ -1,0 +1,179 @@
+read @reports/2026-07-25-mybd-beads-sweep-and-next-batch.md and start next batch
+
+---
+
+<task-notification>
+<task-id>a837699806fa2fa6e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/a837699806fa2fa6e.output</output-file>
+<status>completed</status>
+<summary>Agent "Lane B: quad341 author sweep (mybd-9i93.1)" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All work is complete. Final report follows.
+
+---
+
+# quad341 author-clustered sweep — bead mybd-9i93.1 (2026-07-25)
+
+## Immediate scope dispositions
+
+### gastownhall/beads#5028 — `fix(beads): allow /var/tmp in repo-context safety boundary` — **APPROVE, ready for patrol handoff**
+- **Evidence:** 2 files, +52/-0, single concern. Carve-out is correctly placed before the `unsafePrefixes` `/var` reject and reuses the symlink-safe `resolvedPathWithinRoot` helper (verified helper semantics at `upstream/main:internal/beads/context.go` — it resolves both sides via `resolveLongestExistingAncestor`, so not-yet-created paths and symlinked roots are handled). Boundary comparison avoids the `/var/tmpfoo` sibling trap. Symlink-escape test mirrors the established `/Users/Shared` pattern and skips gracefully. CI fully green, MERGEABLE/CLEAN, `maintainerCanModify: true`.
+- **Preflight:** PASS (blocking mode; base main green across all 7 workflows). Warns only: external contributor, REVIEW_REQUIRED (now approved), no closing-issue ref.
+- **Posted:** approving review on https://github.com/gastownhall/beads/pull/5028 (latest review, author maphew, APPROVED), including the merge-order note below.
+
+### gastownhall/beads#5029 — `fix(bench): stop dolt benchmarks leaking test DBs onto shared servers` — **APPROVE, ready for patrol handoff**
+- **Evidence:** Leak vector confirmed in `applyConfigDefaults` (env port override chain at `store.go:1111-1119`). Key regression question resolved in the PR's favor: current `New()` always routes through `newServerMode` (no embedded open path exists), so pre-PR clean-env benchmarks died with `b.Fatalf` on a port-0 dial — skip-by-default plus explicit `BEADS_BENCH_DOLT_PORT` opt-in is strictly better, not a coverage loss. Defense stack (env scrub, `BEADS_TEST_MODE=1` prod-port guard stays armed, `BEADS_TEST_SERVER=1` only post-opt-in) is sound. `release-gates/` file follows established upstream convention (5 prior gate records on main). No file overlap with #5028/#5030 — lands independently in any order.
+- **Preflight:** PASS (blocking mode).
+- **Posted:** approving review on https://github.com/gastownhall/beads/pull/5029, with one non-blocking note (rename `BenchmarkBootstrapEmbedded` someday; it now measures server-mode bootstrap).
+
+### gastownhall/beads#5030 — `fix(beads): make temp-directory safety-boundary check symlink-safe` — **APPROVE, ready for patrol handoff**
+- **Evidence:** Real vulnerability — old fallback did raw `HasPrefix` on the unresolved path when `EvalSymlinks` failed (the normal not-yet-created-BEADS_DIR case), admitting planted symlink escapes. Fix collapses to `resolvedPathWithinRoot`; verified macOS safety (helper resolves the root too, so `/var/folders` → `/private/var/folders` compares equal) and that `TrimSuffix` fixes two latent defects (trailing-slash TMPDIR, unanchored sibling prefix). Unconditional return is correct given the fail-open default later in the function. Windows behavior effectively unchanged (falls through to default accept, as before). CI fully green, MERGEABLE/CLEAN.
+- **Preflight:** PASS (blocking mode).
+- **Posted:** approving review on https://github.com/gastownhall/beads/pull/5030.
+
+## Merge-order caveat for the patrol (#5028 x #5030)
+Local `git merge-tree` simulation (main + 5028, then 5030): `internal/beads/context.go` merges **cleanly** in either order, but `internal/beads/context_test.go` **conflicts** — both PRs append test cases at the same two insertion points. Resolution is trivial (keep both blocks). Recommended flow: patrol merges either one; the second goes DIRTY and needs a small maintainer conflict-resolution push to the contributor branch (maintainer edits enabled; head repo is user-owned `quad341/beads-sec003-contrib`, so the org-fork push block from past incidents does not apply). #5029 is unaffected. This is documented in both PR review bodies so the contributor and any merger see it.
+
+## #3906 / #3458 performance-design disposition (not swept, per scope)
+These two are one design thread: two overlapping narrow-projection mechanisms for the same "stop materializing wide Issue rows on list paths" problem.
+- **#3906** (`IssueFilter.Lite` foundation): APPROVED, MERGEABLE/CLEAN, maintainer follow-ups already pushed (gate-file removal, domain/db lite-gap documented-and-deferred). Effectively waiting on a **storage-owner decision to merge**, not more review.
+- **#3458** (`SearchIssueSummaries` method + CLI fast path, 18 files): stale CHANGES_REQUESTED from 2026-05-17; its stack dependency #3453 is MERGED; maintainer rebased it onto main 2026-07-24. quad341's comment today (2026-07-25) puts a hard constraint on record: the previously floated "land the benchmark file alone first" split **cannot compile** — smallest self-contained unit is "method + benchmark". He explicitly defers the keep/split/drop call to the storage owner, no urgency.
+- **Decision needed, by the storage owner (maphew/orchestrator):** choose the projection surface — (a) merge #3906 and re-cut #3458's list-path wins on top of `Lite`, (b) take #3458's dedicated summary method and retire #3906, or (c) merge #3906 now and split #3458 at the "method + benchmark" line as an A/B. Given #3906 is already approved/clean and #3458 carries a stale review verdict plus 18-file breadth, (a) or (c) look cheapest; either way #3458 should not sit under a stale CHANGES_REQUESTED once the direction is picked.
+
+## PRs ready for patrol handoff
+#5028, #5029, #5030 — all approved, CI green, CLEAN, preflight-passed. I did not merge and did not run pr-handoff. Order note above applies to 5028/5030.
+
+## Discovered follow-up work (for beads, orchestrator to file)
+1. Second-of-5028/5030 merge tail: trivial `context_test.go` conflict resolution push after the first merges (see caveat above).
+2. Rename `BenchmarkBootstrapEmbedded` (misleading twice over: benchmarks server-mode; embedded open path no longer exists) — fold into any future touch of `dolt_benchmark_test.go`.
+3. #3906/#3458 projection-surface decision bead (design gate, storage owner) — includes clearing #3458's stale CHANGES_REQUESTED once decided.
+
+## Consolidated author summary
+quad341's current work is high quality and internally consistent: red/green commit discipline, symlink-safe security reasoning that correctly reuses the repo's own hardened helpers, honest PR bodies that pre-flag reviewer concerns (the 5030 unconditional-return note, the 5028/5030 overlap warning), and today's #3458 comment proactively corrected a maintainer assumption against his own PR's convenience. All three fresh PRs approved with zero fixes needed; the two older perf PRs need one owner-level design decision, not contributor work. No branches pushed, no worktree created (read-only `git merge-tree` simulations in `bd-main` only; temp refs deleted), no bd/tracker writes made.</result>
+<usage><subagent_tokens>128138</subagent_tokens><tool_uses>32</tool_uses><duration_ms>398820</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>afcd87c95ef76295c</task-id>
+<tool-use-id>toolu_01RHo52Aw3wyHFEZykg8MaMQ</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/afcd87c95ef76295c.output</output-file>
+<status>completed</status>
+<summary>Agent "Lane C: rjc123 author sweep (mybd-9i93.2)" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># rjc123 author-clustered sweep — final report (mybd-9i93.2)
+
+## Combined disposition: #5032 + #5035 (paired CI-hygiene story) — **both APPROVED, merge-when-unblocked**
+
+The pair is a closed loop, and every claim in both PRs verified true from raw CI logs:
+
+- **#5032** (`BD_DISABLE_EVENT_FLUSH=1` in `shared_server_cfgnil_test.go`, +7/−0): root cause confirmed — the detached `bd send-metrics` child (`internal/metrics/spawn.go`) races Go's `t.TempDir` RemoveAll; 9 sibling test files already set this flag for the same documented reason (08881217b). Its **only** red check is the Cygwin installer download failing all 5 retries — exactly the flake #5035 fixes.
+- **#5035** (workflow-only, +18/−1): `continue-on-error` + `steps.cygwin.outcome == 'success'` gating is semantically correct (outcome survives the conclusion rewrite); real Cygwin Make regressions still fail; `::warning::` keeps flakes visible. Its **only** red is the main-inherited Contract corpus failure (below).
+- The flake #5032 fixes is also the only red on #4821 — verified byte-identical failure. Three of this author's PRs interlock.
+
+**Posted:** approving reviews on both — https://github.com/gastownhall/beads/pull/5032#pullrequestreview (APPROVED 16:24:23Z), https://github.com/gastownhall/beads/pull/5035 (APPROVED 16:24:24Z, includes the root-cause writeup below).
+
+**Merge order for patrol:** (1) land the main test fix (below), (2) rerun/update-branch #5035 → merge, (3) rerun #5032 (or it benefits from #5035's soft-fail) → merge.
+
+## DISCOVERED P0 — upstream main is effectively red for every fresh PR (stop-the-line)
+
+`TestProtocol_GrantingReplicaRoundTripsJSONL` (`cmd/bd/protocol/lease_claim_test.go:392`, landed in c00e4d6a9, wy-jpd3.7) **can never pass**: the replica guard works correctly (reclaim skips, `count: 0`), but the guard's stderr audit line `reclaim: skipping &lt;id&gt; …` (from `reportForeignSkips`, `internal/storage/issueops/lease.go:357`) names the issue ID, and the helper `tryRunEnv` uses `CombinedOutput()`, so `strings.Contains(reclaimOut, leased)` trips on the audit line. Verified identical failure on 4 unrelated PR branches (5035, both dependabot PRs, fix/init-cancel-e2e-timeout, chore/dependabot-groups) — every PR run since ~09:30 UTC. Main's own workflows stay green because **Contract corpus exists only in pr.yml** — the test landed by direct push without ever running in that job. **Fix (bounded, test-only):** assert on the parsed JSON `reclaimed` list from stdout instead of substring-matching combined output. I did not open the fix PR (outside my write scope — not an rjc123 PR); **orchestrator should dispatch this immediately as the only mergeable work while red.**
+
+Corollary bug: `pr-preflight.sh` reports "Base branch main CI is green" on all five PRs — its base-health check reads main's own workflows and is blind to pr.yml-only jobs. Worth a follow-up bead.
+
+## Individual dispositions
+
+- **#4815** (update --type help, +1/−1): **APPROVED — ready for patrol handoff now.** Prior blockers (generated-doc hunks vs docs pin, commit message) fully addressed; source-only; all checks green; merge state CLEAN; **preflight: PASSED**. Caveat: do not update-branch before the P0 fix lands or it inherits the red. Review: https://github.com/gastownhall/beads/pull/4815 (APPROVED 16:24:17Z).
+- **#4821** (`bd list --tree --deps`): **APPROVED with a maintainer fix pushed.** All four prior review points verified addressed at the new head (reject non-tree combos + implies-tree with wiring tests, dep-read errors propagate, shared `captureStdout`, `t.Run` names). One residual accept-and-ignore gap remained — the two proxied-server tree paths — so I pushed a 2-line commit to his branch (maintainer edit works): **9e1ca5fc3** on `rjc123/beads:fix/list-tree-deps-annotation`, threading `in.depsMode` through `cmd/bd/list_proxied_server.go:110,299`. Build + targeted tests pass (`gofmt` clean, deps/wiring tests ok). **Preflight: BLOCKED — 17 checks pending** on the new head; the fresh run merges against current main so it **will show the inherited Contract-corpus red** until the P0 fix lands. Patrol handoff = merge-when-green after that. Review: https://github.com/gastownhall/beads/pull/4821 (APPROVED 16:24:16Z).
+- **#4844** (`bd dolt rebase` child-ID collisions): **SPLIT RECOMMENDED — do not absorb into this sweep.** Preflight: BLOCKED (stale CHANGES_REQUESTED + 3 red checks). His CI triage verified where checkable: conformance red is the job's 10m ceiling (600.082s, 0.08s over; no assertion), proxied red is a known-shape session flake. Interim comment posted: https://github.com/gastownhall/beads/pull/4844#issuecomment-5079248440
+
+## Recommended high-risk split (precise scope for orchestrator)
+
+**Lane: deep re-review of #4844 head 195a97ba2** — 9 files, +1189, centered on new `internal/storage/versioncontrolops/rebase.go` (588 lines) + `internal/storage/embeddeddolt/rebase_collision_test.go` (362 lines). Verify the three claimed blocker fixes: (1) wisp-aware subtree enumeration (`issues` + session-local `wisps`; mixed-subtree orphan test), (2) `hadViol &amp;&amp; !repairedViol` abort parity with pull-settle under `dolt_force_transaction_commit=1`, (3) atomic hard-reset-to-backup-tag on any failure (no stranded renumber commits). Plus the open should-fixes: temp-ID (`parent.1000000+i`) occupancy check, two-clone pull/push convergence coverage, `--json`/CLI tests, `bd doctor --fix` policy routing. Invariants at stake: derived-PK dependency-edge rekey via `issueops.UpdateIssueIDInTx` (#4259), `child_counters` high-water resolution, wisp working-set semantics. Risk class: data loss/corruption in sync failure paths. Suggested tier: reviewer (opus or codex gpt-5.6-sol high), own worktree, embedded-Dolt build (`CGO_ENABLED=1 -tags gms_pure_go`). Also check whether the conformance job runs the whole embeddeddolt package (his new 362-line test then adds runtime to an at-ceiling job).
+
+## Follow-up beads to file (orchestrator owns tracker writes)
+
+1. **P0**: fix `TestProtocol_GrantingReplicaRoundTripsJSONL` assertion (spec above) — only mergeable work while red.
+2. pr-preflight base-health blind spot for pr.yml-only jobs.
+3. Source-level metrics-flusher guard under `BEADS_TEST_MODE=1` (removes the 9-file hand-rolled `BD_DISABLE_EVENT_FLUSH` class; rjc123 offered, noted in upstream #5031).
+4. Conformance job at 10m ceiling (~9–10m runtime) — shard or bump.
+5. (Optional DX) docs-freshness gate auto-applying its own patch (rjc123's #4844 comment).
+
+## Consolidated author outcome
+
+rjc123 is a high-signal contributor: every CI claim he made across five PRs verified true from logs, he root-caused a teardown race biting other people's PRs and fixed it minimally, and he correctly flagged upstream main's red before anyone else. Outcome of this sweep: **4 of 5 PRs approved** (4815 mergeable now; 4821/5032/5035 merge-when-unblocked, all blockers external to his diffs), 1 (4844) acknowledged with a dedicated deep-review lane queued. One maintainer commit pushed to his branch with explanation. No requests-changes issued; nothing left needing his action except optionally filing the conformance-ceiling issue he volunteered.
+
+**Worktree:** `/var/home/matt/dev/mybd/.worktrees/beads/rjc123-sweep` — detached at 9e1ca5fc3 (pushed), clean; safe to remove or reuse for the 4844 lane. No bd/dolt commands run; no merges performed; no handoff scripts run.</result>
+<usage><subagent_tokens>132288</subagent_tokens><tool_uses>65</tool_uses><duration_ms>729774</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a6cbf1e3b4bdb8a92</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/a6cbf1e3b4bdb8a92.output</output-file>
+<status>completed</status>
+<summary>Agent "P0 fix: lease test assertion" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Worktree is clean (no uncommitted changes), on branch `fix/lease-reclaim-test-assertion`, HEAD `d5db355e4`. Did not touch bd-main root or any other worktree.
+
+## Final Report
+
+**Root cause confirmed:** `TestProtocol_GrantingReplicaRoundTripsJSONL` (landed via direct push in commit `c00e4d6a9ec3a8e976b37b2346b54a784379919b`) never ran the pr.yml-only Contract corpus job. The replica-guard reclaim behavior is correct — a lease granted by a different replica is correctly declined (`count: 0`, absent from `reclaimed`). But `reportForeignSkips` (`internal/storage/issueops/lease.go:357`) writes an audit line to **stderr** naming the skipped issue ID, by design (comment at `lease.go:325` even notes "never stdout ... a stray line there breaks every machine consumer"). The test's `tryRunEnv` uses `CombinedOutput()`, so `strings.Contains(reclaimOut, leased)` trips on that stderr audit line even though the JSON result on stdout is correct.
+
+**Fix (test-only diff):**
+- `cmd/bd/protocol/wp4_helpers_test.go`: added `tryRunEnvSplit`, a sibling to `tryRunEnv` that captures stdout/stderr into separate buffers instead of `CombinedOutput()`. `tryRunEnv` and its other callers untouched.
+- `cmd/bd/protocol/lease_claim_test.go`: the cross-replica reclaim assertion now calls `tryRunEnvSplit`, parses the JSON from stdout via `parseJSONOutput`, and asserts `count == 0` and the leased ID is absent from the `reclaimed` array — same intent, expressed against the machine-readable result. No change to `lease.go` or any non-test file.
+
+**Targeted test output (verbatim tail):**
+```
+=== RUN   TestProtocol_GrantingReplicaRoundTripsJSONL
+=== PAUSE TestProtocol_GrantingReplicaRoundTripsJSONL
+=== CONT  TestProtocol_GrantingReplicaRoundTripsJSONL
+--- PASS: TestProtocol_GrantingReplicaRoundTripsJSONL (14.55s)
+PASS
+ok  	github.com/steveyegge/beads/cmd/bd/protocol	16.404s
+```
+
+Collateral check (other lease/reclaim/claim Protocol tests) — all pass:
+```
+--- PASS: TestProtocol_ErrorClass_AlreadyClaimedNamesHolder (9.49s)
+--- PASS: TestProtocol_ErrorClass_NotClaimableNamesState (9.52s)
+--- PASS: TestProtocol_ReadyClaimEmptyFrontIsSuccess (9.58s)
+--- PASS: TestProtocol_LeaseFieldsExportToJSONL (9.76s)
+--- PASS: TestProtocol_ImportNeverClobbersLiveLocalLease (10.06s)
+--- PASS: TestProtocol_ClaimIsUnassignedOnly (10.24s)
+--- PASS: TestProtocol_ReadyClaimComposesWithFilters (10.94s)
+--- PASS: TestProtocol_LeaseFieldsRoundTripJSONL (11.91s)
+PASS
+```
+(One unrelated pre-existing `SKIP` for `TestProtocol_ErrorClass_ClaimFailures_StructuredJSON` noted in output, unrelated to this change.)
+
+**Branch / commit:** `fix/lease-reclaim-test-assertion` @ `d5db355e40cb9b9a6f27118f7c760c2ef0a84197`, pushed to `origin` (maphew/beads fork).
+
+**PR:** https://github.com/gastownhall/beads/pull/5041 — open, base `main`, `mergeable: MERGEABLE`. Not merged.
+
+**Worktree:** `/var/home/matt/dev/mybd/.worktrees/beads/p0-lease-test-fix` — clean, on branch `fix/lease-reclaim-test-assertion`, HEAD `d5db355e4`. Verified before commit that it's a linked worktree (git-dir `/var/home/matt/dev/mybd/.bare/worktrees/p0-lease-test-fix` != common-dir `/var/home/matt/dev/mybd/.bare`). Did not touch `bd-main` root or other worktrees (`pr-5027-review`, `rjc123-sweep`, `bd5012-proxyinit`).
+
+**Unexpected:** The first commit attempt failed with `parallel golangci-lint is running` / `exit status 3` from the `.githooks/pre-commit` hook's `golangci-lint` invocation — transient lock contention from another parallel session's worktree also running the linter concurrently in this shared repo. A plain retry of the same commit succeeded cleanly (`0 issues.`). No files or state were affected by the failed attempt; nothing else unexpected.
+
+Files touched (both test-only):
+- `/var/home/matt/dev/mybd/.worktrees/beads/p0-lease-test-fix/cmd/bd/protocol/lease_claim_test.go`
+- `/var/home/matt/dev/mybd/.worktrees/beads/p0-lease-test-fix/cmd/bd/protocol/wp4_helpers_test.go`
+
+Per instructions, did not merge, and did not run any `bd`, `dolt`, `pr-handoff`, `verify-enqueue`, or `codex` commands.</result>
+<usage><subagent_tokens>62178</subagent_tokens><tool_uses>45</tool_uses><duration_ms>283174</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bo5pgqcux</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/b342548b-c790-484b-a21d-8fd8ded97712/tasks/bo5pgqcux.output</output-file>
+<status>completed</status>
+<summary>Background command "Run Codex scout for author head-delta recon (mybd-9i93.3)" completed (exit code 0)</summary>
+</task-notification>

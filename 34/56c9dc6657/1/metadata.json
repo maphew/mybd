@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "3456c9dc6657",
+  "session_id": "b342548b-c790-484b-a21d-8fd8ded97712",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T16:39:44.350467494Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "save_step_count": 2,
+  "files_touched": [
+    "reports/2026-07-25-psxg2-embedded-proxied-migration-design.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "ddc4cb1f2a8c",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 105,
+    "cache_creation_tokens": 162941,
+    "cache_read_tokens": 5233271,
+    "output_tokens": 44111,
+    "api_call_count": 53
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T16:39:44.307130057Z",
+    "agent_lines": 171,
+    "agent_removed": 0,
+    "human_added": 122,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 293,
+    "total_lines_changed": 293,
+    "agent_percentage": 58.36177474402731,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 171,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

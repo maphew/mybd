@@ -3,7 +3,7 @@
   "checkpoint_id": "3456c9dc6657",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 7,
   "files_touched": [
     "reports/2026-07-25-psxg2-embedded-proxied-migration-design.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/34/56c9dc6657/0/transcript.jsonl",
       "content_hash": "/34/56c9dc6657/0/content_hash.txt",
       "prompt": "/34/56c9dc6657/0/prompt.txt"
+    },
+    {
+      "metadata": "/34/56c9dc6657/1/metadata.json",
+      "transcript": "/34/56c9dc6657/1/full.jsonl",
+      "compact_transcript": "/34/56c9dc6657/1/transcript.jsonl",
+      "content_hash": "/34/56c9dc6657/1/content_hash.txt",
+      "prompt": "/34/56c9dc6657/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 251,
-    "cache_creation_tokens": 194092,
-    "cache_read_tokens": 16575455,
-    "output_tokens": 84446,
-    "api_call_count": 126
+    "input_tokens": 356,
+    "cache_creation_tokens": 357033,
+    "cache_read_tokens": 21808726,
+    "output_tokens": 128557,
+    "api_call_count": 179
   }
 }
