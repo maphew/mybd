@@ -781,3 +781,13 @@ Interpolation-awareness rule (matters if you ever validate a config by parsing i
 ---
 
 process follow-up beads
+
+---
+
+<task-notification>
+<task-id>b2doyaevv</task-id>
+<tool-use-id>toolu_01GAmNJQGv3ijuzKP19mPeuM</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/a7573951-87eb-4668-97bf-c1ac2040569e/tasks/b2doyaevv.output</output-file>
+<status>completed</status>
+<summary>Background command "Run dolt compatibility matrix (4 versions)" completed (exit code 0)</summary>
+</task-notification>
