@@ -1,0 +1,23 @@
+<task-notification>
+<task-id>blh2o3kjb</task-id>
+<summary>Monitor event: "PR 5039 fresh CI (both fixes) until terminal"</summary>
+<event>PR5039 CI terminal GREEN (74 checks)</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bswc1kkgb</task-id>
+<summary>Monitor event: "Dependabot queue: PR merges and grouped-PR appearance"</summary>
+<event>[Monitor timed out — re-arm if needed.]</event>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>beojjh2rp</task-id>
+<summary>Monitor event: "Main workflow on main until a run goes green"</summary>
+<event>main still red: 30171605206 completed failure af03c6ee6</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>

@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "a481afcb40aa",
+  "session_id": "8c29af54-4c0d-4e6e-88b2-22da6d9798f4",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-25T21:28:25.600993374Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".beads/PRIME.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "e23a76091688",
+  "checkpoint_transcript_start": 772,
+  "transcript_lines_at_start": 772,
+  "compact_transcript_start": 155,
+  "token_usage": {
+    "input_tokens": 59,
+    "cache_creation_tokens": 245263,
+    "cache_read_tokens": 6099962,
+    "output_tokens": 16449,
+    "api_call_count": 30
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-25T21:28:25.535667387Z",
+    "agent_lines": 10,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 10,
+    "total_lines_changed": 10,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 131,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43,
+        "reports/2026-07-25-upstream-ci-gating-proposal-draft.md": 80
+      }
+    }
+  ]
+}
