@@ -1,0 +1,10 @@
+Cross-vendor gate before maintainer commits are pushed to the contributor branch of gastownhall/beads PR #4930.
+
+Context: strict-readonly policy: serverOpenCanAutoStart/persistResolvedPortFile/initializeServerCircuitBreaker re-keyed from cfg.ReadOnly to cfg.DisableAutoStart; store_factory routes strict readonly (ReadOnly+DisableAutoStart) to embeddeddolt.OpenReadOnly (write-refusing) while ordinary classified reads keep OpenForReadOnlyCommand; NOTE this branch was REBASED onto main (not merged) and two pre-existing main-drift test failures (TestConfigValidateReadOnlyIsHermetic, TestDoltNew_ReadOnly_ForwardDrift_*) are documented as unrelated — verify that unrelatedness claim.
+
+Inspect the maintainer fix commit in worktree .worktrees/beads/pr-4930-fix:
+  git -C .worktrees/beads/pr-4930-fix log --oneline -3
+  git -C .worktrees/beads/pr-4930-fix diff HEAD~1..HEAD
+plus surrounding source as needed. Read-only; post nothing; no bd/dolt commands.
+
+Assess: (1) correctness and CI-breakage risk; (2) test honesty — would the new tests fail if the fix were reverted, and did they demonstrably run (beware -run patterns that match nothing); (3) scope fit vs the review items claimed. First line exactly 'VERDICT: SHIP' or 'VERDICT: FIX', then terse file:line bullets.
