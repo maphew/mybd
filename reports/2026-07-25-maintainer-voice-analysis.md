@@ -130,10 +130,22 @@ suppresses the signal — 9 first-timer PRs were finished by maintainer commits,
 2. mybd-sx1w — `close-when-quiet` patrol lane design.
 3. mybd-aayb — the waiting queue, ordered by wait rather than age.
 
-## Open question for the owner
+## Owner decisions (2026-07-25)
 
-Should the patrol post a mechanical arrival acknowledgement ("in the review
-queue") on unanswered contributor PRs after N hours? It would kill the "=)))"
-pings at zero token cost, but it is outward-facing automation writing to
-strangers' PRs, and an unfollowed-up bot "thanks!" can read worse than silence.
-Not built, not filed as actionable — owner decision.
+**Author-clustered sweeps: keep.** Re-affirmed as the working principle for the
+PR queue. Supported by this analysis — the waiting backlog in mybd-aayb clusters
+cleanly without being asked to (jjgarzella ×2, julianknutsen ×3,
+seanmartinsmith ×5, MovGP0 ×4, kevglynn ×4, marcodelpin ×2, realies ×2), so
+"sweep by author" and "answer the oldest waiters" turn out to be the same list.
+Already documented in PR_MAINTAINER_GUIDELINES.md "Sweep by author, not by age"
+and the `author-clustered-pr-sweeps` memory.
+
+**Automated arrival acknowledgement: no.** The open question — should the patrol
+post "thanks, this is in the review queue" on unanswered contributor PRs after N
+hours — is decided against. An essentially empty bot auto-response is worse than
+silence: it converts an honest "nobody has looked at this yet" into a false
+signal that someone has. The remedy for a waiting contributor is a human answer
+sooner, not a faster acknowledgement of the wait. Recorded in
+PR_MAINTAINER_GUIDELINES.md so it is not re-proposed; the patrol may automate the
+*close* of an agent-written disposition (mybd-sx1w) but may not originate
+contributor-facing text.

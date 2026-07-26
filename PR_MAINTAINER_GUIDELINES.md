@@ -76,6 +76,16 @@ refusal is what makes someone try again. Concretely:
 None of this softens a finding. State the blocker exactly as harshly as the
 evidence warrants — just do not make the apparatus the first thing they meet.
 
+**Do not automate the greeting.** A patrol *could* post "thanks, this is in the
+review queue" on unanswered contributor PRs, and it would silence the polite
+pings at zero token cost. Owner decision, maphew 2026-07-25: **no** — an
+essentially empty bot auto-response is worse than silence, because it converts an
+honest "nobody has looked at this yet" into a false signal that someone has. The
+fix for a contributor waiting is a human answer sooner (see mybd-aayb), not a
+faster acknowledgement of the wait. The patrol may automate the *close* of a
+disposition already written by an agent (mybd-sx1w); it may not originate
+contributor-facing text.
+
 ## Triage Groups
 
 Classify each PR into one of these groups:
