@@ -18,6 +18,7 @@ BD_LOG="$TMP/bd-calls.log"
 cat >"$STUBS/bd" <<EOF
 #!/usr/bin/env bash
 if [[ "\$1" == "list" ]]; then
+  [[ "\${BD_LIST_FAIL:-}" == 1 ]] && exit 1
   cat <<'JSON'
 [
  {"id":"t-1","external_ref":"gh-iss-100","labels":["tri:defer"]},
@@ -33,6 +34,7 @@ EOF
 # updatedAt per item comes from env so tests can move upstream time.
 cat >"$STUBS/gh" <<EOF
 #!/usr/bin/env bash
+[[ "\${GH_FAIL:-}" == 1 ]] && exit 1
 num="\$3"
 case "\$num" in
   100) ts="\${TS_100:-2026-01-01T00:00:00Z}";;
@@ -81,4 +83,15 @@ out="$(TS_100=2026-02-02T00:00:00Z TS_300=2026-03-03T00:00:00Z TS_200=2026-04-04
 [[ ! -s "$BD_LOG" ]] || fail "dry-run must not write to bd"
 grep -q 'gh-pr-200 2026-01-01T00:00:00Z' "$STATE" || fail "dry-run must not move baselines"
 
-echo "test-tri-drift: all 5 checks passed"
+# 6. bd list failure is a hard error, not a quiet empty worklist.
+if BD_LIST_FAIL=1 run_drift >/dev/null 2>&1; then
+  fail "bd list failure must exit non-zero"
+fi
+
+# 7. All upstream reads failing (gh auth/network) is a hard error.
+if GH_FAIL=1 run_drift >/dev/null 2>&1; then
+  fail "systemic gh failure must exit non-zero"
+fi
+grep -q 'gh-pr-200 2026-01-01T00:00:00Z' "$STATE" || fail "failed runs must not move baselines"
+
+echo "test-tri-drift: all 7 checks passed"
