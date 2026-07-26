@@ -91,3 +91,55 @@ awaiting author). No double-work.
   untouched per the shared-state posture. `pr-4581-fold` is deliberately kept.
 
 Agent: claude-fable-5-medium on behalf of maphew
+
+---
+
+# Continuation leg ("carry on"), same day
+
+## ecuthiell — 4 new PRs (opened 2026-07-26)
+
+- **#5073 / #5074 / #5076 approved** (conformance timeout budgets; native repro
+  fixtures replacing POSIX-shebang fakes with parent-PID-bound self-reexec;
+  docsmint path assertion) — all green, handed to patrol (mybd-gfpf /
+  mybd-1eag / mybd-pfts).
+- **#5075 (CI lint overhaul, +3.5k) — split-merge.** Deep review found the
+  ~15-line core (windows cross-lint closes #4991, fmt-check exit-status fix,
+  linter pin) buried in ~2.7k lines of host-identity binding that is red on
+  two deterministic bugs: a PowerShell `AppendAllLines` overload failure that
+  makes the native lane unable to go green, and a macOS `MAKE_HOST`
+  path-equality check that is *latent in main.yml* (push-to-main only — would
+  red main post-merge). Also: the CGO=1 native-Windows lint lane provably adds
+  zero coverage (no `windows && cgo` files exist). Review COMMENT posted (no
+  CHANGES_REQUESTED); core extracted as **maintainer PR #5083** with
+  `Co-authored-by: Ewen Cuthiell`, patrol bead mybd-toeu; remainder gated in
+  **mybd-buds**.
+
+## mybd-qaeo fix-push sweep (harry-miller-trimble + vishnujayvel) — complete
+
+All fixes specified by the 07-24 reviews implemented on contributor branches,
+approved, patrol-handed:
+
+- **vishnujayvel**: #4832 and #4829 — author had already pushed the exact
+  requested fixes himself on 07-26 (responsive; approved as-is). #4830 —
+  maintainer commit `8701e7514` (mode-appropriate remotes path, authoritative
+  empty `repo_state.json`, corrupt-state warning + 3 tests). Patrol:
+  mybd-n6fn / mybd-lrca / mybd-vzk6.
+- **harry-miller-trimble**: five fix commits pushed (#4793 `47a947d5d` incl.
+  main-merge + legacy-sweep removeClosed; #4790 `03cdecbfe` provenance-correct
+  `config show`; #4789 `b245c5372` generated-doc revert; #4788 `1957fd6de`
+  pre-open title validation + proxied test; #4787 `d1f5af812` Args-validator
+  rejection). Recurring theme fixed uniformly: validation running after
+  store-open and missing the proxied path. Consolidated comment on #4793.
+  Patrol: mybd-x7xz / 96cs / deml / r8jp / 92ud.
+- #4430 dropped from scope — absorbed by another session (07-25 report).
+- New bug filed: `TestCLI_CreateRejectsEmptyTitle/FlagTab` leaves the shared
+  cobra `--title` flag dirty (pre-existing on main; cascades in full-suite runs).
+
+## Noticed this leg
+
+- vishnujayvel now responds within days — future reviews of his PRs can lean
+  on request-then-wait rather than fix-push; re-check before spending builder
+  time (two of three builder slots were no-ops because he'd already fixed).
+- statusCheckRollup lies: it aggregates stale runs (showed 7 failures on a
+  fully-green PR). `gh pr checks` is the check-state source of truth;
+  preflight's failed-checks count inherits the rollup problem.
