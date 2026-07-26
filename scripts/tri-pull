@@ -103,6 +103,16 @@ refresh_ref_cache() {
   KNOWN_PR_NUMS=()
   KNOWN_ISS_NUMS=()
 
+  # Build the dedupe map up front and fail hard if the read itself fails.
+  # 2026-07-26 incident: bd 1.1.0 treats repeated --status flags as
+  # last-one-wins, so the old multi-flag query silently returned only
+  # deferred beads; the near-empty map made every upstream item look new
+  # and three runs mirrored ~450 duplicate stubs. Comma syntax + guards.
+  local ref_rows
+  ref_rows="$(bd list --status=open,in_progress,closed,blocked,deferred --limit 0 --json \
+    | jq -r '.[] | select(.external_ref != null and (.external_ref | test("^gh-(pr|iss)-[0-9]+$"))) | [.id, .external_ref] | @tsv')" \
+    || tri_die "bd list failed while building the dedupe map - refusing to mirror blind"
+
   while IFS=$'\t' read -r id ref; do
     [[ -z "${id:-}" || -z "${ref:-}" ]] && continue
     REF_TO_ID["$ref"]="$id"
@@ -111,10 +121,22 @@ refresh_ref_cache() {
     elif [[ "$ref" =~ ^gh-iss-([0-9]+)$ ]]; then
       KNOWN_ISS_NUMS["${BASH_REMATCH[1]}"]=1
     fi
-  done < <(
-    bd list --status=open --status=in_progress --status=closed --status=blocked --status=deferred --limit 0 --json 2>/dev/null \
-      | jq -r '.[] | select(.external_ref != null and (.external_ref | test("^gh-(pr|iss)-[0-9]+$"))) | [.id, .external_ref] | @tsv'
-  )
+  done <<<"$ref_rows"
+
+  # Cross-check against a single-status query: if the combined-status map
+  # somehow misses refs that a plain open listing sees, the filter semantics
+  # have regressed again - stop rather than duplicate.
+  local open_refs missing
+  open_refs="$(bd list --status=open --limit 0 --json 2>/dev/null \
+    | jq -r '.[] | select(.external_ref != null and (.external_ref | test("^gh-(pr|iss)-[0-9]+$"))) | .external_ref')" || open_refs=""
+  missing=0
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    [[ -n "${REF_TO_ID[$ref]:-}" ]] || missing=$((missing + 1))
+  done <<<"$open_refs"
+  if [[ "$missing" -gt 0 ]]; then
+    tri_die "dedupe map is missing $missing ref(s) that an open-status listing sees - bd list status filtering regressed; refusing to mirror"
+  fi
 }
 
 register_json_refs() {
