@@ -1,0 +1,6 @@
+<task-notification>
+<task-id>be7vu8scn</task-id>
+<summary>Monitor event: "v1.1.2 release workflow on gastownhall/beads until terminal state"</summary>
+<event>release run: completed success 30213450272</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
