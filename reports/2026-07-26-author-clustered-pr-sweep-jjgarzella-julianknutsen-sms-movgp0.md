@@ -143,3 +143,85 @@ approved, patrol-handed:
 - statusCheckRollup lies: it aggregates stale runs (showed 7 failures on a
   fully-green PR). `gh pr checks` is the check-state source of truth;
   preflight's failed-checks count inherits the rollup problem.
+
+---
+
+# Leg 3 ("carry on" ×2): the waiting-on-us queue
+
+Ranked every open contributor PR by "author replied, maintainer silent" and
+worked the list. 18 more PRs dispositioned this leg.
+
+## Approved and with the patrol (8)
+
+- **#3906** (quad341 Lite foundation) — final maintenance push: main merged,
+  `leases.granted_node` classified lite (author had already wired the #4160
+  comparator himself). Patrol mybd-9rd1t, squash. **#3458 decision posted**
+  (mybd-7kcg, option c): re-cut atop Lite as method+benchmark — quad341's
+  compile-fact correction retired the months-old "land the bench file alone"
+  plan and is credited on-thread.
+- **#4751/#4752** (remuscazacu) — #4752's conformance response verified;
+  #4751 renumbered a second time maintainer-side (0015→0017; main outran him).
+- **#4813/#4820** (kevglynn's new pair) + **#4735** (Mosnar Beadazzle entry) —
+  responses verified, approved.
+- **#4535** (Kevinwochan Kiro recipe) — maintainer rebase, generated docs
+  reverted to release pin.
+- **#4480** (johnzook counts filter-before-join) — deep re-review verified the
+  whereSQL invariant against all four post-branch clauses and ran the parity
+  test 11/11 on real Dolt. Discovery beaded: pr-risk CI compiles but never
+  executes non-conformance dolt tests (the gap that hid the original break).
+
+## Decisions and dispositions (7)
+
+- **#4720 vs #4350** — July 12 supersession REVERSED with apology: #4720
+  survives (blockers verified delivered; #4350 now 425 behind, conflicted);
+  j-s-au's two-phase-open + route-error-propagation get ported with
+  attribution; #4720's never-executed fork CI approved.
+- **#4804** (atbrace migration-lock fast path) — sentinel fix adversarially
+  verified sound; approve-after-rebase posted (1 hunk vs #5012) + one
+  structural ask: sentinel write must be non-fatal. Review's own error re
+  rekeyAuxRowIDs acknowledged; author's correction accepted.
+- **#4504** (Rome-1 CALL-migration idempotency) — approve-in-principle
+  (kevglynn's 07-11 verification held), gated on rebase; sequencing note vs
+  #4804 (same schema files).
+- **#4753** (dredozubov external capability blockers) — both blockers verified
+  closed at head; fork CI approved (was zero-run); three should-fixes posted
+  (tree-predicate widening, silent permanent fail-closed on proxied foreign
+  projects, parent-filter parity).
+- **#4520** (marcodelpin spool) — driver-routing correction accepted, narrow
+  pre-dial-probe retry budget green-lit as fresh PR, PR closed warmly.
+  **#4808** — flake identified as the #5042-fixed family; review items stand.
+- **#4376** (sarendipitee resolver) — retired: main's #4939 independently
+  landed the same substring-rejection with tests.
+- **#3612** (gt-rm-0306, oldest PR) — retired with credit: bug real on main,
+  branch ~1100 behind, design owned by julianknutsen's first-principles
+  cross-db-deps thread. Bead ensures the silent-drop bug gets a tracking issue.
+
+## Direction disclosures (2)
+
+- **#4415** (MarkAtwood flat-file backend) — told plainly: don't hold for
+  #4859 (superseded by tombstone policy); main's Dolt-only contraction
+  disclosed; plugin path via duncan4123's #4561 offered as the charter-fit
+  home; full in-tree design review available on request.
+- **#4133** (Zireael dolt TCP fix, 64 days unreviewed) — apology first;
+  split verdict: config half superseded by main's #4986-hardened YAML path
+  (would reintroduce a data-loss bug as-is); handshake-drain half is genuinely
+  novel and wanted, but must move to the per-command fail-fast probe (the
+  actual storm source) with a re-poll-on-drain-timeout fix. Author given the
+  narrow-it-yourself vs maintainer-lands choice; hamchowderr given the
+  measurement that would actually prove the mechanism (their unit-test
+  validation measured nothing — 3 of 4 new tests are log-only stubs).
+
+## Noticed this leg
+
+- Three separate contributors were waiting behind GitHub's fork-CI approval
+  gate with ZERO executed checks (#4720, #4753) — "green locally, silence
+  from CI" reads to them as maintainer neglect. Worth a patrol job that
+  auto-approves runs for PRs with an engaged review thread.
+- Migration-number collisions burned contributors twice this week (#4751
+  twice, #4316, #4916). The renumber is always mechanical; a bot comment on
+  conflict ("your migration number was taken, next free is NNNN") would save
+  a round-trip each time.
+- Review-response turnaround among regulars is now often same-day
+  (vishnujayvel, atbrace, kevglynn, R0SEWT, remuscazacu, dredozubov) — the
+  bottleneck has inverted: contributors wait on re-review, not the reverse.
+  Re-review-on-response should be treated as the highest-leverage daily lane.
