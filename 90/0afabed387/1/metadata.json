@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "900afabed387",
+  "session_id": "61b85b60-5931-45cd-a13c-d1f0ceb3b684",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-26T19:11:01.703526466Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-26-rescue-branch-triage-fgqv.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "17cf34219a13",
+  "checkpoint_transcript_start": 121,
+  "transcript_lines_at_start": 121,
+  "compact_transcript_start": 21,
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 4323,
+    "cache_read_tokens": 358695,
+    "output_tokens": 2890,
+    "api_call_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-26T19:11:01.687691105Z",
+    "agent_lines": 56,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 56,
+    "total_lines_changed": 56,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}

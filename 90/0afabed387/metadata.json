@@ -3,7 +3,7 @@
   "checkpoint_id": "900afabed387",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "reports/2026-07-26-rescue-branch-triage-fgqv.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/90/0afabed387/0/transcript.jsonl",
       "content_hash": "/90/0afabed387/0/content_hash.txt",
       "prompt": "/90/0afabed387/0/prompt.txt"
+    },
+    {
+      "metadata": "/90/0afabed387/1/metadata.json",
+      "transcript": "/90/0afabed387/1/full.jsonl",
+      "compact_transcript": "/90/0afabed387/1/transcript.jsonl",
+      "content_hash": "/90/0afabed387/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 8,
-    "cache_creation_tokens": 34008,
-    "cache_read_tokens": 178681,
-    "output_tokens": 3115,
-    "api_call_count": 4
+    "input_tokens": 18,
+    "cache_creation_tokens": 38331,
+    "cache_read_tokens": 537376,
+    "output_tokens": 6005,
+    "api_call_count": 9
   }
 }
