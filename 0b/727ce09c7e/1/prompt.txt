@@ -1,0 +1,1 @@
+what is going in in bd-main. so many changed and new files. there are 3 other sessions running: working on proxied dolt; releasing hotfix (done) and follow up on issue with update-version.sh while doing that (in progress); PR sweep by author clusters. I don't think bd-main stuff belongs to any of these, but I'm not sure
