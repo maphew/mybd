@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# tri-daily — cron-safe unattended wrapper around tri-pull + tri-sync.
+# tri-daily — cron-safe unattended wrapper around tri-pull + tri-sync + tri-drift.
 #
 # Intended for machine-bound daily scheduling. Behavior:
 # - silent on no-op runs (no stdout/stderr on success with zero changes)
-# - append a one-line summary when items are pulled or auto-closed
+# - append a one-line summary when items are pulled, auto-closed, or flagged
+#   stale; the summary also carries the count of open tri:human stubs so the
+#   log doubles as a nag for decisions waiting on the owner
 # - append full diagnostics on failures and exit non-zero
 #
 # Usage:
 #   tri-daily
 #   tri-daily --pull-only
 #   tri-daily --sync-only
+#   tri-daily --drift-only
+#   tri-daily --no-drift
 #   tri-daily --log /path/to/log
 #   tri-daily --verbose
 
@@ -20,21 +24,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 PULL_CMD=("${TRI_PULL_CMD:-$SCRIPT_DIR/tri-pull}")
 SYNC_CMD=("${TRI_SYNC_CMD:-$SCRIPT_DIR/tri-sync}")
+DRIFT_CMD=("${TRI_DRIFT_CMD:-$SCRIPT_DIR/tri-drift}")
 CHECK_CMD=("${TRI_CHECK_BEADS_CONFIG_CMD:-$SCRIPT_DIR/check-beads-config}")
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 LOG_PATH="${TRI_DAILY_LOG:-$STATE_HOME/mybd/tri-daily.log}"
 DO_PULL=1
 DO_SYNC=1
+DO_DRIFT=1
 VERBOSE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --pull-only) DO_SYNC=0; shift;;
-    --sync-only) DO_PULL=0; shift;;
+    --pull-only) DO_SYNC=0; DO_DRIFT=0; shift;;
+    --sync-only) DO_PULL=0; DO_DRIFT=0; shift;;
+    --drift-only) DO_PULL=0; DO_SYNC=0; shift;;
+    --no-drift) DO_DRIFT=0; shift;;
     --log) LOG_PATH="$2"; shift 2;;
     --log=*) LOG_PATH="${1#--log=}"; shift;;
     --verbose) VERBOSE=1; shift;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "tri-daily: unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -74,8 +82,19 @@ extract_closed_count() {
   sed -n 's/^Closed \([0-9][0-9]*\) item(s);.*/\1/p'
 }
 
+extract_flagged_count() {
+  sed -n 's/^Flagged \([0-9][0-9]*\) stale;.*/\1/p'
+}
+
+count_human_pending() {
+  bd list --status=open --limit 0 --json 2>/dev/null \
+    | jq -r '[.[] | select((.labels // []) | index("tri:human"))] | length' 2>/dev/null \
+    || echo "?"
+}
+
 pull_created=0
 sync_closed=0
+drift_flagged=0
 
 run_step check-beads-config "${CHECK_CMD[@]}" --quiet >/dev/null || exit 1
 
@@ -91,8 +110,14 @@ if [[ "$DO_SYNC" == 1 ]]; then
   sync_closed="${sync_closed:-0}"
 fi
 
-if [[ "$pull_created" -gt 0 || "$sync_closed" -gt 0 ]]; then
-  summary="pull_created=$pull_created sync_closed=$sync_closed"
+if [[ "$DO_DRIFT" == 1 ]]; then
+  drift_output="$(run_step tri-drift "${DRIFT_CMD[@]}")" || exit 1
+  drift_flagged="$(printf '%s\n' "$drift_output" | extract_flagged_count | tail -n1)"
+  drift_flagged="${drift_flagged:-0}"
+fi
+
+if [[ "$pull_created" -gt 0 || "$sync_closed" -gt 0 || "$drift_flagged" -gt 0 ]]; then
+  summary="pull_created=$pull_created sync_closed=$sync_closed drift_flagged=$drift_flagged human_pending=$(count_human_pending)"
   log_line "INFO" "$summary"
   if [[ "$VERBOSE" == 1 ]]; then
     printf '%s\n' "$summary"

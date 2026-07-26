@@ -28,13 +28,15 @@ auth or rate limits, report and stop.
 
 ## 2. Classify (Layer 2)
 
-Build the worklist: open bd stubs with a `gh-(pr|iss)-NNNN` external_ref and
-no existing `tri:*` label:
+Build the worklist: open bd stubs with a `gh-(pr|iss)-NNNN` external_ref that
+are either unclassified (no `tri:*` label) or flagged `tri:stale` by the
+tri-drift patrol (upstream moved since classification — reclassify them):
 
 ```bash
 bd list --status=open --limit 0 --json \
   | jq -r '.[] | select(.external_ref != null and (.external_ref | test("^gh-(pr|iss)-[0-9]+$")))
-           | select(((.labels // []) | map(startswith("tri:")) | any) | not)
+           | select((((.labels // []) | map(startswith("tri:")) | any) | not)
+                    or ((.labels // []) | index("tri:stale")))
            | "\(.id) \(.external_ref) \(.title)"'
 ```
 
@@ -60,6 +62,13 @@ For each classified item, one bd update:
 ```bash
 bd update <id> --add-label "tri:<disposition>" --priority <Pn> \
   --append-notes "[triage $(date -u +%Y-%m-%d)] <reason>"
+```
+
+For `tri:stale` items being reclassified, also remove the stale flag (and the
+old `tri:*` disposition label if it changed):
+
+```bash
+bd update <id> --remove-label tri:stale
 ```
 
 For `close` dispositions with **high** confidence only, also run

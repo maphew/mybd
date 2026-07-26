@@ -50,27 +50,37 @@ has since been merged or closed.
 ## tri-daily (unattended Layer 2 wrapper)
 
 ```bash
-scripts/tri-daily                         # run tri-pull + tri-sync once
+scripts/tri-daily                         # run tri-pull + tri-sync + tri-drift once
 scripts/tri-daily --pull-only             # only mirror new items in
 scripts/tri-daily --sync-only             # only close upstream-terminal stubs
+scripts/tri-daily --drift-only            # only flag upstream activity on triaged stubs
+scripts/tri-daily --no-drift              # skip the drift pass
 scripts/tri-daily --verbose               # print the same summary it logs
-scripts/tri-install-cron                  # install a daily cron entry (06:17 local time)
+scripts/install-tri-daily                 # Linux: systemd user timer (06:47 + 16:47)
+scripts/tri-install-cron                  # non-systemd: daily cron entry (06:17 local time)
 scripts/tri-install-cron --schedule "45 5 * * *"
 ```
 
 `tri-daily` is the practical machine-bound unattended path for Layer 2. It is
-designed for cron:
+designed for unattended scheduling:
 
 - silent on success when nothing changed
 - appends a one-line summary to `${XDG_STATE_HOME:-~/.local/state}/mybd/tri-daily.log`
-  when `tri-pull` creates new stubs or `tri-sync` auto-closes stale ones
+  when `tri-pull` creates new stubs, `tri-sync` auto-closes stale ones, or
+  `tri-drift` flags upstream movement; the summary line also carries
+  `human_pending=N` (open `tri:human` stubs) as a standing nag for owner
+  decisions
 - appends full diagnostics and exits non-zero on failures (`gh` auth/rate
   limit, network, command errors)
 
-`tri-install-cron` installs or replaces a single tagged crontab entry that
-`cd`s into this checkout and runs `scripts/tri-daily` once per day. This is
-intentionally local-machine only; if you rotate between machines, install it on
-the one that has working `gh auth`.
+On Linux prefer `scripts/install-tri-daily`, which installs the
+`tri-daily.timer`/`.service` systemd user units (same babysitter pattern as
+pr-babysit and verify-babysit; fires twice a day, zero model tokens, catches
+up after sleep via `Persistent=true`). `tri-install-cron` remains for
+non-systemd machines: it installs or replaces a single tagged crontab entry
+that `cd`s into this checkout and runs `scripts/tri-daily` once per day. Both
+are intentionally local-machine only; if you rotate between machines, install
+on the one that has working `gh auth`, and don't install both on one machine.
 
 ## tri-pull
 
@@ -118,6 +128,32 @@ Does NOT apply the `triaged` label upstream — the upstream item is already
 terminal, so labeling adds noise. Each closure also gets a `tri-sync: closed
 (...)` audit note on the bd issue. Idempotent; safe to run from cron alongside
 `tri-pull`.
+
+## tri-drift
+
+```bash
+scripts/tri-drift                # flag triaged stubs whose upstream item moved
+scripts/tri-drift --dry-run      # preview, no bd writes, no baseline updates
+scripts/tri-drift --prs-only
+scripts/tri-drift --issues-only
+scripts/tri-drift --limit 20
+```
+
+The activity complement to `tri-sync` (which only sees *terminal* upstream
+states). Walks open bd stubs that already carry a `tri:*` label, compares
+upstream `updatedAt` against a machine-local baseline in
+`${XDG_STATE_HOME:-~/.local/state}/mybd/tri-drift.state`, and on movement:
+
+- adds the `tri:stale` label (the "re-triage me" flag)
+- appends a `tri-drift: upstream activity after triage (...)` audit note
+- advances the baseline, so one upstream event produces one flag
+
+First sighting of a ref seeds the baseline silently. Claimed (`in_progress`)
+stubs are excluded — activity on work in flight is expected. Stubs already
+labeled `tri:stale` get baseline refreshes but no duplicate notes; re-triage
+clears the label (`bd update <id> --remove-label tri:stale` after flipping the
+`tri:*` disposition if needed). The `/triage` worklist treats `tri:stale`
+items as needing reclassification.
 
 ## tri-close
 

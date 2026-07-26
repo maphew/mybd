@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# test-tri-drift — offline regression test for tri-drift using PATH-stubbed
+# bd and gh. No network, no real tracker writes.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+STUBS="$TMP/stubs"
+mkdir -p "$STUBS"
+STATE="$TMP/drift.state"
+BD_LOG="$TMP/bd-calls.log"
+: >"$BD_LOG"
+
+# Three open triaged stubs: iss-100 (tri:defer), pr-200 (tri:claim),
+# iss-300 (tri:defer + already tri:stale).
+cat >"$STUBS/bd" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "list" ]]; then
+  cat <<'JSON'
+[
+ {"id":"t-1","external_ref":"gh-iss-100","labels":["tri:defer"]},
+ {"id":"t-2","external_ref":"gh-pr-200","labels":["tri:claim"]},
+ {"id":"t-3","external_ref":"gh-iss-300","labels":["tri:defer","tri:stale"]}
+]
+JSON
+  exit 0
+fi
+echo "\$*" >>"$BD_LOG"
+EOF
+
+# updatedAt per item comes from env so tests can move upstream time.
+cat >"$STUBS/gh" <<EOF
+#!/usr/bin/env bash
+num="\$3"
+case "\$num" in
+  100) ts="\${TS_100:-2026-01-01T00:00:00Z}";;
+  200) ts="\${TS_200:-2026-01-01T00:00:00Z}";;
+  300) ts="\${TS_300:-2026-01-01T00:00:00Z}";;
+  *) exit 1;;
+esac
+printf '{"updatedAt":"%s"}\n' "\$ts"
+EOF
+chmod +x "$STUBS/bd" "$STUBS/gh"
+
+run_drift() {
+  PATH="$STUBS:$PATH" TRI_DRIFT_STATE="$STATE" "$SCRIPT_DIR/tri-drift" "$@"
+}
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# 1. First run seeds all three silently.
+out="$(run_drift)"
+[[ "$out" == *"Flagged 0 stale; seeded 3;"* ]] || fail "seed run: $out"
+[[ "$(wc -l <"$STATE")" == 3 ]] || fail "state should hold 3 baselines"
+[[ ! -s "$BD_LOG" ]] || fail "seed run must not write to bd"
+
+# 2. iss-100 moves: exactly one flag, label + note recorded, baseline advances.
+out="$(TS_100=2026-02-02T00:00:00Z run_drift)"
+[[ "$out" == *"Flagged 1 stale;"* ]] || fail "move run: $out"
+grep -q 'update t-1 --add-label tri:stale' "$BD_LOG" || fail "missing add-label call"
+grep -q 'tri-drift: upstream activity' "$BD_LOG" || fail "missing audit note"
+grep -q 'gh-iss-100 2026-02-02T00:00:00Z' "$STATE" || fail "baseline not advanced"
+
+# 3. Same timestamps again: idempotent, nothing flagged.
+: >"$BD_LOG"
+out="$(TS_100=2026-02-02T00:00:00Z run_drift)"
+[[ "$out" == *"Flagged 0 stale;"* ]] || fail "repeat run flagged again: $out"
+[[ ! -s "$BD_LOG" ]] || fail "repeat run must not write to bd"
+
+# 4. Already-stale iss-300 moves: baseline refreshes, no duplicate note.
+out="$(TS_100=2026-02-02T00:00:00Z TS_300=2026-03-03T00:00:00Z run_drift)"
+[[ "$out" == *"refreshed 1;"* ]] || fail "stale refresh: $out"
+[[ ! -s "$BD_LOG" ]] || fail "stale item must not get a second note"
+grep -q 'gh-iss-300 2026-03-03T00:00:00Z' "$STATE" || fail "stale baseline not refreshed"
+
+# 5. Dry-run on a move: reports, but no bd writes and no baseline change.
+out="$(TS_100=2026-02-02T00:00:00Z TS_300=2026-03-03T00:00:00Z TS_200=2026-04-04T00:00:00Z run_drift --dry-run)"
+[[ "$out" == *"would flag 1 stale"* ]] || fail "dry-run: $out"
+[[ ! -s "$BD_LOG" ]] || fail "dry-run must not write to bd"
+grep -q 'gh-pr-200 2026-01-01T00:00:00Z' "$STATE" || fail "dry-run must not move baselines"
+
+echo "test-tri-drift: all 5 checks passed"
