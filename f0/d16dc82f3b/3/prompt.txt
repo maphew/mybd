@@ -1,0 +1,486 @@
+is there anything we can do today to help push the proxied dolt initiative along?
+
+---
+
+<task-notification>
+<task-id>a34f9654dc1908a3b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/a34f9654dc1908a3b.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5013 proxy identity" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I read the full PR surface (procid, identity, pidfile, endpoint, shutdown, force_stop, server, doltserver, dolt.go) plus tests, ran `go vet`, cross-built for Windows, and ran the package tests (all green). The design is genuinely good — the fail-closed classification, the "quarantine the record, never the process" rule, the lock-gated quarantine, and the birth-token-based dead/live discrimination are all sound, and the Linux test coverage is unusually thorough for this kind of lifecycle code. My findings are concentrated on Windows semantics and on recovery paths that have no escape hatch.
+
+## Findings
+
+### 1. blocker — `cleanupOrphanBackend` holds the process handle while waiting for exit; on Windows this can never succeed
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/endpoint.go:769-792`
+
+```go
+handle, dead, err := openRecordedProcess(pf)   // 769
+...
+defer func() { _ = handle.Close() }()          // 785  &lt;-- still open below
+if err := handle.Kill(); err != nil { ... }    // 787
+if err := waitForRecordedProcessExit(pf, backendExitTimeout); err != nil { ... }  // 790
+```
+
+On Windows an open process handle keeps the PID allocated and keeps `OpenProcess(pid)` succeeding after the process terminates, and `GetProcessTimes` still returns the original creation time. So `procid.Verify` (`procid_windows.go:29-43`) keeps returning `matched=true` for the terminated backend, `waitForRecordedProcessExit` burns its full `backendExitTimeout` (5s) and returns "timeout waiting for process exit", which fails `spawnAndHandoff` and therefore fails `GetCreateDatabaseProxyServerEndpoint`. That is exactly the crashed-proxy recovery path, so on Windows **every orphan-backend cleanup fails and the workspace cannot restart**.
+
+`shutdown.go:260-268` gets this right (`handle.Close()` *before* `waitForRecordedProcessExit`), which makes the endpoint.go ordering look like an oversight rather than a deliberate difference.
+
+Fix: close the handle before waiting, mirroring shutdown.go:
+```go
+if err := handle.Kill(); err != nil { _ = handle.Close(); return ... }
+if err := handle.Close(); err != nil { return ... }
+if err := waitForRecordedProcessExit(pf, backendExitTimeout); err != nil { ... }
+```
+and drop the `defer`.
+
+### 2. major — `procid.Verify` on Windows reports a terminated process as still matching
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/procid/procid_windows.go:29-43`
+
+This is the root cause of (1) and survives it: any third party holding a handle to the recorded process (Task Manager, an AV/EDR agent, a debugger, a parent shell) keeps the PID resolvable, so `Verify` returns true for a dead process. Every `waitForRecordedProcessExit` caller then reports a false "process would not stop" failure after a successful `TerminateProcess`.
+
+Fix: after `OpenProcess` succeeds, call `windows.GetExitCodeProcess` and treat anything other than `STILL_ACTIVE` (259) as not-matching. (Optionally also `WaitForSingleObject(h, 0) == WAIT_OBJECT_0`.) Worth doing regardless of (1), because it makes the invariant "Verify==true implies running" true on all three platforms.
+
+### 3. major — a root-ID mismatch bricks the workspace with no CLI recovery
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/shutdown.go:63-68` and `force_stop.go:46-94`
+
+`CanForceStopUnverified` requires `shutdownErr.backendErr == nil`, and `ForceStopUnverified` only ever touches `PIDFileName` — there is no force path for an unverifiable **backend** record at all. But `validateKillRecord` applies `VerifyRoot` to both records (`shutdown.go:102`), so a root-identity mismatch produces a non-nil `backendErr` and `bd dolt stop --force` is refused (`cmd/bd/dolt.go:632`). Combined with `readAndDial` returning `adoptionIdentityMismatch` (`endpoint.go:557-583`) while the healthy proxy still holds `proxy.lock`, every `bd` command then fails after the 15s `openDeadline` and every stop is refused. The only remaining recovery is manual file surgery; `PurgeControlFiles` is reachable only from `cmd/bd/migrate_dolt_mode.go:390`.
+
+Reachable without any adversary:
+- Renaming/moving the project directory while the proxy is running (the running proxy keeps `proxy.lock` on the same inode, so the lock stays held under the new path).
+- macOS case-insensitive volumes: `identity.RootID` (`identity/identity.go:27-38`) hashes the `EvalSymlinks` result, and Go's Unix `EvalSymlinks` does **not** canonicalize case, so `/Users/x/Repo` and `/users/x/repo` yield different RootIDs for the same directory. The doc comment acknowledges this ("callers should use a canonical workspace spelling") but nothing enforces it — `doltserver_provider.go:45` only does `filepath.Abs`.
+
+Fix (pick one): (a) loosen `CanForceStopUnverified` to allow `errors.Is(backendErr, ErrUnverifiableProcess)` and extend `ForceStopUnverified` to cover `server.PIDFileName`; and/or (b) make root identity robust to spelling — record the resolved path alongside the hash and accept a record when `os.SameFile(rootDir, recordedRootPath)` holds. Do *not* fix (b) by lowercasing the path: that would conflate `/a/Foo` and `/a/foo` on case-sensitive volumes and create a false-positive adoption across two genuinely different workspaces.
+
+### 4. major — `--force` can SIGKILL an unrelated live `bd` process
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/force_stop.go:152-202`
+
+The only gate before `process.Kill()` on an unverified PID is `executable != "bd" &amp;&amp; executable != "dolt"`. Nothing scopes the candidate to *this workspace*. `bd` is a CLI that runs constantly on a dev machine, so a legacy/stale v1 record whose PID has been recycled into another `bd` invocation — the canonical upgrade-day scenario this command exists for — will pass the basename check and get SIGKILLed mid-flight, possibly while writing another workspace's Dolt DB. The PR description and `doltStopCmd`'s help both present the basename check as the safety property; it is much weaker than that reads.
+
+Fix: add a workspace-scoping check before signaling. On Linux, read `/proc/&lt;pid&gt;/cmdline` and require it to contain `rootDir` (the proxy child is spawned as `db-proxy-child --root &lt;rootDir&gt;`, `endpoint.go:414-420`); on Windows, `QueryFullProcessImageName` plus the command line via WMI/`NtQueryInformationProcess`, or fall back to requiring the recorded data port to be bound by that PID. Even a best-effort cmdline check that *refuses* when it cannot be read would be a large improvement over basename-only. There is also a small TOCTOU between `processExecutableBasename` and `process.Kill()` (`force_stop.go:156` → `179`) — same-uid so not a security boundary, but the post-kill re-inspection at 180-184 only runs on the error path.
+
+### 5. should-fix — control-listener accept errors tear down the entire proxy
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/control.go:86-97` wired to `server.go:232-239`
+
+Three consecutive `Accept` errors within ~30ms (10ms + 20ms backoff) push an error onto `s.errs`, which the errgroup treats as fatal and shuts down the proxy *and its backend*. A transient `EMFILE` under load on the low-value control path therefore kills a healthy data-serving proxy. `acceptLoop` for the data listener has the same fail-fast policy (`server.go:309-315`), but that at least fails the thing that matters.
+
+Fix: make control-accept failures non-fatal — log and keep retrying with a longer backoff, or special-case `EMFILE`/`ENFILE`/`ECONNABORTED` to retry indefinitely. Losing the control listener degrades adoption (callers fall back to the poll/retry path, which is already correct) but should not take down data service.
+
+### 6. minor — the client discloses the secret to a peer it has not yet authenticated
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/identity/control.go:57`
+
+`Identify` writes `IDENT &lt;secret&gt; &lt;nonce&gt;` in cleartext to whatever is listening on `pf.ControlPort` before the server proves anything. In the current flow this is gated by a passing `procid.Verify` on the recorded PID, so a mis-bound port is hard to reach — but the disclosure is avoidable at zero cost: send `HMAC(secret, nonce_client)` instead of the raw secret and have the server verify that, keeping the existing reply MAC as the server's proof. That makes the exchange a real mutual challenge-response and removes the secret from the wire entirely.
+
+### 7. minor — the control port is reachable by any local user; slot exhaustion is a cheap `bd` DoS
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/control.go:41,51,100-108`
+
+`maxConcurrentIdentRequests = 8` with a 2s deadline; any unprivileged local user can hold all 8 slots indefinitely (connections beyond that are closed immediately, `control.go:106-107`). Legitimate `Identify` calls then get `ErrIdentRefused` → `adoptionIdentityMismatch` → 15s `openDeadline` → every `bd` command fails while the proxy is healthy. This is a new vector introduced by the control listener.
+
+Fix: prefer a unix socket with 0600 (named pipe on Windows) over TCP loopback, or check `SO_PEERCRED`/`LOCAL_PEERCRED` uid on accept. Cheaper partial mitigation: don't let a slow peer occupy a slot — read the request line with a sub-second deadline before consuming a slot.
+
+### 8. minor — schema forward-compat is inconsistent (`&gt;=` in the pidfile, `==` in the handshake)
+`pidfile/pidfile.go:41-43` accepts `Schema &gt;= SchemaV2`, but `endpoint.go:569` requires `reply.Schema != pidfile.SchemaV2` to fail. A future schema-3 proxy is therefore accepted by the pidfile validator but rejected by the handshake, giving `adoptionIdentityMismatch` while the v3 proxy holds `proxy.lock` — an old `bd` in a mixed-version workspace hard-fails after 15s with a misleading "identity does not match" error. Pick one policy; if the intent is "v2 or newer", relax the reply check to `reply.Schema &lt; pidfile.SchemaV2`.
+
+### 9. minor — `requireUnverifiableProxyRecord` fails open on a `RootID` error
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/force_stop.go:143-149`
+
+```go
+rootID, err := identity.RootID(rootDir)
+if err == nil &amp;&amp; record.RootID == rootID { return errors.New(...use proxy.Shutdown) }
+return nil
+```
+When `RootID` errors, the guard silently takes the *more destructive* branch and lets force-stop signal a record that may in fact be perfectly verifiable. Return the error instead of swallowing it.
+
+### 10. minor — `killSpawnedChild` refuses to kill our own child and leaks it
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/storage/dbproxy/proxy/endpoint.go:893-895`
+
+If `procid.Open` failed for any non-gone reason at `endpoint.go:499-505`, `child.handle` is nil and the timeout path returns "verified process handle for pid %d is unavailable" without killing anything — the child proxy is left running and unparented while `spawnAndHandoff` returns an error. For our *own* not-yet-reaped child, `child.cmd.Process.Kill()` is safe (the PID cannot be recycled before `Wait` returns) and is strictly better than leaking. Suggest falling back to `child.cmd.Process.Kill()` when `handle == nil`.
+
+### 11. nit — birth token captured after `cmd.Start()` has a theoretical reuse window
+`endpoint.go:499` and `server/doltserver.go:266-267` capture the token after the child exists; if the child exits instantly and the PID is recycled before `Capture`, the pidfile records a foreign process's token, which a later `cleanupOrphanBackend` would then verify and kill. The window requires PID-space wraparound between two adjacent syscalls, so this is theoretical, but it is the one place where the whole birth-token scheme can record a wrong-but-self-consistent identity. Worth a comment at minimum.
+
+### 12. nit — direct error comparison instead of `errors.Is`
+`/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-proxy-identity/internal/procid/procid_windows.go:32`: `if err == windows.ERROR_INVALID_PARAMETER`. Every other site in this PR (including `IsProcessGone` two functions below) uses `errors.Is`. It happens to work today because `OpenProcess` returns a bare `Errno`, but it will silently stop working if the call is ever wrapped.
+
+## Test coverage gaps (riskiest paths)
+
+- **No Windows tests at all.** Every lifecycle test is `_linux_test.go`/`_unix_test.go`; `procid_windows.go` and `process_executable_windows.go` have zero coverage. Findings (1), (2) and (12) are all Windows-only and all would have been caught by a `procid_windows_test.go` that terminates a child, keeps a handle open, and asserts `Verify` reports gone. Given the release-blocker framing, at least one Windows CI lane exercising `TestShutdownVerifiedRecordStopsProcess` and the orphan-backend reap is worth having; `.github/workflows/proxied-local-smoke.yml` is Linux-only.
+- **No test for the root-mismatch recovery path.** `TestShutdownRefusesForeignRootProxyRecord` (`endpoint_security_test.go:681`) asserts the refusal; nothing asserts the operator can get *out* of that state (finding 3). A test that renames the workspace root under a live proxy and asserts a documented recovery would pin the contract.
+- **No test for secret rotation racing an in-flight `Identify`.** `TestSecret_WriteReadAndRotate` covers the file, but the interesting case is a `readAndDial` that read secret S1 and dials a proxy that has since rotated to S2 — the code handles it by retrying, but that convergence is untested.
+- **No test for `killSpawnedChild` with a nil handle** (finding 10) — the branch is unreachable in tests today.
+- `TestControl_AcceptLoopStopsAfterPersistentErrors` pins the current fail-fast behavior; if finding 5 is addressed, that test needs to change with it.
+
+## Verdict
+
+**NEEDS-FIXES** — blocking: (1) `cleanupOrphanBackend` holding the procid handle across `waitForRecordedProcessExit`, which makes Windows crashed-proxy recovery fail unconditionally. Strongly recommended before land: (2) Windows `Verify` exit-code check, (3) the no-recovery root-ID mismatch, and (4) workspace-scoping the `--force` kill.</result>
+<usage><subagent_tokens>104807</subagent_tokens><tool_uses>27</tool_uses><duration_ms>432441</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a2d33e2e69155bb0e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/a2d33e2e69155bb0e.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5046 workspace gate" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Review of gastownhall/beads#5046 (head 4702b888b). Everything builds for linux/windows/darwin, `golangci-lint` is clean on the new package, and `go test -race ./internal/workspacegate/` passes (82.5% statement coverage).
+
+The gate primitive itself (`internal/workspacegate/gate.go`) is genuinely well built. Lock ordering, crash recovery, and deadlock behavior all check out — see "What's sound" at the end. My findings concentrate in `OpenGated`, the public API this PR ships alongside the primitive.
+
+## Findings
+
+### 1. MAJOR — `OpenGated`'s physical-root derivation does not match what the store actually opens
+`/var/home/matt/dev/mybd/.worktrees/beads/review-workspace-gate/beads.go:299-303`
+
+```go
+if fileCfg, cfgErr := configfile.Load(beadsDir); cfgErr == nil &amp;&amp; fileCfg != nil {
+    physRoot := fileCfg.DatabasePath(beadsDir)
+    if fileCfg.GetDoltMode() == configfile.DoltModeEmbedded {
+```
+
+The real open path (`internal/storage/dolt/open.go:110-160`) resolves the mode through four layers that this code skips:
+
+- `applyCentralConfigDefaults(fileCfg)` (open.go:124) can set `DoltMode` from `~/.config/beads/server.json` (`internal/configfile/central_config.go:66-68`). `OpenGated` never applies it.
+- `IsDoltServerMode()` (`internal/configfile/configfile.go:314-335`) also honours `BEADS_DOLT_SERVER_MODE=1`, `BEADS_DOLT_SHARED_SERVER`, and config.yaml `dolt.mode`. `OpenGated` consults none of these.
+- Under shared-server mode the physical root is `doltserver.SharedDoltDir()` = `~/.beads/shared-server/dolt` (`internal/doltserver/doltserver.go:239-249`), not `DatabasePath(beadsDir)`.
+- `GetDoltMode()` returns the raw string uncased (configfile.go:345-350), so `"dolt_mode": "Embedded"` fails the `==` and mis-routes; every other call site uses `strings.ToLower`/`EqualFold`.
+
+Net effect: with `BEADS_DOLT_SHARED_SERVER=1` and no `dolt_mode` in metadata.json, `GetDoltMode()` returns the `"embedded"` default, so `OpenGated` gates `&lt;beadsDir&gt;/embeddeddolt` — a directory that does not exist and is not used — while the store opens against the shared server root. That is precisely the scenario the commit message names as the reason the second gate level exists ("distinct workspaces legitimately share one dolt server root"), and it is the one where the gate silently protects nothing.
+
+Fix: extract one exported resolver, e.g. `dolt.PhysicalRoot(beadsDir) (string, bool, error)`, that runs `configfile.Load` + `applyCentralConfigDefaults` + `IsDoltServerMode`/`IsDoltProxiedServerMode` + `doltserver.IsSharedServerMode`/`SharedDoltDir`, and call it from both `OpenGated` and the part-2 CLI wiring.
+
+### 2. MAJOR — no physical gate at all when metadata.json is absent but a database directory exists
+`beads.go:299`
+
+`configfile.Load` returns `(nil, nil)` for a missing config (`internal/configfile/configfile.go:88-90`), and the `fileCfg != nil` guard then skips the physical gate entirely. But the codebase explicitly supports that layout: `internal/beads/beads.go:507-514` has a "check if embeddeddolt or dolt directory exists without metadata.json" fallback. Such a workspace opens a real embedded DB with only the workspace gate held — and the workspace gate does not cover a `bd doctor --fix` integrity recovery, which renames `getDatabasePath(beadsDir)` out from under it (`cmd/bd/doctor/fix/database_integrity.go:46`).
+
+Fix: when config load yields nil/error, fall back to filesystem probing (`embeddeddolt/` then `dolt/`) as `internal/beads/beads.go:507` does, and gate whichever exists. Folding this into the resolver from finding 1 handles both.
+
+### 3. SHOULD-FIX — exclusive acquirers can be starved indefinitely by rolling shared holders
+`internal/workspacegate/gate.go:327-371`
+
+`LOCK_EX|LOCK_NB` neither blocks nor reserves, and the loop is pure polling with no intent signal. Normal commands hold Shared "for the lifetime of their open store" (gate.go:62-64). On a repo with continuous `bd` invocations, there need never be an instant with zero shared holders, so `bd migrate` can burn its entire budget and return `ErrBusy` forever while nothing is actually wrong. Nothing in the package doc mentions this.
+
+Fix: at minimum document it on `Exclusive` and `Options.Wait`. Better, add an intent marker (e.g. an `.intent` sidecar the exclusive acquirer writes before polling, which Shared acquirers check and briefly back off on) — cheap, still cooperative, and turns "never acquires" into "acquires within a bounded number of polls".
+
+### 4. SHOULD-FIX — `0o600` gate files make cross-user shared roots unusable
+`internal/workspacegate/gate.go:322`
+
+`os.OpenFile(g.path, os.O_CREATE|os.O_RDWR, 0o600)`. The package doc explicitly names `~/.beads/shared-server/dolt` as a physical root (gate.go:167-170). If two users share a server root, whichever creates the gate file first locks the other out: `OpenFile` returns EACCES, which falls through to the hard-error branch at gate.go:323-324, so *every* gated command fails for the second user. `ExclusiveHolder` (gate.go:503) fails the same way even for a read-only probe.
+
+Fix: create with `0o666` (umask applies) for the physical-root gate, or explicitly document that cross-user shared roots are unsupported and will hard-fail.
+
+### 5. MINOR — `AcquireAll` dedupe and ordering key on the raw path string
+`internal/workspacegate/gate.go:447-458`
+
+`forDir` canonicalizes symlinks via `EvalSymlinks` but not case: on macOS/APFS-CI and Windows, `EvalSymlinks` returns the caller's spelling. Two consequences:
+
+- Dedupe miss: two `Gate`s that name the same file with different case do not collapse, so `AcquireAll(..., Exclusive, ...)` opens it twice and the second flock conflicts with the first — a guaranteed self-block for the whole wait budget.
+- Ordering divergence: two processes spelling a shared path differently sort their gate sets differently, inverting the acquisition order. Bounded waits keep this a livelock rather than a deadlock, but both processes can burn their full budget and fail.
+
+Fix: derive a comparison key that lowercases on `runtime.GOOS` in `{windows, darwin}` and use it for both the `uniq` map and the `sort.Slice` comparator (keep `g.path` as the open path).
+
+### 6. MINOR — `busyDetail` reports a possibly-dead PID as fact in Shared mode
+`internal/workspacegate/gate.go:227-228`
+
+The `mode == Shared` branch returns the sidecar description unqualified, skipping the `pidAlive` check the Exclusive branch gets. The justifying comment (gate.go:201-203) assumes the sidecar always tracks the current exclusive holder, but `writeInfo` is best-effort and swallows every failure (gate.go:374-412) — ENOSPC, a read-only parent, or losing the `O_EXCL` race all leave the *previous*, dead holder's record in place while a live holder blocks you. The message then names a PID that no longer exists.
+
+Fix: apply the same `pidAlive` qualification in the Shared branch; it costs one syscall on an already-failing path.
+
+### 7. MINOR — the embedded physical gate lives *inside* `.beads`, against the package's own stated rule
+`internal/workspacegate/gate.go:11-20` vs. `beads.go:302`
+
+The doc says gate files "deliberately live in a stable parent directory OUTSIDE every root a gated operation may replace". For embedded mode the guarded root is `.beads/embeddeddolt`, so the gate lands at `.beads/embeddeddolt.gate.lock` — inside `.beads`. I checked the destructive op that matters (`cmd/bd/doctor/fix/database_integrity.go:46` renames the dolt dir, not `.beads`), so this is safe today. But any future restore/repair that swaps `.beads` wholesale silently splits the inode for the physical gate while the workspace gate survives — the exact failure the location rule exists to prevent, now asymmetric between the two levels.
+
+Fix: state the derived invariant explicitly on `ForPhysicalRoot` ("callers must not replace `.beads` itself while an in-`.beads` physical root is gated"), or have `ForPhysicalRoot` hoist to the workspace parent when the root is under `.beads`.
+
+### 8. MINOR — `ExclusiveHolder` opens read-write for a read-only probe
+`internal/workspacegate/gate.go:503`
+
+`os.OpenFile(g.path, os.O_RDWR, 0o600)` fails with EACCES on a gate file owned by another user, even though both `flock(LOCK_SH)` and `LockFileEx` shared need only read access. Change to `os.O_RDONLY` to widen the diagnostic's reach (compounds with finding 4).
+
+### 9. NIT — the `writeInfo` nolint rationale is inaccurate
+`internal/workspacegate/gate.go:392-393`
+
+The comment credits `O_EXCL` with refusing pre-planted files, but the `os.Remove(tmp)` on the preceding line already deletes any plant — `O_EXCL` is what closes the remove→open re-plant window, which is a different (and worth stating) property. The code is correct; the comment describes the wrong mechanism.
+
+### 10. NIT — `pidAlive` leaks a Windows process handle
+`internal/workspacegate/gate.go:240-258`
+
+`os.FindProcess` on Windows opens a real handle that is only freed by `Wait`/`Release`. Add `defer p.Release()`. Bounded at ≤2 calls per acquisition today, so impact is negligible — but it is free to fix.
+
+### 11. NIT — a failed `Close` strands the gate with no escape hatch
+`beads.go:349-354`
+
+Holding the flock after a failed `Close` is the right default and is well argued in the comment. But a long-lived embedder that hits repeated close failures accumulates fds and permanently blocks exclusive maintenance in that process, with no way to say "I've confirmed quiescence, release anyway". Consider exposing `func (g *gatedStorage) ForceReleaseGate() error` (or documenting the "restart the process" remedy on `OpenGated`).
+
+## Missing test coverage on the riskiest paths
+
+- **No test that `OpenGated`'s physical gate path matches the store's actual data dir.** `beads_gated_test.go` only exercises the workspace gate; findings 1 and 2 would both have been caught by a table test over `{embedded, server, proxied-server, shared-server-env, central-config-mode, no-metadata.json}` asserting the gate path.
+- **`busyDetail`/`pidAlive` staleness logic is entirely untested** (grep for `pidAlive|busyDetail|readInfo` in `gate_test.go` returns nothing; `pidAlive` is at 54.5%). This is the subtlest code in the file — a test that writes a sidecar with a known-dead PID and asserts the "stale record was ignored" wording is cheap.
+- **No cross-process `AcquireAll` ordering test.** `TestAcquireAllSortsDedupesAndCleansUp` asserts sort order within one process only; nothing exercises two processes contending for an overlapping gate set (finding 5).
+- **No test for gate-file creation failure on a read-only parent** — the path where a single unwritable directory fails every gated command (relevant to part-2 CLI wiring, and to finding 4).
+- **`ExclusiveHolder`'s error return** (the "must not treat as not-held" contract) is untested; only the held/free branches are.
+
+## Simplification opportunity
+
+There are now three independent derivations of "the physical root for this workspace": `internal/beads/beads.go:471-514`, `internal/storage/dolt/open.go:227-228` + `doltserver.ResolveServerDir`, and `beads.go:299-303`. The third is the one that is wrong. Collapsing them into one exported helper would fix findings 1 and 2, delete code rather than add it, and give part 2 a single place to wire the CLI.
+
+## What's sound
+
+I specifically tried to break the things you asked about, and these held up:
+
+- **Lock ordering / deadlock.** Sorted canonical-path total order in `AcquireAll` is correct, and every wait is bounded, so even a caller who violates the "one AcquireAll" invariant gets `ErrBusy` rather than a permanent wedge. Only finding 5 perturbs this, and only into bounded livelock.
+- **Crash recovery.** flock/`LockFileEx` are both released by the kernel on process death, and the sidecar is advisory-only with the lock as sole authority. **A dead holder cannot wedge future invocations** — `TestCrashReleasesLock` and `TestSpawnedChildDoesNotInheritGate` cover this directly, and the close-on-exec reasoning about a `dolt` child outliving its parent is correct.
+- **Gate-file placement vs. inode splitting.** The reasoning at gate.go:11-20 is right, and I verified the one real destructive op (`database_integrity.go:46`) renames the guarded root while leaving the sibling gate file intact.
+- **Symlink handling.** Refusing a symlinked guarded directory rather than gating it ambiguously (gate.go:146-148) is the correct call, and the `EvalSymlinks`-the-parent-only rule genuinely does keep identity stable across the guarded dir being absent/created/replaced.
+- **Sidecar write.** `O_EXCL` temp + rename correctly avoids both symlink-following and torn reads; `TestInfoSidecarDoesNotFollowSymlink` is a good test.
+- **Release-before-unlock ordering** (gate.go:286-291) is subtle and correct.
+- **TOCTOU.** No gap between acquisition and the guarded operation — the handle is held throughout.
+- **Cooperative-only enforcement** is honestly documented (gate.go:31-36) rather than oversold.
+
+## Verdict
+
+**NEEDS-FIXES** — blocking on finding 1 (`OpenGated` gates the wrong physical root under central-config / env / config.yaml / shared-server / case-variant mode resolution) and finding 2 (no physical gate at all when metadata.json is absent but a database directory exists). Both are in `beads.go:299-303` and both are fixed by the single shared resolver suggested above.
+
+The `internal/workspacegate` primitive — which is what the PR title scopes as part 1 — is land-ready on its own. If you want to unblock the series quickly, dropping `OpenGated` and `ErrGateBusy` from this PR and landing the primitive plus the gitignore wiring is a clean split; the public API can land with part 2's resolver.</result>
+<usage><subagent_tokens>84190</subagent_tokens><tool_uses>42</tool_uses><duration_ms>423816</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>adc1644d923965d58</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/adc1644d923965d58.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5024 listener policy" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Review complete. Findings below; all paths absolute.
+
+## What's solid
+
+- **The port-0 handoff genuinely closes the race**, not just shrinks it. `/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-listener-policy/internal/storage/dbproxy/proxy/server.go:141-155` binds `127.0.0.1:0` and **holds** that listener from bind through `pidfile.Write` at line 205 — there is no close-and-rebind window, and the parent learns the port only from the published pidfile. `TestProxy_PortZeroPublishesActualDialablePort` passes locally.
+- The `chan struct{}` → `chan error` refactor at `endpoint.go:496-503` is correct: buffered 1, send-then-close, so the non-blocking probe in `killSpawnedChild` (`endpoint.go:893-911`) still behaves as a level-triggered "has exited" test after close, and the goroutine cannot leak.
+- **PR 4313's `dolt-server.port`-clobbering concern is not reintroduced**: `/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-listener-policy/cmd/bd/init.go:1450` guards all `cfg.DoltServer*` writes behind `!usesProxiedServer()`, and the proxy port lives in the sidecar JSON, not `metadata.json`.
+- The unmanaged/external path stays permissive by construction: `newExternalProxiedServerUOWProvider` (`cmd/bd/uow_factory.go:42-81`) never calls `ensureProxiedServerConfig`, and `--proxied-server-external-*` is mutually exclusive with `--proxied-server-config-path` (`init.go:389`), so `validateProxiedServerConfig` at `init.go:338` can only fire in managed mode.
+- Loopback edge cases in the validator are right: `::1`, `127.42.0.9`, `::ffff:127.0.0.1` accepted; `0.0.0.0`, `::`, `""` rejected. `go vet ./internal/storage/dbproxy/...` clean; `CGO_ENABLED=0 go test -tags gms_pure_go ./cmd/bd -run 'TestValidateManagedListenerHost|TestManagedListenerPolicy'` passes.
+
+## Findings
+
+**1. MAJOR — `remotesapi.port` is an unvalidated all-interfaces listener; the stated invariant is not achieved.**
+`cmd/bd/proxied_server.go:440-466` validates only `listener.host`. Dolt's `RemotesapiYAMLConfig` (`servercfg/yaml_config.go:125-136`, wired at `yaml_config.go:163`) is honored by `dolt sql-server` at `cmd/dolt/commands/sqlserver/server.go:756-771`, which builds `listenaddr := fmt.Sprintf(":%d", port)` — **all interfaces**, HTTP *and* gRPC. Same for `cluster.remotesapi.port` (`server.go:852`). A hand-edited managed config with `listener.host: 127.0.0.1` plus `remotesapi: {port: 8080}` passes the new policy and exposes the root/empty-password database to the network — exactly the class of hole this PR exists to close.
+Fix: in `validateManagedListenerHost`, also reject `yc.RemotesapiConfig.Port_ != nil` and `yc.ClusterConfig != nil` for managed mode, with the same remediation text. Rename the function to reflect that it is a whole-config policy, not a host check.
+
+**2. MAJOR — `listener.socket` unvalidated, and the omitted-host allowance silently enables `/tmp/mysql.sock`.**
+`servercfg.CheckForUnixSocket` (`servercfg/serverconfig.go:548-562`) returns `DefaultMySQLUnixSocketFilePath = "/tmp/mysql.sock"` whenever `Host() == "localhost"` — which is precisely the case `proxied_server.go:447-451` accepts. So the *accepted* omitted-host config opens a shared-namespace socket for the root/no-password account, while `host: "localhost"` (identical dolt bind behavior) is *rejected*. `listener.socket: &lt;path&gt;` is likewise never inspected. Beyond the trust question, `/tmp/mysql.sock` collides with a system MySQL or a second Beads workspace, which is a real startup-failure mode.
+Fix: reject a non-empty `ListenerConfig.Socket` in managed mode, and treat the omitted-host case the same way you treat `host: localhost` (see 3).
+
+**3. MAJOR — omitted host accepted / explicit `localhost` rejected is an indefensible asymmetry.**
+`proxied_server.go:443-456` vs `458-464`. Both produce byte-identical dolt behavior (`YAMLConfig.Host()` returns `DefaultHost` for a nil `HostStr`), and per (2) the omitted form is strictly *more* exposed. The comment's rationale ("resolver trust is not proof for user-provided values") does not survive that: the resolver is trusted either way. `localhost` is also the single most likely thing a user hand-writes, so this is the main breakage this PR inflicts.
+Fix: pick one — either accept the literal `"localhost"` (and keep rejecting all other hostnames), or reject the omitted form too and require an explicit numeric host in managed configs. Do not accept one and reject the other.
+
+**4. MINOR — the omitted-host error branch is unreachable dead code.**
+`proxied_server.go:448-455`: `net.ParseIP("localhost")` is always `nil`, so the disjunct reduces to `servercfg.DefaultHost == "localhost"`, which is a compile-time truth at the current pin. The whole branch is `return nil`, and the "not proven loopback" error can never fire. Harmless as forward-defense, but it reads as a real check and isn't. If (3) is resolved, this disappears.
+
+**5. MAJOR — hand-edited marker config with an interpolated *host* now hard-fails, contradicting the documented contract.**
+`proxied_server.go:310-318` explicitly promises that a marker file hand-edited with `${VAR}` placeholders "must degrade gracefully rather than fail the whole command". That fallback only triggers when `NewYamlConfig` *errors*. `host: "${BEADS_HOST}"` parses cleanly as a string (only the `*int` port fails), so `validateManagedListenerHost` at line 341 sees the literal `"${BEADS_HOST}"`, fails `ParseIP`, and hard-errors — even when the variable expands to `127.0.0.1`. The new test `marker parse fallback with interpolation` only exercises the *port* placeholder, so this is untested and unnoticed.
+Fix: see 6.
+
+**6. MINOR (simpler alternative, fixes 5) — five scattered `validateManagedListenerHost` calls should be one.**
+`ensureProxiedServerConfig` now calls the validator at lines 288, 331, 341, 363 plus `renderProxiedServerConfig:539`. Collapse to a wrapper: rename the body to `ensureProxiedServerConfigLocked`, and have the exported entry point call `validateProxiedServerConfig(path)` (which is interpolation-aware via `YamlConfigFromFile`) once on the resolved path before returning. That deletes four call sites, makes every path interpolation-aware — fixing (5) — and covers the freshly-generated file too. It also means a future new branch in that switch cannot forget the check.
+
+**7. MINOR — fixed-port failures misattribute a lost lock race.**
+`internal/storage/dbproxy/proxy/endpoint.go:370-375` now asserts "proxy child could not listen on explicitly configured port %d" for *any* non-zero-port child exit. The child exits with `proxy.LockHeldExitCode` (75) when it loses the lock race (`cmd/bd/db_proxy_child.go:70`), and nothing in the parent inspects that code — the old message's "(likely lost lock race)" hedge was more accurate. Also, `cmd.Wait()`'s error is just `exit status N`; the actual `listen on ...: address already in use` went to `opts.LogFilePath`.
+Fix: check `var ee *exec.ExitError; errors.As(childErr, &amp;ee) &amp;&amp; ee.ExitCode() == LockHeldExitCode` and keep the lock-race wording; otherwise include `opts.LogFilePath` in the message.
+
+**8. MINOR — timeout messages now print "port 0".**
+`endpoint.go:377-395`: three messages format `opts.Port`, which is 0 on the default path, yielding "hard timeout (…) waiting for proxy on port 0". The child-exit branch handles the zero case specially; these don't.
+Fix: mirror the branch — say "on its OS-assigned port" when `opts.Port == 0`.
+
+**9. MINOR — the init-time gate ignores `--proxied-server-root-path`.**
+`validateManagedProxiedServerConfigAtInit` (`proxied_server.go:472-486`) resolves via `resolveProxiedServerConfigPath`, which consults only `BEADS_PROXIED_SERVER_*` env vars and the *pre-existing* sidecar (`proxied_server.go:218-233`). The `--proxied-server-root-path` flag value isn't written to the sidecar until later in init, so `bd init --proxied-server --proxied-server-root-path /x` with a bad `/x/config.yaml` sails past the init gate. Runtime still catches it (fail-closed), but the advertised init-time check has a hole.
+Fix: thread `serverRootPath` into the helper, or move the call to after the sidecar is persisted.
+
+**10. NIT — redundant branch.** `proxied_server.go:473-475` re-runs `validateProxiedServerConfig(explicitPath)`, which `init.go:338` already ran for the same value under the same condition.
+
+**11. MINOR — the surviving `PickFreePort` writes an *ephemeral-range* port into `config.yaml` permanently, with no recovery.**
+`proxied_server.go:373` picks from the kernel's ephemeral range (Linux 32768-60999) and persists it; `ensureProxiedServerConfig` only generates when the file is absent, and `grep` finds no `EADDRINUSE`/repick handling anywhere in `internal/storage/dbproxy/` or `cmd/bd/proxied_server.go`. So a collision after reboot bricks the workspace until a human edits YAML. The code comment defers this to "the PR-C RFC", which is a reasonable scope call, but this is a *user-visible* known failure mode being shipped.
+Fix: at minimum a CHANGELOG "known limitation" entry; ideally, on backend start failure, repick + rewrite for marker-owned configs only.
+(Platform note: no SO_REUSEADDR concern here — Go sets it on unix listeners only, and an accept-less listener leaves no TIME_WAIT on Windows, so the remaining race is pure "someone else grabbed it", identical on both platforms.)
+
+**12. MINOR — flag help and docs not updated for a new hard constraint.**
+`init.go` flag help for `--proxied-server-config-path` (mirrored at `/var/home/matt/dev/mybd/.worktrees/beads/review-psxg5-listener-policy/docs/cli-reference/init.md:67`) still reads "bd uses this file instead of auto-generating one" with no mention that non-loopback / hostname listeners are now rejected. Same for `BEADS_PROXIED_SERVER_CONFIG`. Everything is EXPERIMENTAL so the blast radius is small, but the remediation text is the only place a user learns the rule.
+
+**13. NIT — the new e2e test re-creates the race it is testing around.**
+`cmd/bd/proxied_local_listener_policy_linux_test.go:52` calls `proxy.PickFreePort()` and hands the port to a dolt backend started much later — the exact bind-close-launch window this PR removes elsewhere. Acceptable in a test, but it's a latent flake in CI.
+
+### Test-coverage gaps on the riskiest paths
+- No coverage for `remotesapi.port` / `cluster` / `listener.socket` (findings 1-2) — because unimplemented.
+- No coverage for an interpolated **host** in a marker file (finding 5); only the port placeholder is exercised.
+- No coverage of the `opts.Port != 0` spawn-failure message path in `spawnAndHandoff` (finding 7) — `TestProxy_ExplicitPortInUseFailsWithoutRepick` tests the child's `ListenAndServe`, not the parent's diagnosis.
+- No coverage for `validateManagedProxiedServerConfigAtInit` with `--proxied-server-root-path` (finding 9).
+- No end-to-end coverage that a fixed `--proxied-server-port` still yields a working proxy (only that the default is 0, at `proxied_local_helpers_test.go:75`).
+
+## Verdict
+
+**NEEDS-FIXES** — blocking: (1) `remotesapi.port`/`cluster` bypass and (2) `listener.socket` + the implicit `/tmp/mysql.sock`, which together mean the PR's stated invariant ("managed proxied mode must never expose a non-loopback listener") does not hold; and (3) the omitted-vs-`localhost` asymmetry, which must be resolved in one direction or the other before this is defensible policy. (5) should land with them since fix (6) resolves it for free. Everything else is minor/nit and can follow.</result>
+<usage><subagent_tokens>103514</subagent_tokens><tool_uses>51</tool_uses><duration_ms>498872</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bcdijiyp3</task-id>
+<tool-use-id>toolu_013sw2ZyYWshhCFWuB8ZS7ZY</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/bcdijiyp3.output</output-file>
+<status>completed</status>
+<summary>Background command "Rerun Codex diff reviews of 5013 then 5024 serially" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>adf481143740c3b59</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/adf481143740c3b59.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix PR 5046 gate findings" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Committed successfully as a single commit, working tree clean. Not pushed as instructed.
+
+## Summary
+
+Worked in `/var/home/matt/dev/mybd/.worktrees/beads/workspace-gate` (branch `feat/workspace-gate`, upstream PR gastownhall/beads#5046).
+
+**1. Split out public API (`beads.go`, deleted `beads_gated_test.go`)**
+Removed `OpenGated`, `gatedStorage`, and the `ErrGateBusy` sentinel from `beads.go`, plus their unused imports (`errors`, `path/filepath`, `time`, `workspacegate`). Deleted `beads_gated_test.go` (its two tests, `TestOpenGatedGateSemantics`/`TestOpenGatedLifecycle`, covered only the removed API). The verbatim removed code plus the two blocker write-ups (wrong physical-root derivation vs `internal/storage/dolt/open.go:110-160`; nil-config skip vs `internal/beads/beads.go:507-514`) are preserved at `/tmp/claude-1000/-var-home-matt-dev-mybd/e4d4db15-8aa8-49e2-abb1-e56fa80987d6/scratchpad/opengated-part2-carryover.md`.
+
+**2. Primitive fixes in `internal/workspacegate/gate.go`** — 2a starvation doc on `Exclusive`/`Options.Wait`; 2b new `gateKey()` case-folding comparator used in `AcquireAll`'s dedupe map and sort, `Gate.path` untouched; 2c `busyDetail` Shared branch now qualifies against `pidAlive` like the Exclusive branch; 2d `ExclusiveHolder` opens `O_RDONLY` instead of `O_RDWR`; 2e `pidAlive` adds `defer func(){ _ = p.Release() }()`; 2f corrected the `nolint:gosec` comment on the sidecar temp-file open; 2g cross-user shared-root (0o600 EACCES) doc on `ForPhysicalRoot`; 2h in-`.beads` physical-root invariant doc on `ForPhysicalRoot`.
+
+**3. Tests added (`internal/workspacegate/gate_test.go`)** — `TestBusyDetailStaleHolderBothModes` (known-dead PID via a new `exit` helper mode + `deadPID`/`writeStaleInfo` fixtures, asserts stale reporting in both Shared/Exclusive); `TestGateKeyCaseFolding` (direct unit test of the comparator); `TestExclusiveHolderErrorReturn` (unreadable/chmod 0000 gate file must return a non-nil error, not `held=false`).
+
+**Validation (all passed):**
+- `gofmt -l` — clean
+- `go vet` (`CGO_ENABLED=0 -tags gms_pure_go ./internal/workspacegate/...`) — clean
+- `CGO_ENABLED=1 go test -tags gms_pure_go -race ./internal/workspacegate/...` — `ok ... 4.918s` (race requires cgo on this platform; ICU/cgo-only issue from other packages doesn't affect this package)
+- `CGO_ENABLED=0 go build -tags gms_pure_go ./...` — clean
+- `GOOS=windows` and `GOOS=darwin` cross-builds (`CGO_ENABLED=0 -tags gms_pure_go ./...`) — clean
+- `golangci-lint` ran automatically via the repo's pre-commit hook (errcheck flagged the first `defer p.Release()` attempt; fixed to `defer func(){ _ = p.Release() }()`, then "0 issues")
+
+**Commit:** `4ddaf4e283930427a97f2cdcb4425df20bbb4924` on `feat/workspace-gate`, message `refactor(workspacegate): scope part 1 to the primitive; harden per cross-vendor review`, signed with the `Agent-Signature: claude-fable-5-medium on behalf of maphew` trailer. Working tree is clean; not pushed.
+
+Nothing from the spec was skipped. One judgment call: the "known-dead PID" test uses a spawn-and-wait helper subprocess (added a small `exit` mode to the existing `helperMain` cross-process test harness) rather than trying to guess an unused PID, since that's the only portable way to get a guaranteed-dead-but-real PID across platforms.</result>
+<usage><subagent_tokens>93279</subagent_tokens><tool_uses>59</tool_uses><duration_ms>425264</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aeb8b0885af1940ab</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/aeb8b0885af1940ab.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix PR 5013 lifecycle findings" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Waiting for the full-suite result — the monitor will notify when the log lands.</result>
+<usage><subagent_tokens>199921</subagent_tokens><tool_uses>110</tool_uses><duration_ms>1819046</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aeb8b0885af1940ab</task-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/aeb8b0885af1940ab.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix PR 5013 lifecycle findings" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. Commit `a9cfebc25` on `feat/psxg5-proxy-identity` in `/var/home/matt/dev/mybd/.worktrees/beads/fix-5013` (not pushed, as instructed).
+
+## Changes per finding
+
+**Blocking**
+- **B1** `internal/storage/dbproxy/proxy/endpoint.go` — `cleanupOrphanBackend` now kills, explicitly closes the handle, *then* calls `waitForRecordedProcessExit`, mirroring shutdown.go; the old `defer Close` kept the dead PID allocated on Windows so recovery always timed out.
+- **B2** `internal/procid/procid_windows.go` — `tokenForProcess` checks `GetExitCodeProcess` != STILL_ACTIVE first and returns a new `errProcessExited` sentinel (covered by `IsProcessGone`); `Verify` maps it to `(false, nil)`. The invariant "Verify==true implies running" now holds everywhere: Capture/Open/Handle.verify all inherit the check.
+- **B3** `internal/procid/procid_linux.go` — `Open` opens the pidfd *before* token verification; the pidfd pins the PID number so the post-open Verify is race-free. ENOSYS falls back to the old verify-first path (documented residual race).
+- **B4** same file — `PidfdSendSignal` ESRCH on a fatal signal returns success, matching the fallback path; Windows `Signal` similarly treats exited-target as success.
+- **B5** `shutdown.go` — `CanForceStopUnverified` now accepts refusals where each side is nil-or-unverifiable (proxy-only, backend-only, or paired). `force_stop.go` — `ForceStopUnverified` runs the identical inspect/signal/quarantine procedure on `proxy-child.pid` under `proxy-child.lock`; `ForceStopReport` gains a `Backend` sub-report and `cmd/bd/dolt.go` surfaces it in JSON (`backend` object) and human output.
+- **B6a** new `unverified_process_{linux,windows,darwin}.go` — before signaling, the live PID's command line must contain rootDir (Linux `/proc/&lt;pid&gt;/cmdline`, Darwin `ps -o args=`); Windows cannot read a foreign cmdline and refuses with an error naming the manual quarantine remedy (spec-sanctioned refuse-on-unknown).
+- **B6b** — one stable handle (Linux pidfd — which pins the PID number; Windows `OpenProcess` handle) spans basename inspection, scope check, kill, and exit confirmation; `os.FindProcess` double-lookup removed.
+
+**Should-fix**
+- **S1** `control.go` — accept failures never close the listener or feed the errgroup; capped exponential backoff (10ms→5s) with logging, interruptible on Close; `Errors()` channel and the server.go watcher goroutine removed. Test renamed to `TestControl_AcceptLoopSurvivesPersistentErrors` pinning the new behavior.
+- **S2** `force_stop.go` — `requireUnverifiableRecord` returns the `identity.RootID` error instead of failing open.
+- **S3** `endpoint.go` — `killSpawnedChild` falls back to `cmd.Process.Kill()` (tolerating `os.ErrProcessDone`) when the verified handle is nil.
+- **S4** `endpoint.go` — handshake check relaxed to `reply.Schema &lt; pidfile.SchemaV2`.
+- **S5** `procid_windows.go` — `errors.Is(err, windows.ERROR_INVALID_PARAMETER)`.
+
+**Tests added**: pidfd ESRCH-after-exit success + Open-after-reap gone-classification (`procid_linux_test.go`); paired-legacy Shutdown→CanForceStop→ForceStop end-to-end, foreign-workspace `bd` refused, updated helpers to live under the workspace root (`force_stop_linux_test.go`); schema-v3 handshake adoption (`endpoint_security_test.go`); Windows Verify-after-terminate-with-held-handle (`procid_windows_test.go`, compile-checked via GOOS=windows vet); CanForceStop table updated. One existing e2e helper (`proxied_local_identity_lifecycle_linux_test.go`) now references the workspace in its cmdline via its logpath, modeling a real pre-upgrade proxy's `--root` arg.
+
+## Validation
+- `gofmt -l` clean; `go vet` clean for linux, and GOOS=windows / darwin (compiles all test files).
+- `CGO_ENABLED=0 go test -tags gms_pure_go ./internal/procid/... ./internal/storage/dbproxy/...` — **all ok**; also green under `-race` with CGO.
+- Cross-compile `GOOS=windows` and `GOOS=darwin` `go build -tags gms_pure_go ./...` — OK.
+- `./cmd/bd -run 'Proxied|ForceStop|Shutdown|DoltStop'` — ok. Gated lane `BEADS_TEST_PROXIED_LOCAL=1` (local dolt present) `^TestManagedLocalProxied` — **all 7 pass** (one subtest initially failed against the new B6a scoping; fixed by the e2e helper cmdline change above).
+- Full `./cmd/bd` suite with CGO: 44 failures, all verified **pre-existing** — a representative subset fails identically at the base commit `d53a1ae19` in a clean detached checkout (host-environment leakage: global Claude-hook install output, host config.yaml, worktree-sensitive init/list/notion/tips tests), and the `TestMigrate*` cluster passes standalone on my tree.
+
+**Not completed**: nothing from the spec. Out-of-scope items untouched except the mandated code comment on the birth-token capture-after-Start race (added in `forkExecChild`).
+
+Commit SHA: **a9cfebc25**</result>
+<usage><subagent_tokens>205292</subagent_tokens><tool_uses>117</tool_uses><duration_ms>2120626</duration_ms></usage>
+</task-notification>
+
+---
+
+are you running in worktree(s) or mybd/bd-main? there's a large set of changes in bd-main that look like proxied dolt work, but i suspect are from an earlier agent session that crashed out. what do you think?
+
+---
+
+<task-notification>
+<task-id>a80f46e0fd0d55ff8</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/13e762f9-e24a-4921-97f1-8d18137fbd14/tasks/a80f46e0fd0d55ff8.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix PR 5024 listener policy" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. Final report:
+
+## Rebase (Step 0)
+`git rebase --onto a9cfebc25 d53a1ae19 feat/psxg5-listener-policy` applied **cleanly — zero conflicts**. The anticipated hotspots (server.go control watcher, endpoint.go spawn/kill paths) did not collide; the rebased listener-policy commit is `ac17029aa`. Post-rebase baseline build + full dbproxy package tests passed before any finding work began.
+
+## Changes per finding
+- **F1** (`cmd/bd/proxied_server.go`): `validateManagedListenerHost` → `validateManagedServerConfigPolicy`; now also rejects `listener.socket` (including the defined-but-empty form, which `Socket()` maps to Dolt's default socket path — strictly worse, so covered), non-nil `remotesapi.port`, and any `cluster` block. All errors carry the remediation text style.
+- **F2**: explicit numeric loopback IP required; omitted host rejected with a tailored message explaining the localhost/unix-socket hazard; `localhost` and all hostnames still rejected; `::1`/`127.x.y.z`/`::ffff:127.0.0.1` accepted, wildcards rejected. Dead `net.ParseIP("localhost")` branch removed. Remediation constant updated to "127.0.0.1 (or another 127.0.0.0/8 / ::1 loopback address)".
+- **F3**: body renamed `resolveOrCreateProxiedServerConfig`; exported `ensureProxiedServerConfig` runs ONE interpolation-aware `validateProxiedServerConfig(path)` on the resolved path; all five scattered calls deleted (four in the ensure body, one self-check in `renderProxiedServerConfig`).
+- **F4** (`internal/storage/dbproxy/proxy/`): chose the epoch re-check option. New `ProxyOpts.StopEpoch` carries the parent's under-lock epoch via a new `db-proxy-child --stop-epoch` flag (`forkExecChild` passes it); `ListenAndServe` re-checks `stopEpochChanged` immediately before `pidfile.Write` and aborts (stopping the backend) with `errStartInterrupted`, which the parent already maps to a terminal interrupted error. Zero-value baseline stays correct for direct callers/tests.
+- **F5a/b** (`endpoint.go`): child exit now distinguishes `LockHeldExitCode` (lock-race wording) from real failures (message includes `opts.LogFilePath`); timeout messages use `describeSpawnPort` → "its OS-assigned port" when Port==0.
+- **F5c/d**: `validateManagedProxiedServerConfigAtInit(beadsDir, explicitPath, explicitRootPath)` — threads the `--proxied-server-root-path` flag (env still wins); redundant explicit-path re-validation removed (init.go:338 already validates it).
+- **F5e**: `--proxied-server-config-path` flag help states the full constraint incl. `BEADS_PROXIED_SERVER_CONFIG`. **Did not edit docs/cli-reference/init.md** — `docs/cli-docs.pin` pins docs generation to release v1.1.0, so committed docs deliberately lag main; only the source help string changes (verified convention via `scripts/generate-cli-docs.sh` and commit d2f87d50d).
+- **F5f**: comment added acknowledging the accepted EADDRINUSE flake window (retry impractical since the launch happens inside the init harness).
+
+## Tests added
+- Whole-config policy table (17 cases: loopback forms accepted incl. `::ffff:127.0.0.1`; omitted/localhost/wildcard/socket/remotesapi/cluster rejected) — `TestValidateManagedServerConfigPolicy`.
+- `TestManagedListenerPolicyOmittedHostRejected` (replaces the old ...Passes test, pinning the F2 decision).
+- `TestManagedListenerPolicyMarkerInterpolatedHost` — `${VAR}` host expanding to 127.0.0.1 accepted, to 0.0.0.0 rejected (F3).
+- `TestManagedListenerPolicyRootPathFlagAtInit` (unit) + a gated `bd init --proxied-server-root-path` integration subtest with a bad config in the root dir (F5c).
+- `TestListenAndServe_StopEpochAdvanceDuringStartupAbortsPublish` — deterministic internal-package test using a Start-hook backend that advances the epoch mid-startup; asserts `errStartInterrupted`, no proxy.pid, backend stopped (F4; used a backend wrapper rather than the cmd/bd fake-slow hook since the race is fully reproducible at the proxy layer).
+
+## Validation (all pass)
+- `gofmt -l` clean; `go vet -tags gms_pure_go` clean.
+- `CGO_ENABLED=0 go test -tags gms_pure_go ./internal/storage/dbproxy/...` → all ok (proxy 5.99s).
+- `CGO_ENABLED=0 go test -tags gms_pure_go ./cmd/bd -run 'Proxied|Listener|ManagedListener|ValidateManaged'` → `ok 0.323s`.
+- Gated lane with real dolt: `BEADS_TEST_PROXIED_LOCAL=1 CGO_ENABLED=1 go test -tags gms_pure_go ./cmd/bd -run '^TestManagedLocalProxied'` → `ok 52.185s` (exit 0), including the new root-path init subtest.
+- Cross-builds: `GOOS=windows` and `GOOS=darwin` `go build -tags gms_pure_go ./...` both OK.
+
+## Not completed / notes
+- Nothing dropped. Docs page intentionally untouched (release-pin convention, above).
+- Not pushed, per instructions (branch shows `ahead 3, behind 1` vs the pre-rewrite origin ref — expected; the eventual push needs `--force-with-lease`).
+
+## Head
+`d83434010` — `fix(dbproxy): whole-config managed listener policy, epoch-fenced startup, diagnosis fixes` (one commit on top of rebased `ac17029aa`, Agent-Signature trailer included).</result>
+<usage><subagent_tokens>169257</subagent_tokens><tool_uses>82</tool_uses><duration_ms>794093</duration_ms></usage>
+</task-notification>
