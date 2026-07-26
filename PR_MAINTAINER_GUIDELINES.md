@@ -27,6 +27,55 @@ External contributor PRs have priority. Before implementing related work, openin
 - Open a replacement PR only when in-place maintainer edits are not possible or would create a larger risk, such as when the contributor branch is not writable, the branch history is unusable, or the accepted change must be substantially reimplemented. Document that reason in both PR threads.
 - If a rewrite is unavoidable, credit the contributor's design, tests, bug report, or use case in the replacement commit or PR.
 
+## How a Review Opens and Closes
+
+The rules above protect the contributor's *code*. These protect the reason they
+came back. They are cheap, they cost no rigor, and they are the part that drifts
+silently because nothing fails when they are skipped.
+
+Measured 2026-07-25 over the previous six weeks (19 changes-requested + 20
+approving reviews on outside-contributor PRs), against steveyegge's first eleven
+weeks of maintainership (117 contributor-facing messages):
+
+| | thanks the contributor when asking for changes | when approving |
+|---|---|---|
+| steveyegge, Oct–Dec 2025 | 66% | 26% |
+| here, Jun–Jul 2026 | **5%** | 65% |
+
+A near-perfect inversion. Warmth on approval rewards compliance; warmth on
+refusal is what makes someone try again. Concretely:
+
+- **The first sentence belongs to the contributor, not to us.** All 19
+  changes-requested reviews in that sample opened with the identical string
+  `Cross-vendor agent review (Codex … primary trace; Claude adjudication …)`.
+  Review provenance is real and worth recording — put it at the **bottom**, next
+  to the `Agent-Signature` line. Open on the specific thing their patch got
+  right, named precisely enough that they can tell it was read.
+- **Thank them in the changes-requested review, not only in the approval.** Zero
+  of 19 did; 13 of 20 approvals did.
+- **Say what the review volume means.** A 400-word audit reads as being audited
+  unless told otherwise. One clause fixes it: *"docs that match the binary are
+  worth this much scrutiny"* (gastownhall/beads#4913).
+- **`CHANGES_REQUESTED` is not a notepad.** The Outcomes list already calls
+  request-changes a last resort that can strand contributor work; it then became
+  the default opening 19 times in six weeks, 7 of which we fixed ourselves
+  anyway. A `COMMENT` review carries identical findings without stamping a red ✗
+  on someone's first contribution.
+- **Ask before finishing their PR for them.** Absorbing is correct policy, but
+  "the fixes are applied as maintainer commits" as the contributor's *next news*
+  removes the thing they came for. Offer first: *"Want to take these, or shall
+  I push them?"*
+- **Do not post the disposition and close in the same second.** All five sampled
+  2026 declines closed 0–1s after the comment; none of 17 contributors replied
+  to any of them, even though every message thanked them, preserved attribution
+  and offered a route back. The generosity lands in a locked room. Contrast
+  gastownhall/beads#77 (2025-10-18): the decline sat open for eight hours, the
+  contributor replied, and *they* asked for the close. Leave the PR open at
+  least 48h after a disposition comment, or hand the close to the patrol.
+
+None of this softens a finding. State the blocker exactly as harshly as the
+evidence warrants — just do not make the apparatus the first thing they meet.
+
 ## Triage Groups
 
 Classify each PR into one of these groups:
@@ -75,7 +124,7 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 - Prefer landing or transforming useful work over asking the contributor to do more rounds.
 - Preserve contributor attribution when absorbing, fixing, cherry-picking, splitting, or reimplementing PR value.
 - Before opening a competing or replacement PR, attempt the contributor-branch path first: fetch the PR, test it, make maintainer fix commits on that branch when permitted, and push back to the same PR.
-- Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently.
+- Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently. Then leave the PR open — see "How a Review Opens and Closes" for why the close is a separate act from the disposition comment.
 - Consider the entire PR thread. Valuable clarifying info are often in the comments.
 - Treat request-changes as exceptional because it can strand contributor work.
 - File follow-up work as beads issues instead of hidden notes.
