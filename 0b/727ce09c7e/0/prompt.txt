@@ -1,0 +1,9 @@
+does update-versions.sh need a fix for the burned release tag problem?
+
+compose a short release announcement for socials etc
+
+file a bead to investigate the hooks change
+
+---
+
+tackle (1)

@@ -1,0 +1,87 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "0b727ce09c7e",
+  "session_id": "dae40981-2fb3-4a2a-9f6b-fdab4e746416",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-26T18:55:53.761329354Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "81a64417f0ef",
+  "checkpoint_transcript_start": 732,
+  "transcript_lines_at_start": 732,
+  "compact_transcript_start": 132,
+  "token_usage": {
+    "input_tokens": 70,
+    "cache_creation_tokens": 44440,
+    "cache_read_tokens": 7647511,
+    "output_tokens": 30438,
+    "api_call_count": 35
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01MLtnHu6xY2H5FaaG6gy1eT",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "session-close"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "81a64417f0ef",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 917,
+        "end": 918,
+        "entry_ids": [
+          "c51151a2-14ef-4c8c-a312-b3787ff8db4b"
+        ],
+        "tool_use_id": "toolu_01MLtnHu6xY2H5FaaG6gy1eT"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01MLtnHu6xY2H5FaaG6gy1eT"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: session-close",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
