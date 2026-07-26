@@ -1,0 +1,97 @@
+<task-notification>
+<task-id>bzp5vtr6t</task-id>
+<summary>Monitor event: "Dependabot regroup runs and new grouped PRs"</summary>
+<event>runs=in_progress,in_progress,in_progress new=[5055:build(deps): bump the testcontainers group with 2 ]</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bzp5vtr6t</task-id>
+<summary>Monitor event: "Dependabot regroup runs and new grouped PRs"</summary>
+<event>runs=completed,in_progress,completed new=[5056:build(deps): bump the go-deps group with 5 updates | 5055:build(deps): bump the testcontainers group with 2 ]</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bqdhy218j</task-id>
+<summary>Monitor event: "VendorHash bot commits on grouped PRs 5055/5056"</summary>
+<event>vendorHash commits present: 5055=2 5056=2 commits (runs: completed/success,completed/success)</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bqdhy218j</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/cb56a7f0-5d89-4e80-89fe-13f370d9a134/tasks/bqdhy218j.output</output-file>
+<status>completed</status>
+<summary>Monitor "VendorHash bot commits on grouped PRs 5055/5056" stream ended</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bujvjc5mx</task-id>
+<summary>Monitor event: "Grouped PRs 5055/5056/5057 until all merged (patrol)"</summary>
+<event>grouped: 5055:OPEN 5056:OPEN 5057:CLOSED</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bujvjc5mx</task-id>
+<summary>Monitor event: "Grouped PRs 5055/5056/5057 until all merged (patrol)"</summary>
+<event>grouped: 5055:OPEN 5056:MERGED 5057:CLOSED</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+status?
+
+---
+
+do you need to do anything for 5055 or will patrol just find it
+
+---
+
+<task-notification>
+<task-id>bwgxurh49</task-id>
+<summary>Monitor event: "PR 5055 recreate then vendorHash commit"</summary>
+<event>5055 recreated (new head 7dbbc97f) — waiting for vendorHash bot commit</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bujvjc5mx</task-id>
+<summary>Monitor event: "Grouped PRs 5055/5056/5057 until all merged (patrol)"</summary>
+<event>check fails: 5055:Differential Regression (v0.49.6 baseline) 5055:Test Nix Flake</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bwgxurh49</task-id>
+<summary>Monitor event: "PR 5055 recreate then vendorHash commit"</summary>
+<event>5055 vendorHash commit present (2 commits) — needs close/reopen + re-handoff</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bujvjc5mx</task-id>
+<summary>Monitor event: "Grouped PRs 5055/5056/5057 until all merged (patrol)"</summary>
+<event>grouped: 5055:MERGED 5056:MERGED 5057:CLOSED
+ALL GROUPED PRs TERMINAL: 5055:MERGED 5056:MERGED 5057:CLOSED</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
