@@ -3,7 +3,7 @@
   "checkpoint_id": "f0d16dc82f3b",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-26-proxied-campaign-review-sweep.md"
   ],
@@ -21,6 +21,13 @@
       "compact_transcript": "/f0/d16dc82f3b/1/transcript.jsonl",
       "content_hash": "/f0/d16dc82f3b/1/content_hash.txt",
       "prompt": "/f0/d16dc82f3b/1/prompt.txt"
+    },
+    {
+      "metadata": "/f0/d16dc82f3b/2/metadata.json",
+      "transcript": "/f0/d16dc82f3b/2/full.jsonl",
+      "compact_transcript": "/f0/d16dc82f3b/2/transcript.jsonl",
+      "content_hash": "/f0/d16dc82f3b/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
