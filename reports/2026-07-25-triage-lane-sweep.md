@@ -141,3 +141,41 @@ wants triage.
 - `mybd-sfiw` / `mybd-1ox6` — gated on kevglynn `#4820`, which belongs to the
   other session's lane. Noted, not touched.
 - 29 issue beads with no candidate fix remain the untouched implement backlog.
+
+---
+
+## Follow-up, same session: `#4430` absorbed
+
+The owner chose the absorb path. Landed as commit `0c5d37c5a` on the
+contributor's branch (`harry-miller-trimble/beads fix/4394-wisp-gc-active`) on
+top of their `1e3c579f6`, so their authorship stands and no review round trip
+was spent. `maintainerCanModify` was true and the head repo is user-owned, so
+the org-fork maintainer-edit block did not apply.
+
+The guard now derives protection from the status *category* — `CategoryWIP` is
+work in flight, `CategoryFrozen` is work on ice, leaving only plain `open` and
+`closed` age-reclaimable — which closes the `deferred`, custom-status and
+`Issue.Pinned` gaps in less code than enumerating them. Both the blocked-set
+lookup and the custom-status enumeration now abort the GC instead of failing
+open, matching `purge.go`'s stated house rule. `isActiveWisp` renamed to
+`isProtectedWisp` off the collision with `(*DoltStore).isActiveWisp`.
+
+Verified: build/vet/gofmt clean, targeted test stable across 3 runs, the
+`Wisp|WispGC|MolGC|Purge` suite green, and non-tautology confirmed by reverting
+the production file — the new `deferred` and custom-wip assertions fail without
+it. Help text and both generated doc surfaces were updated together, since the
+prose is generated from the cobra `Long` string and editing the docs alone would
+have been reverted by regeneration.
+
+**One thing that nearly shipped as a flake.** The new custom-active assertion
+failed, then passed once I added debug logging, then would have failed again
+when I removed it. The age predicate compares `now` (test process) against an
+`updated_at` written by the database, so against a `1ms` threshold the most
+recently touched bead can appear not-yet-stale when the DB clock leads. Beads
+expected to be *reclaimed* must therefore be created first; protected ones are
+excluded regardless of age. Stored as memory `wisp-gc-age-test-clock-skew`.
+
+Not self-approved, since this session committed to the branch — if branch
+protection requires a maintainer approval, the patrol will park it and maphew's
+approval is the last step. The pre-existing scan/delete TOCTOU was deliberately
+left out of scope and remains unfiled.
