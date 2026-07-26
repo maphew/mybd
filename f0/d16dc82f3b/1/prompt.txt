@@ -1,0 +1,5 @@
+we now have pr-babysitter and verify-next to help us keep things moving and not miss things coming via PR. I think we need something similar for github issues. What's your opinion?
+
+---
+
+yes do all 3 of those, and then help me think through how to start draining the already triaged effectively

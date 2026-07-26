@@ -3,7 +3,7 @@
   "checkpoint_id": "f0d16dc82f3b",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "reports/2026-07-26-proxied-campaign-review-sweep.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/f0/d16dc82f3b/0/transcript.jsonl",
       "content_hash": "/f0/d16dc82f3b/0/content_hash.txt",
       "prompt": "/f0/d16dc82f3b/0/prompt.txt"
+    },
+    {
+      "metadata": "/f0/d16dc82f3b/1/metadata.json",
+      "transcript": "/f0/d16dc82f3b/1/full.jsonl",
+      "compact_transcript": "/f0/d16dc82f3b/1/transcript.jsonl",
+      "content_hash": "/f0/d16dc82f3b/1/content_hash.txt",
+      "prompt": "/f0/d16dc82f3b/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 36,
-    "cache_creation_tokens": 48773,
-    "cache_read_tokens": 1053600,
-    "output_tokens": 12120,
-    "api_call_count": 18
+    "input_tokens": 48,
+    "cache_creation_tokens": 117361,
+    "cache_read_tokens": 1330482,
+    "output_tokens": 20079,
+    "api_call_count": 24
   }
 }
