@@ -1,0 +1,17 @@
+[Unit]
+Description=Verify-queue consumer (zero-token babysitter for queued local verification jobs)
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+# Suite commands may carry their own long timeouts (e.g. go test -timeout 90m);
+# give verify-next headroom past those instead of killing mid-suite.
+Environment=VERIFY_TIMEOUT=100m
+# bd resolves its database from the cwd; without this the run sees no queue.
+WorkingDirectory=@ROOT@
+ExecStart="@ROOT@/scripts/verify-next"
+TimeoutStartSec=110min
+# Full Beads/Dolt suites are process and disk heavy; stay polite on a
+# workstation that may have interactive sessions running.
+Nice=10
+IOSchedulingClass=idle

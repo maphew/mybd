@@ -431,6 +431,14 @@ scripts/verify-status
 scripts/verify-next          # runs one queued job
 ```
 
+On Linux the queue self-drains: the `verify-babysit` systemd user timer
+(installed via `scripts/install-verify-babysit`, fires every 15 min, zero
+model tokens) runs `verify-next` once per fire. The oneshot unit will not
+start while a previous run is still going, so long suites serialize
+naturally; the unit's `VERIFY_TIMEOUT=100m` covers suite commands that carry
+their own 90m timeouts. Do not also run `verify-next` manually while the
+timer is installed unless you are debugging a specific failure.
+
 From PowerShell on Windows, invoke these via Git Bash as shown in the Windows
 housekeeping section.
 
