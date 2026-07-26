@@ -1,0 +1,80 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "8e8d8979e3d3",
+  "session_id": "915209f2-a8a2-40ad-8ccf-15b221d410ad",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-26T21:33:41.825046447Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 2,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "7655542fae3a",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 186,
+    "cache_creation_tokens": 339436,
+    "cache_read_tokens": 12403757,
+    "output_tokens": 81965,
+    "api_call_count": 93
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_019UUksYFVaUzrCtFFMcwE8a",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "triage"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "7655542fae3a",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 352,
+        "end": 353,
+        "entry_ids": [
+          "0509b76e-b2aa-4c8a-a393-cc8388ca0ff9"
+        ],
+        "tool_use_id": "toolu_019UUksYFVaUzrCtFFMcwE8a"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_019UUksYFVaUzrCtFFMcwE8a"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: triage",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
