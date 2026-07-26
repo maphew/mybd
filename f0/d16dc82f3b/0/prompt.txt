@@ -1,0 +1,1 @@
+tackle mybd-fgqv. it's triage compares the rescue branch against main — the maintenance-command routing in particular looks like it's worth landing, and it should be coordinated with the #5027 review (mybd-wo8r) so the two don't ship competing proxied-dedup refactors. Don't spend more time rescuing than it would take to discard and start fresh with an appropriate starting prompt.
