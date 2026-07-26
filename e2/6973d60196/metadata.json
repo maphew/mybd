@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "e26973d60196",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "reports/2026-07-26-author-clustered-pr-sweep-jjgarzella-julianknutsen-sms-movgp0.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e2/6973d60196/0/metadata.json",
+      "transcript": "/e2/6973d60196/0/full.jsonl",
+      "compact_transcript": "/e2/6973d60196/0/transcript.jsonl",
+      "content_hash": "/e2/6973d60196/0/content_hash.txt",
+      "prompt": "/e2/6973d60196/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 64,
+    "cache_creation_tokens": 58843,
+    "cache_read_tokens": 7368480,
+    "output_tokens": 27249,
+    "api_call_count": 32
+  }
+}

@@ -1,0 +1,131 @@
+carry on
+
+---
+
+<task-notification>
+<task-id>ad20113fd426e81ff</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/03353724-8668-472c-a128-448f9652b221/tasks/ad20113fd426e81ff.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5075 CI lint overhaul" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## 1. Why its own lanes are failing
+
+Both failures are **real bugs in the PR**, deterministic, not flake, and neither is "expected-red-until-required-checks-update" (the gate keys `PR_LINT_WRAPPER` and `WINDOWS_MAKE_SHELL` already exist on `upstream/main`; the doc hunk that appears to "add" `WINDOWS_MAKE_SHELL` is only `engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md` catching up to reality).
+
+### Blocker A — `Windows Make shell (native)`: PowerShell overload-resolution bug
+
+`.github/workflows/pr.yml:1039`
+
+```powershell
+[IO.File]::AppendAllLines(
+  $env:GITHUB_OUTPUT,
+  @( "gcc=$($compilers[0].Path)", "gxx=$($compilers[1].Path)" ),
+  [Text.UTF8Encoding]::new($false))
+```
+
+Job log: `Cannot find an overload for "AppendAllLines" and the argument count: "3"`. PowerShell's `@(...)` yields `object[]`, which will not bind to `IEnumerable&lt;string&gt;`. The MinGW install succeeded; the step died writing its own step output, then the `always()` marker check failed with "The native semantic lane did not execute successfully". **The native lane can never go green as written.**
+
+Fix (either):
+```powershell
+..., [string[]]@("gcc=$($compilers[0].Path)", "gxx=$($compilers[1].Path)"), ...
+```
+or simply `Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8`.
+
+Note this contradicts the PR body's validation claim ("the full native Windows public Make route ... with MinGW 16.1.0" passed at `499e3ef`) — that route as expressed in the workflow was clearly not exercised on a hosted runner.
+
+### Blocker B — `PR Lint (wrapper timing)`: the macOS `MAKE_HOST` contract is wrong for hosted images
+
+`scripts/ci/pr-lint-host.sh:462-465`
+
+```bash
+if [[ "$make_path" != "/usr/bin/make" ||
+      "$make_version_first_line" != "GNU Make 3.81" ]]; then
+    fail "GNU Make omitted MAKE_HOST outside the stock macOS 3.81 contract: ..."
+```
+
+Observed on `macos-15`:
+```
+path=/Applications/Xcode_16.4.app/Contents/Developer/usr/bin/make
+version=GNU Make 3.81 ... built for i386-apple-darwin11.3.0
+```
+
+`/usr/bin/make` on macOS is the `xcode-select` shim; it re-execs the active Developer-dir `make` with `argv[0]` set to the Xcode path, so GNU Make's `$(MAKE)` — which `Makefile:~14` captures as `CI_INVOKING_MAKE` — is the Xcode path, never `/usr/bin/make`. The equality check can only pass locally (where `make` is invoked without a slash and the script falls back to `resolve_executable make` → `/usr/bin/make`). The more explicit the CI invocation, the more certainly it fails.
+
+Severity is higher than the visible red: this same code path runs in `.github/workflows/main.yml:390` (`pr-lint-wrapper` also moved to `macos-15`), and **main.yml only triggers on `push: branches: [main]`** — so that job is *untested by this PR* and would go red on `main` the moment this merges. That is a stop-the-line risk under `PR_MAINTAINER_GUIDELINES.md` "Base-Branch Health".
+
+Suggested fix — and it's already what the docs say the code does. `engdocs/CI_CLEANUP_PLAN.md` and `engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md` both claim the fallback is "restricted to exact `/usr/bin/make` 3.81 **with an `apple-darwin` build**", while the code comment explicitly refuses to parse the banner. Drop the path equality and check the banner instead:
+
+```bash
+[[ "$make_version_first_line" == "GNU Make 3.81" &amp;&amp;
+   "$make_version_output" == *apple-darwin* ]] || fail ...
+```
+
+That matches the documented intent and passes on the observed hosted image.
+
+## 2. Design / scope proportionality
+
+Essential content is ~10 lines. `scripts/ci/pr-lint.sh:165-170`:
+
+```bash
+if [[ "$frozen_goos" != "windows" || "$frozen_cgo_enabled" != "0" ]]; then
+    ci_time "golangci-lint (windows)" -- run_linter windows "$frozen_goarch" 0
+fi
+```
+
+I verified the 90% alternative is viable today: `GOOS=windows CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -tags=gms_pure_go ./...` is clean on current `main` (exit 0), so a 3-line addition to the pre-existing `pr-lint.sh` would close #4991 green, immediately. Add the `fmt-check` `$?` propagation (`Makefile` fmt-check, ~7 lines, genuinely a real bug fix) and the `golangci-lint-action` `version: latest` → `v2.10.1` pin, and you have ~15 lines capturing essentially all the value.
+
+Against that, the remainder:
+
+- `scripts/ci/pr-lint-host.sh` (+1004) and `scripts/ci/pr-lint-routing-test.sh` (+728) — host/tool identity binding.
+- `.github/workflows/pr.yml` (+970/-45), of which ~370 lines are a falsifier suite asserting 14 specific refusal messages.
+- ~450 lines of engdocs.
+
+The identity-binding machinery is **not justified at this cost**, and this PR is its own counterexample: the two red lanes are both failures *of the binding machinery*, not of the lint contract it protects. Binding `sed`, `cat`, `chmod`, `cp`, `diff`, `rmdir`, `readlink`, `uname`, `mktemp`, `cygpath` identities and then asserting exact refusal strings for each creates a large surface whose only failure mode is false-red on a required check. The threat model — "a green result produced by a different target/Makefile/shell than declared" — is real but is 95% addressed by the far cheaper measures already in the PR: pinning `--config`, `GOWORK=off`, `--modules-download-mode=readonly`, an exact linter version, and `env -u MAKE -u MAKEFLAGS ... -f Makefile`.
+
+One concrete scope finding that argues for deletion: **there are no `//go:build windows &amp;&amp; cgo` files in the tree** (I checked all 15 `go:build windows` files). So the new `GOOS=windows CGO_ENABLED=0` pass covers 100% of Windows-tagged code, and the CGO=1 native-Windows lint pass added to `windows-make-shell` adds *zero* lint coverage. The Go setup, the 102 MB MinGW download, the exact-compiler `-dumpmachine` checks and the two extra golangci-lint passes on a Windows runner can all be removed with no loss of the stated goal.
+
+## 3. Maintenance / flake budget
+
+- **The MSYS2/Cygwin/native lanes are not new** — they already exist and are already required on `upstream/main`. What changes is their weight: `native` goes from a ~40s smoke lane (`choco install make`) to Go setup + `choco install mingw` (102 MB, community.chocolatey.org, exact version pin) + `go install golangci-lint` from source + two whole-repo golangci-lint passes, with `timeout-minutes: 45`. Exact-version Chocolatey pins on a required check are a recurring flake source (delisted versions, 429s). MSYS2/Cygwin lanes were only hardened, not made heavier — that part is fine.
+- **`pr-lint-wrapper` moves from `ubuntu-latest` to `macos-15`** in both `pr.yml:449` and `main.yml:390`. macOS runners are the scarcest and slowest hosted pool; this makes a required check depend on it, and adds `go install golangci-lint` from source (no action cache) on that pool.
+- **Version pin sprawl**: `2.10.1` appears 6× in `pr.yml`, 3× in `main.yml`, 1× in `ci-measurements.yml`, 4× in `engdocs/LINTING.md`. `.github/workflows/pr.yml:984` hardcodes `go-version: '1.26.5'` instead of `go-version-file: go.mod`, and the host script then requires exactly that version — so the next Go bump reds the native lane. Should-fix: use `go-version-file`.
+- **Doc-freshness dependency list explodes**: `scripts/check-doc-freshness.sh` grows `engdocs/LINTING.md`'s source list from `.golangci.yml` to ~30 paths including `go.mod`, `go.sum`, `.pre-commit-config.yaml`, `cmd/bd/preflight.go`. The check requires each listed path to *still exist* and to be *named verbatim in the doc*. Renaming or deleting any of those 30 files in an unrelated PR now reds the required "Check doc freshness" job until `LINTING.md` is edited. Trim to the files that actually define the lint contract.
+- **`ci-measurements.yml`**: the `install golangci-lint` step was folded into the wrapper, so the tracked "pr-lint wrapper" measurement now silently includes a from-source linter build. The historical series becomes non-comparable. Nit, but worth a note in the measurement doc.
+- **Docs vs. reality**: mostly accurate and unusually careful (Cygwin honestly marked "hosted/static pending"), with the one substantive mismatch called out in Blocker B (`apple-darwin` banner check documented but not implemented).
+
+## 4. Other correctness / risk
+
+- No injection or secrets risk. No new `pull_request_target`, no `${{ github.event.* }}` interpolation into `run:`, no `permissions:` widening. `${{ steps.native_toolchain.outputs.gcc }}` is passed via `env:`, which is correct.
+- No required-check *topology* change: gate keys are unchanged; `ci-gate` already consumes both failing jobs. So the wedge risk is "these two lanes are red", not "the gate can't be satisfied".
+- `Makefile:82` — `GIT_BUILD := $(shell git rev-parse ...)` became `GIT_BUILD = $(shell "$(CI_GIT)" ...)`. The `:=` → `=` change makes it recursively expanded, so `git rev-parse` now forks on every reference (i.e. per recipe that uses LDFLAGS) instead of once. `CI_BASH`/`CI_GIT` are defined above, so `:=` still works. **Should-fix**: keep `:=`.
+- `Makefile:102` — `GO_VERSION := ...` became `GO_VERSION ?= ...`. Two behavior changes: an ambient `GO_VERSION` in the environment now controls `GOTOOLCHAIN` for every `make` invocation including local dev, and `?=` makes it recursive so `sed` re-forks per reference. Intentional (the host script passes `GO_VERSION=`), but worth `override`-guarding or documenting. **Nit/should-fix.**
+- `Makefile` fmt-check `$?` propagation is a genuine, independent bug fix and should land regardless.
+- `scripts/ci/lib/timing.sh` `date +%s` → `$SECONDS` is a good simplification (removes a `date` from the bound-tool set). Fine.
+- `pr-lint.sh:165` cross-lints `windows/$frozen_goarch` — on the macOS lane that is `windows/arm64`, on Linux `windows/amd64`. Both valid; slight asymmetry in what gets checked per lane, harmless but arbitrary. Pinning `amd64` would be more deterministic.
+
+## Verdict
+
+The craftsmanship reputation holds up in the sense that the code is careful, internally consistent, and honestly documented — but the risk/reward is inverted here. A ~10-line change closes #4991; this PR wraps it in ~2,700 lines of host-identity enforcement whose only two observed effects so far are two false-red required checks, one of which (Blocker B) is latent in `main.yml` where this PR's CI cannot see it and would break `main` post-merge. The added machinery protects against a threat (a lint pass silently running the wrong target) that the cheap measures in the same PR — pinned linter version, pinned `--config`, `GOWORK=off`, `-mod=readonly`, `env -u MAKE... -f Makefile` — already cover. And the CGO=1 native-Windows lint pass, the heaviest new cost, provably adds zero coverage because no `windows &amp;&amp; cgo` files exist. The lint gap is real and the author found the right fix; the packaging is the problem.
+
+## Disposition: **Split-merge**
+
+Land now, on `main`, with attribution to ecuthiell (`Co-authored-by:`), as a small PR or direct commits:
+
+1. `scripts/ci/pr-lint.sh` — the `GOOS=windows CGO_ENABLED=0` cross-lint pass (closes #4991).
+2. `Makefile` `fmt-check` — `gofmt` exit-status propagation.
+3. `golangci-lint-action` pin `latest` → `v2.10.1` plus `--config=.golangci.yml --modules-download-mode=readonly` and `GOWORK: "off"` in both `pr.yml` and `main.yml`.
+4. Optionally `scripts/ci/lib/timing.sh` `$SECONDS`.
+
+Hold the rest (host binding, falsifier suite, macOS/Windows lane rework, engdocs expansion) in the PR as a follow-up, gated on:
+- fix `.github/workflows/pr.yml:1039` (`[string[]]` cast or `Add-Content`);
+- fix `scripts/ci/pr-lint-host.sh:462` to the documented `apple-darwin` banner check, and prove `main.yml`'s macos lane by running the equivalent workflow on a branch (it is unreachable from `pull_request`);
+- drop Go/MinGW/CGO lint from the `windows-make-shell` native lane (no `windows &amp;&amp; cgo` files exist);
+- `go-version-file: go.mod` instead of the `1.26.5` literal;
+- trim the `engdocs/LINTING.md` freshness source list.
+
+**Do not use CHANGES_REQUESTED.** Post this as a review COMMENT: lead with "the gap you found is real and the fix is right, we're landing it today", state the two concrete bugs with the one-line fixes, and frame the rest as a scope question rather than a defect. File a bead for the follow-up. Reviewing the split-out parts is cheap and the contributor keeps the credit for the finding.
+
+Files referenced (all absolute): `/var/home/matt/dev/mybd/bd-main/.github/workflows/pr.yml`, `/var/home/matt/dev/mybd/bd-main/.github/workflows/main.yml`, `/var/home/matt/dev/mybd/bd-main/.github/workflows/ci-measurements.yml`, `/var/home/matt/dev/mybd/bd-main/scripts/ci/pr-lint.sh`, `/var/home/matt/dev/mybd/bd-main/scripts/ci/pr-lint-host.sh`, `/var/home/matt/dev/mybd/bd-main/scripts/check-doc-freshness.sh`, `/var/home/matt/dev/mybd/bd-main/Makefile`, `/var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md`.</result>
+<usage><subagent_tokens>115951</subagent_tokens><tool_uses>47</tool_uses><duration_ms>488938</duration_ms></usage>
+</task-notification>
