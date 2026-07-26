@@ -124,3 +124,21 @@ bugs). Open watch item: anthropic-sdk-go 1.45→1.61 compile risk rides #5056
 CI; patrol escalates via merge-blocked if red.
 
 _claude-fable-5-high on behalf of matt wilkie_
+
+## Sweep closed (2026-07-26 ~04:3xZ)
+
+All tails resolved; **zero open dependabot PRs**. Last-mile events: #5057
+self-replaced by dependabot as #5059 (merged); #5055 went CONFLICTING after
+#5056 merged first (both rewrite go.sum/default.nix — the one same-batch
+collision grouping can't prevent, since testcontainers is deliberately
+isolated), resolved with the standard `@dependabot recreate` → fresh
+vendorHash bot commit → close/reopen → patrol merge. The go-deps group's
+anthropic-sdk-go 1.45→1.61 jump compiled clean. Transient reds on the
+recreated branch (pre-hash nix artifact + a Docker Hub pull timeout in
+Differential Regression) cleared on the fresh head.
+
+Merged on main this sweep: #5016, #5022, #5023 (singles), #5038 (groups
+config), #5039 (two fix-for-main test fixes), #5055, #5056, #5059 (grouped).
+Retired without merge: #4702, #5015, #5017, #5018, #5019, #5020, #5021, #5057
+(all superseded). Patrol closed every handoff bead itself except mybd-8usj
+(one failed auto-close, done manually).
