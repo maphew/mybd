@@ -1,0 +1,14 @@
+tackle mybd-4poh hot fix
+
+---
+
+! cd .worktrees/beads/v1.1.1-hotfix && git tag -a v1.1.1 -m "Hotfix release v1.1.1" && git push upstream hotfix/v1.1.1 && git push upstream v1.1.1
+
+---
+
+<task-notification>
+<task-id>bg61t3sbi</task-id>
+<summary>Monitor event: "v1.1.1 release workflow on gastownhall/beads until terminal state"</summary>
+<event>release run: completed failure 30212687110</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>

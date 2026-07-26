@@ -1,0 +1,74 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "67d96fb5b0e0",
+  "session_id": "dae40981-2fb3-4a2a-9f6b-fdab4e746416",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-26T18:19:07.072657598Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 3,
+  "files_touched": [
+    "reports/2026-07-26-v1.1.1-hotfix-release.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "a8179cb0953d",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 194,
+    "cache_creation_tokens": 178544,
+    "cache_read_tokens": 12585414,
+    "output_tokens": 72882,
+    "api_call_count": 97
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-26T18:19:07.027627397Z",
+    "agent_lines": 95,
+    "agent_removed": 0,
+    "human_added": 93,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 188,
+    "total_lines_changed": 188,
+    "agent_percentage": 50.53191489361703,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 51,
+      "user_lines_removed": 0,
+      "agent_lines_added": 71,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
