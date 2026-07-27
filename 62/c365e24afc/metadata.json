@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "62c365e24afc",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "reports/2026-07-27-dormant-author-pr-sweep.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/62/c365e24afc/0/metadata.json",
+      "transcript": "/62/c365e24afc/0/full.jsonl",
+      "compact_transcript": "/62/c365e24afc/0/transcript.jsonl",
+      "content_hash": "/62/c365e24afc/0/content_hash.txt",
+      "prompt": "/62/c365e24afc/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 104,
+    "cache_creation_tokens": 58765,
+    "cache_read_tokens": 7609394,
+    "output_tokens": 31006,
+    "api_call_count": 52
+  }
+}
