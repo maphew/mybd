@@ -3,8 +3,10 @@
   "checkpoint_id": "63d641f8a72b",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 4,
-  "files_touched": null,
+  "checkpoints_count": 5,
+  "files_touched": [
+    "reports/2026-07-27-pr-4376-postmortem-stall-supersede-audit.md"
+  ],
   "sessions": [
     {
       "metadata": "/63/d641f8a72b/0/metadata.json",
@@ -12,6 +14,13 @@
       "compact_transcript": "/63/d641f8a72b/0/transcript.jsonl",
       "content_hash": "/63/d641f8a72b/0/content_hash.txt",
       "prompt": "/63/d641f8a72b/0/prompt.txt"
+    },
+    {
+      "metadata": "/63/d641f8a72b/1/metadata.json",
+      "transcript": "/63/d641f8a72b/1/full.jsonl",
+      "compact_transcript": "/63/d641f8a72b/1/transcript.jsonl",
+      "content_hash": "/63/d641f8a72b/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
