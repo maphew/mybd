@@ -303,6 +303,56 @@ done
 The verifier intentionally uses local git, local bd metadata, and local logs
 only. It does not call GitHub Actions or poll GitHub status.
 
+## pr-babysit / pr-handoff (merge-tail patrol)
+
+```bash
+scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+scripts/pr-close-handoff <pr-number> [--repo owner/repo] --bead <id> --reason <text> [--after <hours, default 72>]
+scripts/pr-babysit
+scripts/install-pr-babysit
+```
+
+Two zero-token lanes, one patrol. `pr-babysit` is the only actor that mutates
+either kind of tail; both handoff scripts hand a decision to it and end the
+session — see AGENTS.md "PR Merge Tails (babysitter pattern)" for the fuller
+narrative (transient-block budgets, re-arm sweep, base-health gating).
+
+**merge-when-green** — `pr-handoff` labels a bd bead `merge-when-green` and
+records `pr_babysit_repo`/`pr_babysit_pr`/`pr_babysit_method`/
+`pr_babysit_flake_rerun` metadata. The patrol reruns flaky checks once,
+retries transient merge states for a bounded number of passes, and merges
+only against a freshly re-read, matching head SHA. Anything it can't trust
+(unreadable checks, a genuine policy block, an authorization mismatch) parks
+the bead `merge-blocked` and unclaims it for `bd ready`.
+
+**close-when-quiet** — for a decline disposition an agent wants to offer
+rather than execute immediately. The agent posts the disposition comment
+itself; `pr-close-handoff` does not post anything upstream. It only labels
+the bead `close-when-quiet` and records `pr_close_after` (RFC3339, now +
+`--after` hours, default 72), `pr_close_head`, `pr_close_reason`, and
+`pr_close_since` (the clock start, used for the engagement check). The patrol:
+
+- fails closed on unreadable/malformed GitHub or bd data — never closes on
+  data it can't trust; a shared retry counter caps this at 10 consecutive
+  passes before escalating to `close-blocked` (label + unclaim)
+- closes the bd bead without touching the PR if it's already MERGED/CLOSED
+  upstream
+- treats any post-disposition comment/review, or a head SHA that no longer
+  matches `pr_close_head`, as contributor engagement: removes
+  `close-when-quiet`, reopens the bead, and unclaims it so `bd ready`
+  surfaces it back to a human — no per-author attribution is attempted, so
+  any activity after `pr_close_since` counts as engagement
+- once the window elapses with no engagement, runs
+  `gh pr close <n> --comment <pr_close_reason>` and closes the bd bead
+
+A PR can only be in one lane at a time: `pr-close-handoff` refuses to hand
+off a bead that already carries `merge-when-green`, and the patrol leaves a
+bead alone (logged, untouched) if it somehow carries both labels.
+
+Install the timer once with `scripts/install-pr-babysit` (systemd user unit,
+fires every 12 minutes); patrol log at
+`${XDG_STATE_HOME:-~/.local/state}/pr-babysit/patrol.log`.
+
 ## tri-resume (cross-machine)
 
 ```bash
