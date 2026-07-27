@@ -48,6 +48,18 @@ By pattern:
   weeks of maintainer silence, then a supersede close — appears **~7 times, all closed
   during the Jul 5–26 backlog drain**: #3773 (18d silence), #3808 (55d), #3867 (54d),
   #4296 (21d), #4520 (21d), #4439, #4376. This is a 2026 backlog-era phenomenon.
+
+  *Refinement (2026-07-27, maphew review of the seven):* the **silence** shape held
+  for all seven, but the **mechanism** splits three ways, and only the first is the
+  prior-art gap #5094 remedies. True prior-art class (duplicate/port merged while the
+  older PR sat): #4376, #3773, #3808, #3867, #4439 — all five have since received
+  personal replies. #4296 was obsoleted by an *independent* refactor (#4236) that
+  merged eleven days **before** we first engaged it — the gap there was reviewing a
+  patch without checking its code path still existed on main, plus the wait. #4520
+  was not superseded at all: declined on design grounds Jul 5 with same-day author
+  agreement (the audit's "superseded-by #4379/#4462" misread the issue ref and base
+  branch); its only defect was the 21-day lag between the agreed decision and the
+  close, now covered by the leave-open/patrol-close rules.
 - **9 never-answered-then-closed-redundant** — first maintainer contact was the close
   itself, after waits up to 64 days (#3694 64d, #3789 61d, #3759 61d, #3785 59d,
   #3838 58d, #4104 47d, #4145 26d, #3452 14d, #4862 8d).
