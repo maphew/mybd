@@ -15,7 +15,7 @@ PR was retired in favor of a 5-day-old duplicate (#4939).
 | Jul 6 → Jul 26 | **20 days, no maintainer action.** PR is merge-ready; nothing tracks that the ball is in our court |
 | Jul 21 | #4939 opened by another contributor — same bug, same protection |
 | Jul 24–25 | A session reviews #4939, hands it to the pr-babysit patrol (bead mybd-5u3f). No prior-art search is run |
-| Jul 26 05:28 | Patrol merges #4939 — a PR with **zero comments ever posted on it**. Preflight passed: it checks base health, contributor status, diff risk — it has no duplicate scan |
+| Jul 26 05:28 | Patrol merges #4939 after **two substantive reviews (changes-requested Jul 23 → approved Jul 25) that never discovered #4376**. Preflight passed: it checks base health, contributor status, diff risk — it has no duplicate scan. (Correction 2026-07-27 via cross-vendor review of #5094: an earlier version of this row said "zero comments"; the comments array was empty but the reviews were real — the failure was no prior-art check, not no review) |
 | Jul 26 19:30 | Retire notice posted on #4376; author replies frustrated 45 min later; maphew replies personally |
 
 Two independent failures, either of which alone would have prevented this:
