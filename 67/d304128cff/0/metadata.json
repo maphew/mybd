@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "67d304128cff",
+  "session_id": "524e528f-fb27-4deb-8156-929f23dbcefa",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-27T06:08:41.441478068Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-27-pr-mirror-stub-routing.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "73fa99312b3e",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 68,
+    "cache_creation_tokens": 98299,
+    "cache_read_tokens": 2461426,
+    "output_tokens": 24107,
+    "api_call_count": 34
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-27T06:08:41.425427607Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 57,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 57,
+    "total_lines_changed": 57,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
