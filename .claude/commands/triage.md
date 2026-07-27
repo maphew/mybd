@@ -64,6 +64,13 @@ bd update <id> --add-label "tri:<disposition>" --priority <Pn> \
   --append-notes "[triage $(date -u +%Y-%m-%d)] <reason>"
 ```
 
+For `defer` dispositions, also move the stub out of `bd ready` (parked work
+must not read as ready work — owner call 2026-07-26, bead mybd-5n5sr):
+
+```bash
+bd defer <id> --reason "<reason>"
+```
+
 For `tri:stale` items being reclassified, also remove the stale flag (and the
 old `tri:*` disposition label if it changed):
 
