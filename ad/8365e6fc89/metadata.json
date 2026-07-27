@@ -3,8 +3,10 @@
   "checkpoint_id": "ad8365e6fc89",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
-  "files_touched": null,
+  "checkpoints_count": 2,
+  "files_touched": [
+    "AGENTS.md"
+  ],
   "sessions": [
     {
       "metadata": "/ad/8365e6fc89/0/metadata.json",
@@ -12,6 +14,13 @@
       "compact_transcript": "/ad/8365e6fc89/0/transcript.jsonl",
       "content_hash": "/ad/8365e6fc89/0/content_hash.txt",
       "prompt": "/ad/8365e6fc89/0/prompt.txt"
+    },
+    {
+      "metadata": "/ad/8365e6fc89/1/metadata.json",
+      "transcript": "/ad/8365e6fc89/1/full.jsonl",
+      "compact_transcript": "/ad/8365e6fc89/1/transcript.jsonl",
+      "content_hash": "/ad/8365e6fc89/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
