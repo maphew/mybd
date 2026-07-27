@@ -1,69 +1,39 @@
-# Maintainer PR Guidelines
+# Maintainer PR Guidelines — mybd overlay
 
-This is the source of truth for agents triaging, reviewing, landing, closing, or otherwise maintaining pull requests for `mybd` and upstream beads work.
+@bd-main/PR_MAINTAINER_GUIDELINES.md
 
-## Philosophy
+The upstream beads maintainer guidelines (imported above from the `bd-main/`
+checkout) are the base policy: philosophy, contributor protection, the
+prior-art rule, triage groups, outcomes, merge discipline, operating rules, and
+rebases-are-maintainer-work all live there. This file holds only what
+supplements or overrides them for sessions run from this coordination repo. Do
+not copy upstream text here; if the two disagree and no override below covers
+it, the upstream doc wins for beads PRs and this file wins for mybd-local
+machinery.
 
-Help contributors get to the finish line. Optimize for community throughput.
+Mechanical mappings when reading the imported doc from this repo:
 
-For every PR, look for the value in it and choose the action that moves useful work into the codebase with the least contributor starvation. If a PR contains something worth keeping, absorb that value directly when practical: accept it as-is, fix bugs, improve the architecture, rename things, turn it into a plugin, cherry-pick parts, or reject the parts that do not fit.
+- Paths are relative to `bd-main/`: `scripts/pr-preflight.sh` means
+  `bd-main/scripts/pr-preflight.sh`, `engdocs/PROJECT_CHARTER.md` means
+  `bd-main/engdocs/PROJECT_CHARTER.md`, and so on. (Both repos carry
+  `gh-body-lint`; use whichever root you are in.)
+- "Merge automation" is the pr-babysit patrol, and "take it to merge" means
+  `scripts/pr-handoff` — see AGENTS.md "PR Merge Tails". Sessions produce
+  (review, fix, push, hand off); only the patrol merges.
+- The imported signing rule (`engdocs/AGENT_SIGNING.md`) is implemented here by
+  AGENTS.md and `scripts/agent-sig.sh`.
 
-The goal is not to block contributors unnecessarily. The goal is to identify useful work, preserve it, and keep the project moving.
-
-For upstream beads PRs that change product surface area, read
-[bd-main/docs/PROJECT_CHARTER.md](bd-main/docs/PROJECT_CHARTER.md). Scope
-boundaries should guide where value lands: core, metadata, integration, plugin,
-orchestration layer, or external tool.
-
-## Contributor Protection
-
-External contributor PRs have priority. Before implementing related work, opening a competing PR, **reviewing or merging any PR**, or closing a PR, check whether an existing contributor PR already addresses the same area.
-
-- Review contributor work first. Read the PR description, changed files, linked issues, tests, CI status, and latest discussion.
-- Build on the contributor branch by default. If the PR branch allows maintainer edits, push maintainer fix commits directly to that branch instead of opening a replacement PR.
-- Preserve contributor tests unless they are actually wrong.
-- Preserve attribution with original commits when possible. Maintainer commits on a contributor branch should keep the contributor's original commits intact; transformed local commits must use `Co-authored-by:` and PR references.
-- Never close, supersede, or replace a contributor PR silently. Explain what was preserved, what changed, and why.
-- Open a replacement PR only when in-place maintainer edits are not possible or would create a larger risk, such as when the contributor branch is not writable, the branch history is unusable, or the accepted change must be substantially reimplemented. Document that reason in both PR threads.
-- If a rewrite is unavoidable, credit the contributor's design, tests, bug report, or use case in the replacement commit or PR.
-
-### Prior art is part of the review, not the merge
-
-Every review of a PR — before any verdict, and always before a merge handoff —
-includes a prior-art pass over **older open PRs and issues**:
-
-```bash
-bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
-gh search prs --repo gastownhall/beads --state open "<bug keywords>"
-```
-
-The rule at the top of this section always covered implementing, competing, and
-closing; the missing case was *merging*: a newer PR under review can itself be
-the duplicate of an older open contributor PR. The pr-babysit patrol merges
-whatever a session hands off and runs no duplicate scan — the review is the only
-gate where prior art can be caught, so the reviewer owns this check.
-
-When an older open PR covers the same change:
-
-- **Default precedence goes to the older PR.** Merge it (fix-merge if needed)
-  rather than the newer duplicate.
-- If the newer implementation is genuinely superior, resolve the older PR
-  **first**: a personal explanation and credit *before* the newer one merges,
-  never a retire notice after the fact.
-
-Motivating incident (2026-07-26, gastownhall/beads#4376 vs #4939): a 44-day-old
-PR whose author had complied with our rebase request in under 24 hours sat
-merge-ready for 20 days while a 5-day-old duplicate was reviewed and
-patrol-merged with zero comments ever posted on it. The original author — 50+
-PRs across gastownhall repos — learned their work was dead from the retire
-notice. Both the review of the newer PR and the queue follow-through on the
-older one had the information to prevent this; neither used it.
+Import status: the "Prior art is part of the review" and "Rebases are
+maintainer work" sections land upstream via gastownhall/beads#5094 (bead
+mybd-jus2j). Until `bd-main` is pulled past that merge, the authoritative local
+text is this repo's git history (commit `2cffec709`); once it lands, drop this
+paragraph.
 
 ## How a Review Opens and Closes
 
-The rules above protect the contributor's *code*. These protect the reason they
-came back. They are cheap, they cost no rigor, and they are the part that drifts
-silently because nothing fails when they are skipped.
+The imported rules protect the contributor's *code*. These protect the reason
+they came back. They are cheap, they cost no rigor, and they are the part that
+drifts silently because nothing fails when they are skipped.
 
 Measured 2026-07-25 over the previous six weeks (19 changes-requested + 20
 approving reviews on outside-contributor PRs), against steveyegge's first eleven
@@ -88,11 +58,11 @@ refusal is what makes someone try again. Concretely:
 - **Say what the review volume means.** A 400-word audit reads as being audited
   unless told otherwise. One clause fixes it: *"docs that match the binary are
   worth this much scrutiny"* (gastownhall/beads#4913).
-- **`CHANGES_REQUESTED` is not a notepad.** The Outcomes list already calls
-  request-changes a last resort that can strand contributor work; it then became
-  the default opening 19 times in six weeks, 7 of which we fixed ourselves
-  anyway. A `COMMENT` review carries identical findings without stamping a red ✗
-  on someone's first contribution.
+- **`CHANGES_REQUESTED` is not a notepad.** The imported Outcomes list already
+  calls request-changes a last resort that can strand contributor work; it then
+  became the default opening 19 times in six weeks, 7 of which we fixed
+  ourselves anyway. A `COMMENT` review carries identical findings without
+  stamping a red ✗ on someone's first contribution.
 - **Ask before finishing their PR for them.** Absorbing is correct policy, but
   "the fixes are applied as maintainer commits" as the contributor's *next news*
   removes the thing they came for. Offer first: *"Want to take these, or shall
@@ -103,7 +73,10 @@ refusal is what makes someone try again. Concretely:
   and offered a route back. The generosity lands in a locked room. Contrast
   gastownhall/beads#77 (2025-10-18): the decline sat open for eight hours, the
   contributor replied, and *they* asked for the close. Leave the PR open at
-  least 48h after a disposition comment, or hand the close to the patrol.
+  least 48h after a disposition comment, or hand the close to the patrol
+  (`scripts/pr-close-handoff`, the close-when-quiet lane). This extends the
+  imported "Be explicit when closing a PR" rule: the close is a separate act
+  from the disposition comment.
 
 None of this softens a finding. State the blocker exactly as harshly as the
 evidence warrants — just do not make the apparatus the first thing they meet.
@@ -118,85 +91,36 @@ faster acknowledgement of the wait. The patrol may automate the *close* of a
 disposition already written by an agent (mybd-sx1w); it may not originate
 contributor-facing text.
 
-## Triage Groups
+## Sweep by author, not by age
 
-Classify each PR into one of these groups:
-
-- **Easy win**: Targeted bug fixes, documentation updates, dependency bot upgrades, drafts to close, PRs from banned contributors, and other low-risk cases.
-- **Fix-merge candidate**: A PR that otherwise fits easy-win criteria but has a simple blocker, such as failed CI, a needed rebase, or a small implementation error.
-- **Needs review**: A PR that looks suspicious, complex, broad, risky, or otherwise requires deeper investigation.
-
-Easy wins can be handled automatically during a PR review run and by recurring patrols. Fix-merge candidates can also be handled automatically when the maintainer determines the repair is simple enough to make locally.
-
-Needs-review PRs require a deeper agent review and a concrete report. The maintainer can summarize those reports or inspect the agent sessions directly.
-
-### Sweep by author, not by age
-
-When working the open-PR queue, prefer **author-clustered sweeps**: pick one contributor, process all of their open PRs in a single session, and leave them a single consolidated picture (what merged, what was fixed on their branches, what needs their judgment, what was retired and why).
+Supplements the imported Triage Groups section: when working the open-PR queue,
+prefer **author-clustered sweeps** — pick one contributor, process all of their
+open PRs in a single session, and leave them a single consolidated picture
+(what merged, what was fixed on their branches, what needs their judgment, what
+was retired and why).
 
 Why this beats oldest-first or one-at-a-time:
 
-- One context load covers the author's style, recurring themes, and cross-PR dependencies — their PRs often share branches-behind-main problems, overlapping files, or one design thread.
-- The contributor gets one coherent conversation instead of scattered verdicts, and follow-ups concentrate into one tracking bead (e.g. mybd-5bz2).
-- Retirements land better when paired with merges of the same author's other work — attribution and goodwill are preserved in context.
-- It converts the queue into a finite list of named clusters, which makes progress visible and delegable (one sweep bead per author).
+- One context load covers the author's style, recurring themes, and cross-PR
+  dependencies — their PRs often share branches-behind-main problems,
+  overlapping files, or one design thread.
+- The contributor gets one coherent conversation instead of scattered verdicts,
+  and follow-ups concentrate into one tracking bead (e.g. mybd-5bz2).
+- Retirements land better when paired with merges of the same author's other
+  work — attribution and goodwill are preserved in context.
+- It converts the queue into a finite list of named clusters, which makes
+  progress visible and delegable (one sweep bead per author).
 
-Reference runs: `reports/2026-07-23-coffeegoddd-pr-sweep.md` (6 PRs: 2 merged with maintainer fixes, 3 retired with re-cut requirements, follow-ups in one bead) and the johnzook triage (`reports/johnzook-pr-triage-2026-07-03.md`). Pick the next cluster by open-PR count and staleness (`gh pr list --repo gastownhall/beads --state open --json author | jq ...`).
+Age still matters *within* the system: the imported prior-art rule gives older
+PRs precedence over newer duplicates, and the waiting queue (mybd-aayb) tracks
+contributors left holding the ball. Clustering is a processing order, not a
+license to let old PRs rot.
 
-## Outcomes
-
-Use these recommendations after review:
-
-- **Easy win**: The PR turns out to fit easy-win criteria after all.
-- **Merge**: Recommend merge. The PR is well-tested, broadly useful, well-documented, and ready as-is.
-- **Merge-fix**: Merge the PR as-is, then push a follow-up fix to `main`. Use when the remaining issues are safe to repair afterward.
-- **Fix-merge**: Pull the PR locally, make substantial fixes on the contributor branch, then push the branch so the original PR can merge. Use when the PR is busted but valuable and maintainer edits are possible.
-- **Cherry-pick**: Keep only selected items from a PR with multiple features or fixes. Commit the useful parts locally with attribution, then close the PR with an explanation.
-- **Split-merge**: Split a multi-concern PR into separate commits, then push all accepted parts with attribution to the original contributor.
-- **Replacement PR**: Carry useful work into a new maintainer PR only after confirming the original branch cannot reasonably be fixed in place. Preserve attribution with original commits where possible, otherwise use `Co-authored-by:` trailers and PR references, and explain the reason replacement was necessary.
-- **Redesign/reimplement**: Reject the submitted design but solve the underlying problem another way. Close the PR with thanks and an explanation.
-- **Retire**: Close an obsolete PR with thanks because it was superseded or already fixed elsewhere.
-- **Reject**: Close politely when the feature does not pay its weight in tech debt, is too niche for core, or the design does not meet project standards.
-- **Request changes**: Last resort. Avoid this when the maintainer or agents can reasonably absorb, transform, or land the useful parts directly.
-
-Other outcomes are possible, including rerouting a PR to the right project or banning a contributor, but the list above covers the normal cases.
-
-## Operating Rules
-
-- Prefer landing or transforming useful work over asking the contributor to do more rounds.
-- Preserve contributor attribution when absorbing, fixing, cherry-picking, splitting, or reimplementing PR value.
-- Before opening a competing or replacement PR, attempt the contributor-branch path first: fetch the PR, test it, make maintainer fix commits on that branch when permitted, and push back to the same PR.
-- Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently. Then leave the PR open — see "How a Review Opens and Closes" for why the close is a separate act from the disposition comment.
-- Consider the entire PR thread. Valuable clarifying info are often in the comments.
-- Treat request-changes as exceptional because it can strand contributor work.
-- File follow-up work as beads issues instead of hidden notes.
-- When code changes result from PR maintenance, follow repo quality gates and session completion rules in `AGENTS.md`.
-- Post multi-line PR comments from a real Markdown body file or a shell heredoc, not from strings with escaped `\n` sequences. After posting or editing, verify the rendered body with `gh pr view --comments --json comments --jq ...` before moving on.
-- Before finishing, re-read the PR, latest comments, review threads, and linked issues; address or explicitly note any unresolved action items.
-
-### Rebases are maintainer work
-
-Do not ask a contributor to rebase when that is the only thing left. If the
-review verdict is "correct once rebased," the verdict is **fix-merge**: check
-out the PR branch, rebase and resolve conflicts ourselves, push back to the
-contributor's branch (maintainer edits), and hand off to the merge lane — in
-the same session.
-
-- Ask for a rebase only when bundled with substantive changes that only the
-  contributor can make. When they comply, the PR goes straight into the merge
-  lane (`scripts/pr-handoff`), not back into the ambient queue — a contributor
-  who did what we asked must never be the one waiting on us again.
-- Maintainer edits are refused on branches owned by an **organization** fork
-  (GitHub restriction; hit 2026-07). In that case use the replacement-PR route
-  from Contributor Protection with preserved attribution, and say why on the
-  thread.
-
-Why: a requested rebase multiplies across everything a contributor has open —
-each of their branches must then be rebased independently against different
-lines of our work, so the cost lands heaviest on the most prolific
-contributors. And a rebase we request but then sit on is pure contributor cost:
-on gastownhall/beads#4376 the author rebased within 24 hours of our request and
-then waited 20 days for a maintainer action that never came.
+Reference runs: `reports/2026-07-23-coffeegoddd-pr-sweep.md` (6 PRs: 2 merged
+with maintainer fixes, 3 retired with re-cut requirements, follow-ups in one
+bead) and the johnzook triage (`reports/johnzook-pr-triage-2026-07-03.md`).
+Pick the next cluster by open-PR count and staleness
+(`gh pr list --repo gastownhall/beads --state open --json author | jq ...`).
 
 ## Base-Branch Health (stop-the-line)
 
@@ -218,3 +142,15 @@ CLI-docs-drift red (#4631) are both instances.
   refreshed (`gh pr update-branch`) and re-watched before judging.
 - Autonomous agents run preflight with `PR_PREFLIGHT_BLOCK_RED_BASE=1` so a
   red base is a hard block rather than a warning (see AGENTS.md).
+
+## Open tension: Merge Discipline vs single-human reality
+
+The imported "Merge Discipline and Review Requirements" section requires a
+substantive **human** review for nontrivial merges and says bot-only approval
+does not satisfy it. Local practice — one human maintainer, sessions reviewing
+with cross-vendor agents, the patrol merging maintainer-authored nontrivial PRs
+on green — has not been formally reconciled with that text. Until the owner
+decides (see the tracking bead): treat the imported rule as binding for
+schema/migration/sync-path changes (real human review, no patrol merge), and
+when in doubt on other nontrivial maintainer-authored work, flag for the owner
+rather than merge.

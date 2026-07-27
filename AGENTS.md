@@ -276,7 +276,7 @@ a prompt.
 When a bead is correlated with a gh issue or PR, check for drift.
 
 When upstream beads work changes product surface area, read
-[bd-main/docs/PROJECT_CHARTER.md](bd-main/docs/PROJECT_CHARTER.md). Beads owns
+[bd-main/engdocs/PROJECT_CHARTER.md](bd-main/engdocs/PROJECT_CHARTER.md). Beads owns
 issue tracking primitives; route orchestration policy outside beads core and
 prefer metadata before schema when the data is workflow-specific.
 
