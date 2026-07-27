@@ -3,7 +3,7 @@
   "checkpoint_id": "67d304128cff",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-27-pr-mirror-stub-routing.md"
   ],
@@ -14,6 +14,13 @@
       "compact_transcript": "/67/d304128cff/0/transcript.jsonl",
       "content_hash": "/67/d304128cff/0/content_hash.txt",
       "prompt": "/67/d304128cff/0/prompt.txt"
+    },
+    {
+      "metadata": "/67/d304128cff/1/metadata.json",
+      "transcript": "/67/d304128cff/1/full.jsonl",
+      "compact_transcript": "/67/d304128cff/1/transcript.jsonl",
+      "content_hash": "/67/d304128cff/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
