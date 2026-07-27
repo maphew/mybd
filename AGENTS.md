@@ -244,6 +244,23 @@ a prompt.
   `const TARGET = budget.total ?? 200_000` - check `budget.spent()`
   between stages, stop spawning as the target nears, and `log()` any
   coverage dropped because of it.
+- **The 200k default is a soft performance target, not a reliability
+  ceiling** (owner clarification, 2026-07-25 retro; bead mybd-lq8i.4).
+  Overrunning it to complete a required verification or closure stage is
+  correct; silently *skipping* a required stage to stay under target is the
+  failure mode. ~500k runs can be fine. Two hard rules from that retro:
+  - `budget.spent()` is shared across ALL workflows in the turn, not
+    per-workflow. A later workflow's self-enforced target must subtract
+    earlier workflows' spend explicitly (snapshot `budget.spent()` at
+    workflow start and budget against the delta), or it will see the pool
+    as exhausted and skip stages that were never optional.
+  - **Validate stage aggregates before acting on them.** `parallel()` and
+    `pipeline()` resolve failed agents to `null`; a closure/batch stage fed
+    unfiltered output can act on malformed or null rows (a 52-agent run
+    passed null aggregates into batch closure). Always `.filter(Boolean)`,
+    schema-check shape (`Array.isArray`, required keys) before mutating
+    stages, and `log()` how many items were dropped — dropped-and-logged is
+    recoverable, dropped-silently is not.
 - Inside workflows, tier `agent()` calls per the delegation policy above:
   `model: 'haiku', effort: 'low'` for mechanical stages; omit overrides
   (inherit) for design, judge, and verify stages.
