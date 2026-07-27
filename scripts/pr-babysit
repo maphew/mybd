@@ -189,6 +189,15 @@ while read -r item; do
     continue
   fi
   metadata="$metadata_raw"
+
+  # A PR can't be in both lanes; a bead that somehow carries both is left for
+  # a human rather than guessed at (mirrors the close lane's own check).
+  if jq -e '(.labels // []) | index("close-when-quiet")' >/dev/null 2>/dev/null <<<"$item"; then
+    transition "$bead" "$metadata" "$notes" "dual-lane-labels" "Bead carries both merge-when-green and close-when-quiet; needs agent judgment." || log "$bead: transition failed"
+    log "$bead: merge-when-green and close-when-quiet both present; retained (needs agent judgment)"
+    continue
+  fi
+
   legacy="$(legacy_policy "$notes")"
   legacy_repo="$(cut -f1 <<<"$legacy")"; legacy_pr="$(cut -f2 <<<"$legacy")"; legacy_method="$(cut -f3 <<<"$legacy")"; legacy_rerun="$(cut -f4 <<<"$legacy")"
 
@@ -410,28 +419,62 @@ CLOSE_QUEUE="$(bd list --label close-when-quiet --json 2>/dev/null)" || { log "b
 if ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$CLOSE_QUEUE"; then log "bd returned malformed close-when-quiet queue data"; exit 0; fi
 
 while read -r item; do
-  bead="$(jq -r '.id // empty' <<<"$item")"
+  bead="$(jq -r '.id // empty' <<<"$item")"; ref="$(jq -r '.external_ref // empty' <<<"$item")"; notes="$(jq -r '.notes // empty' <<<"$item")"
   [[ -n "$bead" ]] || { log "close-when-quiet queue item has no id"; continue; }
   metadata_raw="$(jq -c 'if (.metadata? == null) then {} else .metadata end' <<<"$item")"
   if ! jq -e 'type == "object"' >/dev/null 2>/dev/null <<<"$metadata_raw"; then
-    close_retain "$bead" '{}' "close-when-quiet metadata is not an object"
+    # A retain-and-count budget cannot work here: with no readable metadata
+    # object there is nowhere to persist the retry counter (each pass would
+    # start back at zero), so this escalates immediately instead of looping
+    # forever under CLOSE_RETRY_LIMIT.
+    if bd update "$bead" --status open --assignee "" --remove-label close-when-quiet --add-label close-blocked \
+         --set-metadata "pr_babysit_last_transition=close-metadata-not-object" \
+         --append-notes "[pr-babysit $(date -u +%FT%TZ)] transition=close-metadata-not-object — bead metadata is not an object; needs agent judgment." >/dev/null 2>&1; then
+      log "$bead: CLOSE-BLOCKED (metadata is not an object)"
+    else
+      log "$bead: close-blocked mutation failed; retained under patrol"
+    fi
     continue
   fi
   metadata="$metadata_raw"
 
   # A PR can't be in both lanes; a bead that somehow carries both is left for
-  # a human rather than guessed at.
+  # a human rather than guessed at, with a bead-visible note so it surfaces
+  # outside the local patrol log too.
   if jq -e '(.labels // []) | index("merge-when-green")' >/dev/null 2>/dev/null <<<"$item"; then
-    log "$bead: close-when-quiet and merge-when-green both present; retained silently (needs agent judgment)"
+    transition "$bead" "$metadata" "$notes" "dual-lane-labels" "Bead carries both close-when-quiet and merge-when-green; needs agent judgment." || log "$bead: transition failed"
+    log "$bead: close-when-quiet and merge-when-green both present; retained (needs agent judgment)"
     continue
   fi
 
-  repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
+  # Identity: mirrors the merge lane's ref-parse + mismatch guard so a
+  # mistyped/missing external_ref can never let this lane act on the wrong PR.
+  repo=""; pr=""
+  if [[ "$ref" =~ ^gh:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
+    repo="${BASH_REMATCH[1]}"; pr="${BASH_REMATCH[2]}"
+  elif [[ "$ref" =~ ^gh-pr-([1-9][0-9]*)$ ]]; then
+    repo="gastownhall/beads"; pr="${BASH_REMATCH[1]}"
+  elif [[ -z "$ref" ]]; then
+    repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
+    if ! valid_repo_pr "$repo" "$pr"; then
+      close_retain "$bead" "$metadata" "no valid external_ref or metadata PR identity"
+      continue
+    fi
+  else
+    close_retain "$bead" "$metadata" "unparseable external_ref"
+    continue
+  fi
+  meta_repo="$(jq -r '.pr_babysit_repo // empty' <<<"$metadata")"; meta_pr="$(jq -r '.pr_babysit_pr // empty' <<<"$metadata")"
+  if { [[ -n "$meta_repo" || -n "$meta_pr" ]]; } && { [[ "$meta_repo" != "$repo" || "$meta_pr" != "$pr" ]]; }; then
+    close_retain "$bead" "$metadata" "external_ref and pr_babysit metadata disagree"
+    continue
+  fi
+
   close_after="$(jq -r '.pr_close_after // empty' <<<"$metadata")"
   close_head="$(jq -r '.pr_close_head // empty' <<<"$metadata")"
   close_reason="$(jq -r '.pr_close_reason // empty' <<<"$metadata")"
   close_since="$(jq -r '.pr_close_since // empty' <<<"$metadata")"
-  if ! valid_repo_pr "$repo" "$pr" || [[ -z "$close_after" || -z "$close_reason" || -z "$close_since" ]] || [[ ! "$close_head" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+  if [[ -z "$close_after" || -z "$close_reason" || -z "$close_since" ]] || [[ ! "$close_head" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
     close_retain "$bead" "$metadata" "close-when-quiet metadata is incomplete or malformed"
     continue
   fi
@@ -463,28 +506,42 @@ while read -r item; do
     close_retain "$bead" "$metadata" "GitHub returned an unsafe PR state or head"
     continue
   fi
-  if ! jq -e '((.comments // []) | type == "array") and ((.reviews // []) | type == "array")' >/dev/null 2>/dev/null <<<"$pr_json"; then
-    close_retain "$bead" "$metadata" "gh pr view returned malformed comments/reviews data"
+  # Comments/reviews must be structurally trustworthy before the engagement
+  # check relies on them: present, arrays, and every element carrying a
+  # string timestamp. Anything else fails closed (retained, never a close).
+  if ! jq -e 'has("comments") and has("reviews") and (.comments | type == "array") and (.reviews | type == "array") and all((.comments + .reviews)[]; type == "object" and ((.createdAt // .submittedAt) | type == "string"))' >/dev/null 2>/dev/null <<<"$pr_json"; then
+    close_retain "$bead" "$metadata" "comments/reviews data unreadable"
     continue
   fi
 
-  # Engagement: a moved head, or any comment/review timestamped after the
+  # Engagement: a moved head, or any comment/review timestamped at/after the
   # disposition, returns the bead to humans.  Per-author attribution isn't
   # tracked, so any post-disposition activity counts — the safer default.
+  # A timestamp that fails to parse counts as engagement too: unreadable
+  # activity must never be silently treated as no activity.
   engaged=0; why=""
   if [[ "$head" != "$close_head" ]]; then
     engaged=1; why="PR head moved since the disposition ($close_head -> $head)"
   else
+    ts_list="$(jq -r '((.comments + .reviews)[]) | (.createdAt // .submittedAt)' <<<"$pr_json" 2>/dev/null)"; ts_status=$?
+    if (( ts_status != 0 )); then
+      close_retain "$bead" "$metadata" "could not extract comment/review timestamps"
+      continue
+    fi
     while IFS= read -r ts; do
       [[ -n "$ts" ]] || continue
-      ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null)" || continue
-      if (( ts_epoch > since_epoch )); then engaged=1; why="new comment or review since the disposition ($ts)"; break; fi
-    done < <(jq -r '((.comments // []) + (.reviews // [])) | .[] | (.createdAt? // .submittedAt? // empty)' <<<"$pr_json" 2>/dev/null)
+      ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null)"
+      if [[ -z "$ts_epoch" ]]; then
+        engaged=1; why="unparseable activity timestamp treated as engagement ($ts)"; break
+      fi
+      if (( ts_epoch >= since_epoch )); then engaged=1; why="new comment or review since the disposition ($ts)"; break; fi
+    done <<<"$ts_list"
   fi
   if (( engaged )); then
     if bd update "$bead" --status open --assignee "" --remove-label close-when-quiet \
          --set-metadata "pr_babysit_last_transition=contributor-engaged:$head" \
-         --unset-metadata pr_close_retry \
+         --unset-metadata pr_close_retry --unset-metadata pr_close_after --unset-metadata pr_close_head \
+         --unset-metadata pr_close_since --unset-metadata pr_close_reason \
          --append-notes "[pr-babysit $(date -u +%FT%TZ)] transition=contributor-engaged:$head — $why; returned to humans." >/dev/null 2>&1; then
       log "$bead: contributor engaged; returned to humans ($why)"
     else
@@ -494,6 +551,21 @@ while read -r item; do
   fi
 
   if (( $(date -u +%s) < after_epoch )); then
+    continue
+  fi
+
+  # Re-read the bead immediately before acting: never close a PR against a
+  # stale authorization snapshot from the queue read at the top of this pass.
+  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" '
+      length == 1
+      and .[0].id == $queued.id
+      and (.[0].labels | index("close-when-quiet")) != null
+      and (.[0].metadata.pr_close_after == $queued.metadata.pr_close_after)
+      and (.[0].metadata.pr_close_head == $queued.metadata.pr_close_head)
+      and (.[0].metadata.pr_close_reason == $queued.metadata.pr_close_reason)
+      and (.[0].metadata.pr_babysit_pr == $queued.metadata.pr_babysit_pr)
+    ' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
+    close_retain "$bead" "$metadata" "bead changed between queue read and close, or bd was unavailable; close skipped"
     continue
   fi
 
