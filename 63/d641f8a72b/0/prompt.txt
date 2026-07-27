@@ -1,0 +1,15 @@
+good work, thank you.
+
+now chase down the other 7 PRs that fell prey to this same gap, and give me a short apology draft I can start with that points to the 5094 remedy we've since applied.
+
+---
+
+. Please give links for each PR
+
+---
+
+I'm not sure https://github.com/gastownhall/beads/pull/4296 is in the same class as the others. it was superseded, yes, and languished, yes, but it wasn't duplicating work that superseded it. it was a totally different solution.
+
+---
+
+https://github.com/gastownhall/beads/pull/4520  is also result of design difference,  not superseded
