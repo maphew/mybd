@@ -3,7 +3,7 @@
   "checkpoint_id": "d462ba7472d9",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     ".claude/commands/triage.md"
   ],
@@ -13,6 +13,13 @@
       "transcript": "/d4/62ba7472d9/0/full.jsonl",
       "compact_transcript": "/d4/62ba7472d9/0/transcript.jsonl",
       "content_hash": "/d4/62ba7472d9/0/content_hash.txt",
+      "prompt": ""
+    },
+    {
+      "metadata": "/d4/62ba7472d9/1/metadata.json",
+      "transcript": "/d4/62ba7472d9/1/full.jsonl",
+      "compact_transcript": "/d4/62ba7472d9/1/transcript.jsonl",
+      "content_hash": "/d4/62ba7472d9/1/content_hash.txt",
       "prompt": ""
     }
   ],
