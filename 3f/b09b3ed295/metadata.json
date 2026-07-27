@@ -3,7 +3,7 @@
   "checkpoint_id": "3fb09b3ed295",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "reports/2026-07-26-issue-sweep-import-export.md",
     "reports/2026-07-26-triclaim-drain-strategy.md"
@@ -14,6 +14,13 @@
       "transcript": "/3f/b09b3ed295/0/full.jsonl",
       "compact_transcript": "/3f/b09b3ed295/0/transcript.jsonl",
       "content_hash": "/3f/b09b3ed295/0/content_hash.txt",
+      "prompt": ""
+    },
+    {
+      "metadata": "/3f/b09b3ed295/1/metadata.json",
+      "transcript": "/3f/b09b3ed295/1/full.jsonl",
+      "compact_transcript": "/3f/b09b3ed295/1/transcript.jsonl",
+      "content_hash": "/3f/b09b3ed295/1/content_hash.txt",
       "prompt": ""
     }
   ],

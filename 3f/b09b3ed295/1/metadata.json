@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "3fb09b3ed295",
+  "session_id": "dba5e7da-98eb-4e34-b447-fab9cf383bf3",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-27T02:32:53.713373866Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-26-issue-sweep-import-export.md",
+    "reports/2026-07-26-triclaim-drain-strategy.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "bb387188ad8e",
+  "checkpoint_transcript_start": 84,
+  "transcript_lines_at_start": 84,
+  "compact_transcript_start": 13,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-27T02:32:53.700356171Z",
+    "agent_lines": 130,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 130,
+    "total_lines_changed": 130,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
