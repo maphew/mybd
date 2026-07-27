@@ -3,7 +3,7 @@
   "checkpoint_id": "f9dacce8d6b0",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-26-reviewer-dispatch-sweep.md"
   ],
@@ -21,6 +21,13 @@
       "compact_transcript": "/f9/dacce8d6b0/1/transcript.jsonl",
       "content_hash": "/f9/dacce8d6b0/1/content_hash.txt",
       "prompt": "/f9/dacce8d6b0/1/prompt.txt"
+    },
+    {
+      "metadata": "/f9/dacce8d6b0/2/metadata.json",
+      "transcript": "/f9/dacce8d6b0/2/full.jsonl",
+      "compact_transcript": "/f9/dacce8d6b0/2/transcript.jsonl",
+      "content_hash": "/f9/dacce8d6b0/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
