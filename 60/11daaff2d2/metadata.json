@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "6011daaff2d2",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-27-cliux-stub-verification.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/60/11daaff2d2/0/metadata.json",
+      "transcript": "/60/11daaff2d2/0/full.jsonl",
+      "compact_transcript": "/60/11daaff2d2/0/transcript.jsonl",
+      "content_hash": "/60/11daaff2d2/0/content_hash.txt",
+      "prompt": "/60/11daaff2d2/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 10224,
+    "cache_read_tokens": 1108366,
+    "output_tokens": 4546,
+    "api_call_count": 6
+  }
+}
