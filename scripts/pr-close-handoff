@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Hand a PR decline disposition to the pr-babysit close-when-quiet lane: the
+# PR is not closed immediately.  It is held open for a quiet window so a
+# contributor can respond before the patrol executes the close.  This script
+# does NOT post the disposition comment upstream — the disposing agent
+# already did that; it only records the offer and starts the clock.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="gastownhall/beads"
+AFTER_HOURS=72
+PR=""
+BEAD=""
+REASON=""
+
+usage() {
+  echo "usage: pr-close-handoff <pr-number> [--repo owner/repo] --bead <id> --reason <text> [--after <hours, default 72>]" >&2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      REPO="$2"; shift 2 ;;
+    --bead)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      BEAD="$2"; shift 2 ;;
+    --reason)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      REASON="$2"; shift 2 ;;
+    --after)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      AFTER_HOURS="$2"; shift 2 ;;
+    -*) usage; exit 2 ;;
+    *)
+      [[ -z "$PR" ]] || { usage; exit 2; }
+      PR="$1"; shift ;;
+  esac
+done
+
+[[ "$PR" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { usage; exit 2; }
+[[ -n "$BEAD" && "$BEAD" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+[[ -n "$REASON" ]] || { usage; exit 2; }
+[[ "$AFTER_HOURS" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+
+cd "$ROOT" || exit 1
+
+pr_json="$(gh pr view "$PR" --repo "$REPO" --json state,headRefOid,comments,reviews 2>/dev/null)" || { echo "cannot read PR $REPO#$PR" >&2; exit 1; }
+jq -e 'type == "object" and (.state | type == "string") and (.headRefOid | type == "string")' >/dev/null 2>/dev/null <<<"$pr_json" || { echo "malformed PR data for $REPO#$PR" >&2; exit 1; }
+state="$(jq -r .state <<<"$pr_json")"
+head="$(jq -r .headRefOid <<<"$pr_json")"
+[[ "$state" == "OPEN" ]] || { echo "PR $REPO#$PR is not OPEN (state=$state); already closed or merged" >&2; exit 1; }
+[[ "$head" =~ ^[0-9a-fA-F]{7,64}$ ]] || { echo "PR $REPO#$PR returned an unsafe head SHA" >&2; exit 1; }
+
+# Ownership: an existing external_ref must name this exact PR (or the legacy
+# gh-pr-N form for the default repo). Never let a mistyped --bead attach the
+# quiet-window offer, and its eventual close, to the wrong PR.
+canonical="gh:$REPO#$PR"
+legacy="gh-pr-$PR"
+
+bead_json="$(bd show "$BEAD" --json 2>/dev/null)" || { echo "cannot inspect bead $BEAD" >&2; exit 1; }
+jq -e 'type == "array" and length == 1' >/dev/null 2>/dev/null <<<"$bead_json" || { echo "bead $BEAD not found or ambiguous" >&2; exit 1; }
+if jq -e '(.[0].labels // []) | index("merge-when-green")' >/dev/null 2>/dev/null <<<"$bead_json"; then
+  echo "bead $BEAD already carries merge-when-green; a PR cannot be in both lanes" >&2
+  exit 1
+fi
+bead_ref="$(jq -er '.[0].external_ref // ""' <<<"$bead_json")" || { echo "malformed bead $BEAD" >&2; exit 1; }
+if [[ -n "$bead_ref" && "$bead_ref" != "$canonical" && ! ( "$REPO" == "gastownhall/beads" && "$bead_ref" == "$legacy" ) ]]; then
+  echo "bead $BEAD belongs to $bead_ref, not $canonical" >&2
+  exit 1
+fi
+
+now="$(date -u +%FT%TZ)"
+now_epoch="$(date -u +%s)"
+close_after="$(date -u -d "+${AFTER_HOURS} hours" +%FT%TZ)" || { echo "could not compute close-after timestamp" >&2; exit 1; }
+
+# The quiet-window clock should not start before any reply already sitting on
+# the PR: a comment landing between the disposition comment and this handoff
+# must not be invisible to the patrol's engagement check.
+close_since="$now"
+newest_activity="$(jq -r '[((.comments // []) + (.reviews // []))[]? | (.createdAt // .submittedAt // empty)] | max // empty' <<<"$pr_json" 2>/dev/null)"
+if [[ -n "$newest_activity" ]]; then
+  newest_epoch="$(date -u -d "$newest_activity" +%s 2>/dev/null)" || newest_epoch=""
+  if [[ -n "$newest_epoch" ]] && (( newest_epoch > now_epoch )); then
+    close_since="$newest_activity"
+  fi
+fi
+
+bd update "$BEAD" --claim --add-label close-when-quiet --external-ref "$canonical" \
+  --remove-label merge-blocked --remove-label close-blocked \
+  --set-metadata "pr_babysit_repo=$REPO" \
+  --set-metadata "pr_babysit_pr=$PR" \
+  --set-metadata "pr_close_after=$close_after" \
+  --set-metadata "pr_close_head=$head" \
+  --set-metadata "pr_close_reason=$REASON" \
+  --set-metadata "pr_close_since=$close_since" \
+  --set-metadata pr_babysit_last_transition= \
+  --unset-metadata pr_close_retry \
+  --append-notes "[pr-close-handoff $now] repo=$REPO pr=$PR after=${AFTER_HOURS}h close_after=$close_after close_since=$close_since — quiet-window close offer; patrol owns the wait." \
+  >/dev/null
+
+echo "handed off: $REPO#$PR -> bead $BEAD (close-when-quiet, opens at $close_after)"
+if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
+  echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
+fi

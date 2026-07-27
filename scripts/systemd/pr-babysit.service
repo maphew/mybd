@@ -1,5 +1,5 @@
 [Unit]
-Description=PR merge-tail patrol (zero-token babysitter for merge-when-green beads)
+Description=PR merge-tail patrol (zero-token babysitter for merge-when-green and close-when-quiet beads)
 
 [Service]
 Type=oneshot

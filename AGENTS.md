@@ -486,6 +486,26 @@ off); only the patrol merges. Merging in-session is allowed only when checks
 are already decisively green at the moment of action and no `merge-when-green`
 bead exists for that PR.
 
+The patrol also owns a second lane, `close-when-quiet`, for a decline
+disposition you want to offer rather than execute immediately: post the
+disposition comment yourself, then hand the quiet window to the patrol with
+
+```bash
+scripts/pr-close-handoff <pr-number> [--repo owner/repo] --bead <id> --reason <text> [--after <hours, default 72>]
+```
+
+The patrol waits out the window (default 72h), watching for a moved head or
+any new comment/review — either returns the bead to `bd ready` for a human
+rather than closing it. If the window elapses with no engagement, the patrol
+runs `gh pr close` with your `--reason` and closes the bead. `close-blocked`
+is this lane's escape label (unreadable GitHub/bd data, persistent across the
+same retry budget as `merge-blocked`): it means the patrol gave up trying to
+safely close and a human needs to look. A PR can only be in one lane at a
+time — `pr-handoff` and `pr-close-handoff` each refuse a bead already in the
+other lane. Closing the bead yourself at any point (e.g. `bd close`) cancels
+the pending close: there is nothing left in the queue for the patrol to act
+on.
+
 ## Quick Reference
 
 ```bash

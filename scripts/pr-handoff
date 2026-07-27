@@ -68,6 +68,12 @@ if [[ -z "$bead" ]]; then
   [[ -n "$bead" ]] || exit 1
 fi
 
+existing="$(bd show "$bead" --json 2>/dev/null)" || true
+if jq -e '(.[0].labels // []) | index("close-when-quiet")' >/dev/null 2>/dev/null <<<"${existing:-}"; then
+  echo "bead $bead already carries close-when-quiet; a PR cannot be in both lanes" >&2
+  exit 1
+fi
+
 bd update "$bead" --claim --add-label merge-when-green --external-ref "$canonical" \
   --set-metadata "pr_babysit_repo=$REPO" \
   --set-metadata "pr_babysit_pr=$PR" \
