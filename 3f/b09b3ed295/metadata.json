@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "3fb09b3ed295",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-26-issue-sweep-import-export.md",
+    "reports/2026-07-26-triclaim-drain-strategy.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/3f/b09b3ed295/0/metadata.json",
+      "transcript": "/3f/b09b3ed295/0/full.jsonl",
+      "compact_transcript": "/3f/b09b3ed295/0/transcript.jsonl",
+      "content_hash": "/3f/b09b3ed295/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 82,
+    "cache_creation_tokens": 68313,
+    "cache_read_tokens": 4248619,
+    "output_tokens": 37101,
+    "api_call_count": 41
+  }
+}
