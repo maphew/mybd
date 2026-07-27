@@ -3,8 +3,10 @@
   "checkpoint_id": "ea75272a9f81",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
-  "files_touched": null,
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-26-issue-sweep-test-ci-cli-ux.md"
+  ],
   "sessions": [
     {
       "metadata": "/ea/75272a9f81/0/metadata.json",
@@ -12,6 +14,13 @@
       "compact_transcript": "/ea/75272a9f81/0/transcript.jsonl",
       "content_hash": "/ea/75272a9f81/0/content_hash.txt",
       "prompt": "/ea/75272a9f81/0/prompt.txt"
+    },
+    {
+      "metadata": "/ea/75272a9f81/1/metadata.json",
+      "transcript": "/ea/75272a9f81/1/full.jsonl",
+      "compact_transcript": "/ea/75272a9f81/1/transcript.jsonl",
+      "content_hash": "/ea/75272a9f81/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
