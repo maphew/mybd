@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "adb226dda685",
+  "session_id": "68b8c9f9-3ded-4207-8db5-cd8d38975d4f",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-27T04:11:56.875988906Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-27-pr-4376-postmortem-stall-supersede-audit.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "8aeaf16cbcc4",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 52,
+    "cache_creation_tokens": 134856,
+    "cache_read_tokens": 2390265,
+    "output_tokens": 39351,
+    "api_call_count": 26
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-27T04:11:56.851863072Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 121,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 121,
+    "total_lines_changed": 121,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

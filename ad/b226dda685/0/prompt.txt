@@ -1,0 +1,13 @@
+what went wrong with https://github.com/gastownhall/beads/pull/4376
+
+we responded several times and yet it sat for so long that it was superseded by a newer PR. The author has every reason to be frustrated and upset. what went wrong and how do we prevent this happening and how many other times has it happened, and is happening right now? 
+
+/effort xhigh
+
+---
+
+pr-babysit should check for prior art -- well actually the review should. 
+
+we should not ask contributors to rebase as that's something we can do using maintainer edit.  (unless there are other things we need them to do also) 
+
+are these things that can go into beads PR maintainer guidelines doc?

@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "adb226dda685",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-27-pr-4376-postmortem-stall-supersede-audit.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ad/b226dda685/0/metadata.json",
+      "transcript": "/ad/b226dda685/0/full.jsonl",
+      "compact_transcript": "/ad/b226dda685/0/transcript.jsonl",
+      "content_hash": "/ad/b226dda685/0/content_hash.txt",
+      "prompt": "/ad/b226dda685/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 52,
+    "cache_creation_tokens": 134856,
+    "cache_read_tokens": 2390265,
+    "output_tokens": 39351,
+    "api_call_count": 26
+  }
+}
