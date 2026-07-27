@@ -1,0 +1,5 @@
+also beads repo guidelines, not just mybd.  adjust for beads repo not having my scripts
+
+---
+
+analyse the two repos guidelines and have mybd include beads guidelines using @ convention, similar to how we handle Agents.md and Claude.md.  Mybd guidelines should only have instructions that supplement or override the beads one.
