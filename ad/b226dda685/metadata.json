@@ -3,7 +3,7 @@
   "checkpoint_id": "adb226dda685",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "reports/2026-07-27-pr-4376-postmortem-stall-supersede-audit.md"
   ],
@@ -14,6 +14,13 @@
       "compact_transcript": "/ad/b226dda685/0/transcript.jsonl",
       "content_hash": "/ad/b226dda685/0/content_hash.txt",
       "prompt": "/ad/b226dda685/0/prompt.txt"
+    },
+    {
+      "metadata": "/ad/b226dda685/1/metadata.json",
+      "transcript": "/ad/b226dda685/1/full.jsonl",
+      "compact_transcript": "/ad/b226dda685/1/transcript.jsonl",
+      "content_hash": "/ad/b226dda685/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
