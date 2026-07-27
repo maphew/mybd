@@ -70,6 +70,20 @@ bead. Steps per sweep:
    author-clustered PR sweep lane (mybd-8nq5s pattern). The theme label makes
    them separable (`bd list -l theme:pr-mirror`).
 
+## Rules learned in execution (sweeps 1–7, same day)
+
+- **Verify every recon "fix merged" claim in-session before closing.**
+  Session scoreboard: 10 claims, 7 confirmed, 3 rejected (~30% false-positive
+  — a closed-unmerged PR, a diagnostics-only PR, and a cross-ref for a
+  different issue). One rejected claim would have closed a live p1 gap.
+- **Check `bd dep list` before consolidating** — the triage layer often
+  already dep-gated stubs on fix-PR mirror beads (the Windows test cluster
+  was fully structured; a redundant consolidation bead had to be reverted).
+- **Timeline cross-refs miss unlinked fix PRs**; join through the
+  theme:pr-mirror stub inventory as well.
+- Post-sweep, `misc` reclassified to near-zero (22 → 1: 18 cli-ux,
+  1 deps-ready, 1 migration-schema, 1 repaired mistitled stub → test-ci).
+
 ## Rules
 
 - Theme labels are durable: future triage runs should theme-label new
