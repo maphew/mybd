@@ -1,0 +1,544 @@
+<task-notification>
+<task-id>a13e3987628d53f9b</task-id>
+<tool-use-id>toolu_01YU3HfBxb6ppXmvJU1Q6q9o</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/dba5e7da-98eb-4e34-b447-fab9cf383bf3/tasks/a13e3987628d53f9b.output</output-file>
+<status>completed</status>
+<summary>Agent "Freshness recon: 12 migration issues" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## 12-Issue Summary Table
+
+| Issue | State | Updated | Last Activity | Cross-Ref PR(s) | Freshness Signal |
+|-------|-------|---------|---|---|---|
+| **4468** | OPEN | 2026-06-21 | None | — | Stalled, no activity 35 days. |
+| **4297** | OPEN | 2026-06-03 | tleg verify follow-up | — | Dormant 23 days; observation phase. |
+| **4274** | OPEN | 2026-06-07 | Pewejekubam workaround | — | Bugfix unlinked; 19 days old. |
+| **4176** | OPEN | 2026-07-05 | J-MaFf repro (v1.1.0) | 4878 (MERGED) | Hardening PR merged 2026-07-23; not yet closed. |
+| **4138** | OPEN | 2026-05-23 | julianknutsen "Intro by:" | — | 64 days; appears abandoned. |
+| **4137** | OPEN | 2026-05-23 | None | 4531 (MERGED) | PR merged 2026-07-02 (schema-newer DB fix); issue open. |
+| **3886** | OPEN | 2026-05-11 | None | — | 76 days old; no activity. |
+| **3495** | OPEN | 2026-04-25 | None | — | 92 days old; dormant. |
+| **5033** | OPEN | 2026-07-26 | balaji-dutt testing update | — | Active today; workarounds discussed, no fix linked. |
+| **4800** | OPEN | 2026-07-15 | None | 4504 (OPEN) | Linked PR still open; under active dev. |
+| **4356** | OPEN | 2026-07-26 | maphew: repro needed | — | Maintainer engaged today; unclear repro blocking. |
+| **5061** | OPEN | 2026-07-26 | None | — | Newly reported or assigned today; no comments. |
+
+**Code Freshness**: Migration subsystem active post-v1.1.0 — recent commits harden wisp tables (28325c6, b445e1a), repair dependencies.id fallout (2f9367d, 3f5e1ba), and add migration self-healing (36a6ff3). Commit 3f5e1ba (#4878, merged 2026-07-23) directly fixes 4695/4690/4353 and addresses wisp table instability — likely resolves 4176.
+
+Full findings at `/tmp/claude-1000/-var-home-matt-dev-mybd/0cfae7ae-f32b-4ece-8102-f6c52d6a5649/scratchpad/sweep-migration-freshness.md`.</result>
+<usage><subagent_tokens>35254</subagent_tokens><tool_uses>8</tool_uses><duration_ms>97774</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a49d9b354bb83a03a</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/dba5e7da-98eb-4e34-b447-fab9cf383bf3/tasks/a49d9b354bb83a03a.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 4697 claim_fence" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Review: gastownhall/beads #4697 — `claim_fence` + guarded verbs + tier-complete leases
+
+Worktree reviewed: `/var/home/matt/dev/mybd/.worktrees/beads/pr-4697-review` (head `dfa9bbb93`, merge-base `8ebd53e88`, 2026-07-19; **200 commits of `upstream/main` since**). Paths below are repo-relative to that worktree.
+
+Bottom line: the engineering is unusually good — comment discipline, invariant tests, honest scope limits. But the ground moved under it. Upstream shipped a competing guarded-write design **after** this PR opened, and the branch carries two genuine regressions plus a red CI signal that is not flake. **Recommendation: needs-design-discussion on slice 2, land-after-reconciliation on slices 1/3/4, and immediately absorbable value in the migration-repair code.** Not request-changes-and-walk-away.
+
+---
+
+## 3. Schema-version collision check — EXPLICIT RESULT
+
+**Collided, and already renumbered once.**
+
+- PR body says v55. The head has since been renumbered to `internal/storage/schema/migrations/0056_add_claim_fence.{up,down}.sql`.
+- `upstream/main` now owns **0056** (`0056_add_comments_keyset_index`), **0057**, **0058**, **0059**. Latest upstream migration is 0059.
+- So the PR must renumber **0056 → 0060**. That part is mechanical: `LatestVersion()` is derived from the embedded files, and the migration is new so no content-hash freeze applies. The one non-mechanical bit is `internal/storage/schema/cli_migrations.go:63` — the `case "0056_add_claim_fence.up.sql"` string and the `cliMigration0056AddClaimFence` const must move together.
+- Also stale after renumbering: `internal/types/types.go:57` ("migration 0055"), `internal/storage/issueops/scan.go:34,184` ("migration 0055"), and the `0056_add_claim_fence.up.sql` header comment cross-referencing "see migration 0055" from `fence.go:13`.
+
+**Second, worse collision:** the author's own #4682 (still OPEN, also DIRTY) *also* claimed migration 0055, for a `revision` nonce on `issues`+`wisps`, and *also* mints `storage.PreconditionFailedError`. Two open PRs from the same author, two ownership/CAS tokens, one type name.
+
+---
+
+## 1. Design assessment per slice
+
+### Slice 1 — `claim_fence` (commit `a252ad2b1`): **independently valuable, keep it**
+
+This is the part worth fighting for. Upstream already shipped a row-version CAS in #4911 (`ExpectedVersion`, `CheckVersionInTx`, `ErrVersionMismatch`) — but that token *is* `row_lock`, which every content mutation rewrites. A guard on `row_lock` therefore fails on any unrelated edit (a note append, a metadata merge). `claim_fence` fills a real gap: a token that moves **only** on ownership transitions, so an orchestrator can hold a stable ownership snapshot across content churn. That semantic is not covered by anything upstream, and the PR argues it well.
+
+The Dolt cell-merge reasoning is also correct and worth crediting explicitly: a bare monotonic counter would silently cell-merge under Dolt (two N→N+1 bumps write identical values), and the paired `row_lock` rewrite is what forces serialization. `fence.go:16-25` states it and `fence_invariant_test.go:30` enforces it at the AST level. That is the right instinct.
+
+Contentious sub-point: **what bumps**. `fence.go:70-115` documents "ownership transitions only," but `claim.go:105-118` bumps unconditionally on every successful claim — including a same-actor re-claim of an open-but-already-assigned-to-me row. Meanwhile `fence.go:61-68` (`UpsertFenceAssignments`) goes to real trouble to *avoid* a spurious bump on a content-only re-import, with a comment explaining why spurious bumps "conflict legitimate outstanding guards." Two paths, opposite policies, one doc. Pick one and test it — see finding S-4.
+
+### Slice 2 — guarded verbs `--if-assignee` / `--if-fence` (commit `267befb7e`): **contentious, needs reconciliation before it can land**
+
+Upstream merged `6e8af8bf8` — *"feat(update): conditional compare-and-set guards --if-assignee/--if-status (bd-wsqvw) (#5008)"* — on 2026-07-24. Its own commit message says the guards were deliberately put on `UpdateIssueOptions` (`ExpectedAssignee`/`ExpectedStatus`, `CheckExpectedFieldsInTx`, `ErrStatusMismatch`) **"rather than minting a parallel interface method — no Storage interface break, decorators pass through unchanged."**
+
+This PR mints a parallel mechanism: `issueops.Guard` carried in a **context value** (`guard.go:53-72`), `storage.PreconditionFailedError`/`ErrPreconditionFailed`, and a different exit code. Concretely:
+
+| | upstream #5008 (merged) | PR #4697 |
+|---|---|---|
+| flag on `bd update` | `--if-assignee`, `--if-status` | `--if-assignee`, `--if-fence` |
+| mismatch exit | **13** (`ExitGuardMismatch`, `cmd/bd/update.go:642`) | **9** (`ExitPreconditionFailed`) |
+| meaning of 13 | mismatch | **unsupported path** (`ExitConditionalWriteUnsupported`) |
+| transport | options struct, wired through all three write stacks incl. proxied | `context.Context` value |
+| typed error | `ErrAssigneeMismatch` / `ErrStatusMismatch` | `PreconditionFailedError` |
+
+`cmd/bd/ownership_guard.go:15-19` says the CAS branch "rebases onto this branch." That assumption is now inverted — the CAS work landed first, so #4697 must rebase onto it.
+
+The context-value transport is also the weaker design on the merits, and the PR's own code shows why: `validateGuardInvocation` (`cmd/bd/ownership_guard.go:73-75`) has to *refuse* guards in proxied-server mode with exit 13, because a `context.Value` cannot cross the UOW process boundary — even though `internal/storage/domain/db/issue.go:180-200` implements guard handling. Upstream's options-struct approach crosses that boundary today.
+
+### Slice 3 — `lease.auto` + `bd lease disarm` (commit `0e05bbb64`): **independently valuable, low controversy**
+
+Small, self-contained, honestly documented (including that `ClearArmedLeasesInTx` cannot distinguish explicit from auto leases and clears both, and that the disarm needs a bounded re-sweep for the read-before-flip window). The `HeartbeatIssueInTx` split — renew vs. arm, `ErrUnleased` on a disarmed store — is the right call. This could be a standalone PR today; its only dependency on slice 1 is incidental.
+
+### Slice 4 — tier-complete leases + `--lease-ttl` + batch renew (commits `10364854c`, `dfa9bbb93`): **contentious on the wisps question**
+
+Extending leases to `wisps` directly contradicts upstream's stated intent. Migration `0055_move_leases_to_table.up.sql` (upstream, shipped) says: *"Wisps are never leased work; their claims get no lease row"* and *"the (never-reclaimed, now entirely unread) lease columns"* were deliberately dropped from `wisps`. This PR makes wisp claims reclaimable by the reaper. That may well be right — "durable no_history workflow rows" *are* real work — but it is a product decision for the maintainer, not a rebase detail, and the justification lives in `engdocs/plans/ownership-fencing/DESIGN.md` **in gascity**, which beads maintainers cannot read (see N-3).
+
+Slice 4 also collides hardest with post-base upstream work: `ReclaimExpiredLeasesInTx` now takes a `types.ReclaimFilter` and uses `sqlbuild.ReclaimScopeSQL`, and `UpsertLeaseInTx` now writes `granted_node` (replica-aware leases, ignored migration 0016 / wy-jpd3.7). The PR's rewrites of both are on the pre-filter, pre-replica model.
+
+---
+
+## 2. Correctness findings
+
+### BLOCKER
+
+**B-1 — `internal/storage/issueops/helpers.go:61-66,107-144`: the import/upsert path no longer writes `row_lock` at all.**
+
+The PR removes `"row_lock"` from `issueUpsertColumns` and replaces the `row_lock` INSERT column (bound to `freshRowLock()`) with `claim_fence` (bound to `issue.ClaimFence`). Net effect on both limbs:
+
+- **Fresh INSERT**: `row_lock` now takes the column default `0`. Every imported row lands with `row_lock = 0`. Two nodes importing the same issue write identical `0` — exactly the silent Dolt cell-merge the invariant exists to prevent.
+- **ON DUPLICATE KEY UPDATE**: `row_lock` is now rewritten only by `UpsertFenceAssignments` (`fence.go:61-68`), i.e. *only when the assignee changes*. Base rewrote it unconditionally on any accepted update. So an import that changes **status** (e.g. a newer snapshot that closes the issue) no longer rewrites `row_lock`, and can cell-merge with a concurrent reclaim.
+
+The PR also deletes the comment block at `helpers.go` that documented precisely this ("row_lock rides along because any write that can change status/assignee must rewrite it to collide with a concurrent reclaim/close on the same row"). This is not an upstream-drift artifact — upstream has not touched `helpers.go` since the merge base; the removal is the PR's own.
+
+*Fix:* keep `"row_lock"` in `issueUpsertColumns` and keep `freshRowLock()` in the INSERT arg list; add `claim_fence` as an additional column rather than a substitution. Then let `UpsertFenceAssignments` contribute only the `claim_fence` conditional and drop its `row_lock = IF(...)` limb (it would otherwise fight the unconditional assignment for ordering).
+
+**B-2 — `cmd/bd/ownership_guard.go:20-30` + `cmd/bd/update.go:755`: exit-code contract collision and a duplicate flag registration.**
+
+`registerOwnershipGuardFlags(updateCmd)` at `cmd/bd/update.go:755` registers `--if-assignee` on `updateCmd`; `upstream/main:cmd/bd/update.go:797` already registers `--if-assignee` on the same command. pflag's `AddFlag` panics on redefinition, so a merge that keeps both kills the whole CLI at `init()`. `cmd/bd/update.go` does conflict, so a human will see it — but the resolution is a design decision, not a textual one.
+
+Independently of the panic: after any resolution, `bd update --if-assignee` mismatch exits **13** while `bd unclaim --if-assignee` mismatch exits **9**, and **13** simultaneously means "unsupported path" in the new code. That is an unshippable CLI contract.
+
+*Fix:* adopt upstream's `ExitGuardMismatch = 13` for mismatch on all verbs; pick a fresh unused code for "unsupported" (10–12 are taken by `init_safety.go`).
+
+**B-3 — `internal/storage/schema/migration_repairs.go:29`: the new v54 pre-migration repair breaks the per-step-commit invariant. This is the live CI failure, and it is not flake.**
+
+`TestEmbeddedMigrateConvergesUnderConcurrentInterruptedRetries_4566` fails on the PR head with:
+
+```
+worker 1 did not converge: attempt 2: killed pass left a DIRTY working set [issues] at version 54 (per-step commit violated)
+worker 0 did not converge: attempt 4: killed pass left a DIRTY working set [issues] at version 55 (per-step commit violated)
+```
+
+The **version 54** failures point at `preMigrationRepair`'s new `if m.cursorTable == "schema_migrations" &amp;&amp; version == 54 { return ensureLeaseColumns(...) }`, which issues `ALTER TABLE issues ADD COLUMN ...` and `CREATE INDEX` outside the per-step commit boundary. A killed pass then leaves `issues` dirty at v54. The version-55 failures are the new 0056 ALTER pair hitting the same window.
+
+Sibling repairs (`TestEmbeddedMigrateSelfHealsAfterMidPassFault_4566`, `TestEmbeddedMigrateStepCommitLeavesUntouchedUserDirt_4566`) pass in the same run, so this is specific to the newly added repair path, not the harness.
+
+*Fix:* either bring the repair DDL inside the step's commit, or drop `ensureLeaseColumns` from this PR (see S-1 — it is out of scope anyway, and 0055 immediately drops the columns and index it adds).
+
+### SHOULD-FIX
+
+**S-1 — `internal/storage/schema/migration_repairs.go:66-115,240-260`: two unrelated migration repairs smuggled into an ownership-fencing PR — and they are the most immediately landable code in the diff.**
+
+`ensureDependenciesSplitTargets` (+ `dependenciesSplitTargetColumns`, `dependenciesSplitTargetBackfillSQL`) repairs the non-wisp `dependencies` table for the #4555 class of mixed-vintage schema. It has nothing to do with fencing. Same for `ensureLeaseColumns`. Both are plausibly *good* — split them into a standalone PR and they can be reviewed and merged this week, decoupled from the whole fencing debate. That is the fastest contributor win available here.
+
+(While splitting: `migration_repairs.go:66` gives `ensureDependenciesSplitTargets` a copy-pasted doc comment that opens *"ensureWispDependenciesSplitTargets repairs #4555: a mixed-vintage local wisp_dependencies table…"* — wrong function, wrong table.)
+
+**S-2 — `internal/storage/sqlbuild/sqlbuild.go:51`: `claim_fence` is put in the wrong column constant.**
+
+```go
+const LeaseSelectColumns = `leases.lease_expires_at, leases.heartbeat_at, claim_fence`
+```
+
+`IssueBaseColumns` is documented as the list callers qualify with a table alias (`QualifyColumns`); `LeaseSelectColumns` exists *specifically* because its `leases.*` references must **not** be qualified. `claim_fence` is an issues/wisps column and belongs on the qualifiable side. Any query that aliases the main table now emits a bare, unqualified `claim_fence` — and `ReclaimScopeSQL` on current main aliases with `i`. With both `issues` and `wisps` carrying the column, that is an ambiguity waiting for the right join.
+
+*Fix:* append `claim_fence` to `IssueBaseColumns`, or add a third `OwnershipSelectColumns` constant that participates in qualification. Note the scan order constraint: `ScanIssueFrom` scans positionally, and upstream has since added `leases.granted_node` as a third lease column — the merged order must be `…, leases.lease_expires_at, leases.heartbeat_at, leases.granted_node, claim_fence` with the dest list at `scan.go:57` updated to match.
+
+**S-3 — `internal/storage/issueops/scan.go` + upstream `IssueSelectColumnsLite`: the lite-shape parity test will fail after rebase.**
+
+Upstream `132601bfa` added `IssueSelectColumnsLite` and `HeavyDropList`, with a schema-parity test asserting `cols(Lite) ∪ HeavyDropList == cols(Full)` — explicitly so that *"every future column added to IssueSelectColumns must be classified."* `claim_fence` is a new full column and is unclassified. It belongs in **Lite** (small, non-TEXT, read by claim/routing — same rationale upstream gives for keeping `row_lock` there). Purely mechanical, but it will be a red test until done.
+
+**S-4 — `internal/storage/issueops/claim.go:105-118` vs `fence.go:70-115`: the bump policy is documented one way and implemented another.**
+
+`fence.go` says the fence bumps "ONLY on ownership transitions … never by content mutations," and `IsOwnershipTransition` returns false when the assignee is unchanged. `ClaimIssueInTx` bumps unconditionally on any successful claim, including the open-but-already-assigned-to-actor branch of `assigneePredicate` (`claim.go:85`), where the assignee does not change.
+
+This matters more than it looks in a repo like ours: AGENTS.md documents that same-user claims are idempotent, so two sessions of one agent user *cannot* mutually exclude via claims today. Unconditional bump-on-claim would actually **fix** that (session B's re-claim fences out session A's guard) — arguably the single most useful property of the whole feature for the multi-session case. But that is the opposite of what the doc promises, and `UpsertFenceAssignments` implements the opposite policy on the import path with a comment explaining why spurious bumps are harmful.
+
+*Fix:* decide explicitly. If bump-on-every-claim is intended (I think it should be), say so in `fence.go`, drop the "ownership transitions only" framing in favor of "ownership *generation*", and add a test asserting that a same-actor re-claim invalidates an outstanding guard. If not, make the claim bump conditional: `claim_fence = claim_fence + IF(COALESCE(assignee,'') &lt;&gt; ?, 1, 0)`.
+
+**S-5 — `internal/storage/issueops/unclaim.go:72,120`: reverts a deliberate upstream anti-steamroller message.**
+
+Base (and current main) reads:
+```
+"%w: %s is held by %s; coordinate with the holder — pass --force only if their claim is abandoned (crashed agent, expired lease)"
+```
+The PR shortens both sites to `"(use --force to override)"`. The long form is deliberate — the matching comment in `claim.go:155-160` names the incident (`wy-yuclk`: agents pattern-matching the terse message into an unclaim+claim steamroller of live claims). Restoring the original text costs nothing and removes two conflict hunks.
+
+**S-6 — `internal/storage/issueops/unclaim.go:87`: `--if-fence` alone grants cross-actor release authority.**
+
+```go
+if force || hasGuard {
+    ownerPredicate = "AND assignee != ''"
+```
+With any guard set, the `ErrNotOwner` check is skipped. `guard.go:17-23` justifies this as "the guard is the credential." That holds for `--if-assignee` (you must name the holder). It does **not** hold for `--if-fence` alone: the fence is a small integer, printed by `bd show`, not a secret. `bd unclaim X --if-fence 3` becomes a `--force` that any actor can perform with one read. A guard establishes *freshness*, not *authority* — those are different properties, and the code conflates them.
+
+*Fix:* require `Guard.Assignee != nil` (or actor == assignee) to authorize a cross-actor release; let a fence-only guard add a precondition without lifting the owner check.
+
+**S-7 — `internal/telemetry/storage.go`: silently drops instrumentation for `UnclaimIssueIfAssignee`.**
+
+The PR deletes the `InstrumentedStorage.UnclaimIssueIfAssignee` wrapper. It still compiles (`InstrumentedStorage` embeds `storage.DoltStorage` as a passthrough at line 29), so this is a silent telemetry hole rather than a build break — which makes it easier to miss. Upstream still has the method. Nothing in this PR requires its removal.
+
+**S-8 — gratuitous doc-comment rewrites across the diff, which are pure conflict surface.**
+
+`internal/storage/storage.go` (`CycleThroughEdges`, `SkipCycleCheck`, `RemoteRefPruner`), `internal/storage/sqlbuild/sqlbuild.go` (`IssueBaseColumns`, `LeaseSelectColumns`, `LeaseJoin`), `internal/storage/issueops/lease.go` (`RestoreLeaseOnImportInTx`), `internal/storage/issueops/unclaim.go` (`UnclaimIssueIfAssigneeInTx`) all get shortened/reworded relative to base, stripping issue references (`bd-lrgn1`, `wy-urlct`, `bd-agctw`). One is actively wrong: the rewritten `SkipCycleCheck` doc says callers *"MUST run Transaction.DetectCycles"* where base says `Transaction.CycleThroughEdges`. Reverting all of these to base text is free and removes a meaningful chunk of the conflict.
+
+**S-9 — `internal/storage/issueops/unclaim.go:206-231`: un-refactors the shared `finishUnclaimInTx` helper.**
+
+Base extracted the post-UPDATE half of a release (lease delete + event record) into `finishUnclaimInTx`, shared by both unclaim entry points. The PR deletes the helper and inlines both copies. The guarded path needs extra audit fields, but that argues for a parameter, not for duplicating the lease-delete/event-record pair. Keeping the helper preserves the property that the two release paths cannot drift.
+
+**S-10 — `internal/storage/issueops/blocked_state.go:662-690`: reverts a split-column read to the legacy `DepTargetExpr`.**
+
+Base reads `depends_on_issue_id, depends_on_wisp_id` directly; the PR reverts to `DepTargetExpr` + `PartitionWispIDsInTx`. Both symbols still exist so it compiles, but it re-adds a partition round-trip that base had eliminated. Unrelated to fencing; it is the same older-lineage artifact that motivated `ensureDependenciesSplitTargets`.
+
+### NIT
+
+**N-1 — `internal/storage/lease_renewal.go:41-45`: chunking rationale is stale.** *"renewal rewrites row_lock on every renewed row, so an unbounded batch would collide with any concurrent worker write."* `RenewLeasesInTx` (`renew.go:61-64`) writes only the `leases` table and never touches `row_lock`. The chunking may still be worth keeping for transaction-size reasons, but the stated reason no longer applies and will mislead the next reader.
+
+**N-2 — `internal/storage/issueops/unclaim.go:96,198`: hardcoded `claim_fence = claim_fence + 1` instead of `fenceBumpExpr`.** The AST test catches literal-form bumps, so this is safe today — but `fence.go:28-31` exports `FenceBumpExpr` specifically so the fragment lives in one place, and these are the two sites that ignore it.
+
+**N-3 — cross-repo design references in beads core source.** `fence.go:14`, `0056_add_claim_fence.up.sql:22`, and `ownership_guard.go:19` cite `engdocs/plans/ownership-fencing/DESIGN.md (gascity)` and `gascity epic ga-furrj5`. Beads maintainers cannot read either. The comments are otherwise excellent and mostly self-contained — the pointer should be supplementary, not load-bearing.
+
+**N-4 — `internal/types/types.go:62`: `json:"claim_fence"` without `omitempty` adds `"claim_fence":0` to every line of every `.beads/issues.jsonl` on upgrade.** The stated rationale (0 is meaningful) is defensible, and `ComputeContentHash` is field-explicit so hashes are unaffected. But this is almost certainly what red-lights *"Contract corpus (golden + determinism + conformance)"* in CI, and it is a one-time whole-file churn in every beads repo. Worth an explicit maintainer decision plus a golden-corpus regen, not a silent side effect.
+
+**N-5 — `internal/storage/issueops/lease.go` `ClaimLeaseUpsert`**: adds a config read (`autoLeaseEnabled`) inside *every* claim transaction, and on a disarmed store issues a `DELETE FROM leases` on every claim. Probably fine; worth a glance at the "Test (Proxied Dolt Cmd 4/8)" 15-minute timeout panic in the same CI run before dismissing it.
+
+---
+
+## 4. Conflict inventory vs current `main`
+
+`git merge-tree --write-tree upstream/main HEAD`: **16 conflicting files, ~30 hunks, ~790 conflict lines.**
+
+**Substantive (design reconciliation required, ~5 files):**
+
+| File | Hunks / lines | Why |
+|---|---|---|
+| `internal/storage/issueops/lease.go` | 7 / 247 | `ReclaimExpiredLeasesInTx` gained a `types.ReclaimFilter` + `sqlbuild.ReclaimScopeSQL` upstream; `UpsertLeaseInTx` gained `granted_node` (replica-aware leases). The PR rewrites both against the pre-filter, pre-replica model. |
+| `internal/storage/domain/db/issue.go` | 5 / 110 | Proxied guard/fence threading vs upstream's `UpdateSpec`/`ApplyUpdate` guard wiring from #5008. |
+| `internal/storage/storage.go` | 1 / 53 | New `PreconditionFailedError`/`ErrPreconditionFailed` landing next to upstream's `ErrVersionMismatch`/`ErrStatusMismatch`/`ExpectedVersion` — this is the type-level face of the two-designs problem. Compounded by the S-8 doc churn. |
+| `cmd/bd/update.go` | 1 / 33 | Duplicate `--if-assignee` registration (B-2). |
+| `cmd/bd/reclaim.go` | 1 / 45 | Tier-complete reclaim vs upstream's `ReclaimFilter` CLI. |
+
+**Semi-substantive (mechanical once a decision exists, ~3 files):** `internal/storage/schema/migration_repairs.go` (3 / 107 — resolves itself if S-1 splits out), `internal/storage/issueops/scan.go` (3 / 22 — `granted_node` + `claim_fence` ordering, S-3), `internal/storage/sqlbuild/sqlbuild.go` (1 / 12 — S-2).
+
+**Trivial (text/doc, several disappear entirely if S-5 and S-8 are reverted):** `cmd/bd/close.go`, `cmd/bd/ready.go`, `cmd/bd/unclaim.go`, `internal/storage/bulk_issues.go`, `internal/storage/dolt/issues.go`, `internal/storage/issueops/claim.go`, `internal/storage/issueops/unclaim.go`, `internal/storage/domain/db/issue_scan_parity_test.go` — 1–2 hunks each.
+
+Realistic read: reverting the gratuitous doc rewrites (S-8) and the message regression (S-5), plus splitting out the migration repairs (S-1), removes roughly a third of the conflict volume before anyone touches a design question.
+
+Build status: PR head builds clean under `CGO_ENABLED=0 go build -tags gms_pure_go ./...`, and `go test ./internal/storage/issueops/...` passes. The failures are in the heavier suites (see B-3).
+
+---
+
+## 5. Recommended maintainer response
+
+**Verdict: split-land + needs-design-discussion. Do not request-changes as the framing.** Fifteen days of silence on 4265 lines of high-quality work means the first comment's job is to give this contributor something to *do*, not a list of what is wrong. Lead with what is landing.
+
+Per PR_MAINTAINER_GUIDELINES, the absorbable value here is real and separable. Suggested shape for the first comment:
+
+**Open with the apology and the credit, specifically.** Fifteen days, zero response, and in the meantime upstream shipped work that directly overlaps slice 2. That is on the maintainers, and it should be said plainly — the contributor did not create this collision. Credit the specific things: the Dolt cell-merge analysis and the paired-`row_lock` invariant with an AST test enforcing it, the honest "scope and honest limits" comment on that test, and the deliberate refusal to map a read error to `not_found` in `RenewLeasesInTx` (`renew.go:37-41`). Those are load-bearing insights, not boilerplate.
+
+**Then the four asks, in dependency order:**
+
+1. **Split out the migration repairs now** (S-1). `ensureDependenciesSplitTargets` + `ensureLeaseColumns` as their own PR, minus the v54 hook that trips B-3, or with the DDL brought inside the step commit. Reviewable this week, independent of everything below. Fastest path to something merged with this contributor's name on it.
+
+2. **Slice 1 (`claim_fence`) is wanted — here is the reconciliation.** Renumber 0056 → 0060; classify `claim_fence` into `IssueSelectColumnsLite`; move it out of `LeaseSelectColumns`; fix B-1 (restore `row_lock` to the upsert). Then answer S-4 explicitly: does a same-actor re-claim start a new ownership generation? The `claim_fence`-vs-`RowVersion` distinction is the argument that justifies the whole column, and it should go in the PR body — a token that survives content churn is not something upstream's `ExpectedVersion` can provide.
+
+3. **Slice 2 needs a design call before code.** Upstream #5008 already shipped `--if-assignee` on `bd update` with exit 13 and options-struct plumbing, explicitly rejecting a parallel mechanism. Ask the contributor to fold `--if-fence` into the shipped surface — `ExpectedFence *int64` on `UpdateIssueOptions`/`CloseIssueOptions` alongside `ExpectedVersion`/`ExpectedAssignee`, `ErrFenceMismatch` beside `ErrVersionMismatch`, exit 13 for mismatch — and drop the `context.Value` transport. Point out that this is not just conformity: the options struct is what lets guards cross the proxy boundary, which is exactly the gap `validateGuardInvocation` currently papers over with an exit-13 refusal. Also flag S-6 (fence-alone should not confer cross-actor release authority) as part of that redesign.
+
+4. **Slice 4's wisp-leasing needs a maintainer ruling.** Migration 0055 says in prose that wisps are never leased and their lease columns were dropped as "never-reclaimed, now entirely unread." This PR reverses that. Someone with product authority should say yes or no *before* the contributor rebases 247 conflict lines in `lease.go` against the new `ReclaimFilter` + `granted_node` model.
+
+**Charter-level question to raise explicitly.** `bd-main/docs/PROJECT_CHARTER.md` says beads owns issue-tracking primitives and that orchestration policy routes outside core, preferring metadata before schema for workflow-specific data. `claim_fence` passes that test cleanly — it is a property of an issue's ownership, the same category as `assignee`, and it needs to be a column to be part of an atomic CAS. `lease.auto`, `--lease-ttl`, tier-complete reclaim, and batch renewal are further along the orchestration axis: they encode a *supervision policy* (who recovers dead workers, over what horizon, across which tiers). The lease table already exists upstream, so the primitive question is settled — but "how many knobs does core expose for lease policy" is not, and the disarm/TTL/renew surface is where that line gets drawn. Worth asking the contributor to make the case in the PR body rather than leaving it in a gascity design doc (N-3).
+
+**One caution for whoever writes the comment:** #4682 is still open, also DIRTY, also mints `storage.PreconditionFailedError`, and also claimed migration 0055 — for a *third* ownership token (`revision`). Between #4682, #4697, and the merged #4911/#5008, beads is heading toward four concurrent optimistic-concurrency designs. The first response to #4697 should probably reference #4682 explicitly and propose a single reconciliation thread covering both, rather than resolving them independently and discovering the conflict a third time.</result>
+<usage><subagent_tokens>130383</subagent_tokens><tool_uses>49</tool_uses><duration_ms>637829</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a8185f559bd6cc6ad</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/dba5e7da-98eb-4e34-b447-fab9cf383bf3/tasks/a8185f559bd6cc6ad.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 4682 CAS feature" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Review: gastownhall/beads#4682 — "feat(cas): optimistic concurrency for beads"
+
+Head `745de008c` · base `6e1b04c26` (2026-07-14) · +3711/−197 · MERGEABLE=CONFLICTING/DIRTY
+
+**Bottom line:** this is high-craft work — real-Dolt one-winner concurrency tests, an AST completeness guard, a fail-closed federation gate, clean docs regen with no federation churn. It is also, as it stands, unlandable, and about 60% of it is superseded by work that landed on main *after this PR's base* — including the contributor's own merged #4911. My recommendation is **absorb three small slices, ask for the rest to be re-scoped on top of main**, not request-changes-and-wait.
+
+---
+
+## 1. Design assessment
+
+### 1a. The whole-row CAS token duplicates one that already exists (and that this author shipped)
+
+`internal/storage/storage.go:322` on main already defines `ExpectedVersion *int64`, backed by the `row_lock` column, surfaced to Go callers as `types.Issue.RowVersion`: an opaque random-per-write int64, compared for equality only, never ordered, with `storage.ErrVersionMismatch`, `issueops.CheckVersionInTx`, `UpdateIssueChecked`, and `CloseIssueChecked`. That surface landed in **#4911, by julianknutsen, merged 2026-07-22** — nine days after this PR's base.
+
+This PR adds `revision`: an opaque random-per-write int64, compared for equality only, never ordered, with `storage.ErrPreconditionFailed`, `UpdateIssueIfMatch`, `CloseIssueIfMatch`. Two parallel whole-row tokens on the same two tables.
+
+The only real semantic difference is stamping breadth: `row_lock` is stamped on lifecycle/ownership writes (status/assignee/started_at); `revision` is stamped on *every* content write. That difference is a one-line policy change to `freshRowLock()`'s call sites, not a reason for a second column, a migration, a second sentinel error family, a second CLI flag family, and a merge resolver.
+
+**Recommended shape:** widen `row_lock`'s stamping to all content writes (keeping the documented `is_blocked`/heartbeat exemptions from `auxOrExemptMarkers`, which are genuinely good analysis), and expose the existing `RowVersion` as `--if-revision`. That deletes the migration, `internal/types/types.go:25`, `internal/storage/issueops/revision.go`, and most of the mergesettle work.
+
+### 1b. The metadata-key CAS duplicates `MergeMetadata`, and regresses it
+
+`internal/storage/dolt/slots.go:25` on main is `MergeMetadata` — also from #4911 — which does read+merge+write in one transaction with `withRetryTx`, routes through `UpdateIssueInTx` so it *records a full EventUpdated and runs the configured metadata-schema validation*, and handles wisp routing.
+
+This PR replaces `SlotSet`/`SlotClear` with `issueops.SetMetadataKeyInTx`/`ClearMetadataKeyInTx` (`internal/storage/dolt/slots.go:19`, `internal/storage/embeddeddolt/slots.go`), which bypass both. The PR is rewriting a lost-update bug that main already fixed, and losing two properties in the process (see finding B4).
+
+**The simpler alternative for `bd cas set/unset`:** add an `expected *string` / `ifAbsent bool` precondition to the existing `issueops.MergeMetadataInTx`. Same transaction, same retry loop, same validation and event, ~40 lines instead of ~250 plus a parallel `ConditionalWriter` metadata surface.
+
+### 1c. The mergesettle work is fully superseded
+
+Main landed `internal/storage/versioncontrolops/automerge.go` (34695bdb6 + f178de227, 2026-07-24): a general **field-level three-way merge** — a cell only one side changed keeps that side's value; a cell both sides changed is settled LWW by `updated_at`; add/add and delete/modify escalate. `resolveIssuesRevisionOnlyConflicts` in this PR is a narrow special case of exactly that rule. ~450 lines of this PR (mergesettle.go + `revision_merge_resolve_test.go` + `revision_merge_probe_test.go`) are now redundant.
+
+**But one idea in it is genuinely new and worth absorbing**: `freshRevisionDistinctFrom` (`mergesettle.go`, new). Main's automerge settles a contested opaque token by LWW, so the merged row carries one side's *old* token — a client still holding it can win a CAS it should have lost. That hazard exists **today** for `row_lock`/`ExpectedVersion`, independent of this PR. A ~15-line special case in `automerge.go` (mint a fresh token distinct from both sides for any opaque concurrency cell) closes it. That is the highest-value idea in the PR.
+
+### 1d. Charter layering
+
+Layering holds. CAS on tracking primitives belongs in beads core; the PR keeps orchestration policy (fences, epochs, reservations) in the caller and only ships the primitive. No complaint here.
+
+### 1e. Does this close #3575/#4657?
+
+No. Those report `bd update --claim` not being a hard CAS under sub-second concurrency. This PR does not touch `--claim` — it explicitly *forbids* combining `--if-revision` with `--claim` (`cmd/bd/update.go:333`). What actually addresses that class is main's #5008 (`--if-assignee`/`--if-status`) plus #5006 (`verifiedClaimWrite`). This PR provides an adjacent, more general primitive; it should not be framed as closing those issues.
+
+---
+
+## 2. Correctness findings
+
+### BLOCKERS
+
+**B1 — Serializing `revision` violates the interchange protocol contract. CI proves it.**
+`internal/types/types.go:25` — `Revision int64 \`json:"revision,omitempty"\``
+
+`bd export` marshals `types.Issue` directly (`cmd/bd/export.go:222`), so every issue line in `.beads/issues.jsonl` now carries a fresh random 19-digit number that changes on every write. CI is red on exactly this:
+
+```
+--- FAIL: TestProtocol_Interchange_RoundTripEquivalence
+    §J6.6 violated: export → import → export did not reproduce the stream
+      original:  {..."revision":8994782090524358520,...}
+      re-export: {..."revision":1263971878294177482,...}
+--- FAIL: TestProtocol_Interchange_StdinImport
+    §J6.5: stream imported from stdin did not re-export identically
+```
+
+plus `TestExportImportRoundTripE2E` (dolt-embedded **and** postgres) and 21 `TestConformanceE2E` subtests.
+
+This is not an incidental golden-file update: the repo made the opposite decision deliberately for the identical token. `internal/types/types_test.go:942`, `TestRowVersionNeverSerialized`, locks in "row_lock is random per write, so serializing it would break stable bd list --json diffs and JSONL export churn." The PR body says "`bd show --json` already carries it" as if that were a feature; it is the regression.
+
+**Fix:** drop the JSON tag (`json:"-"`), matching `RowVersion`. Surface the token via `bd show --long` only (which the PR already does at `cmd/bd/show_format.go:286`) or a dedicated `--revision` output. Do not regenerate the corpus to accept it.
+
+**B2 — Import is no longer idempotent; every import dirties every row.**
+`internal/storage/issueops/helpers.go:65` and `internal/storage/domain/db/issue.go:543`
+
+`revision` was added to `issueUpsertColumns`, so the unguarded `ON DUPLICATE KEY UPDATE` path assigns `revision = VALUES(revision)` where `VALUES(revision)` is a fresh `NewRevision()` per statement (`insertIssueIntoTable`, `insertIssueRow`). Main's own comment three lines above states the invariant being broken: *"Re-importing an identical snapshot stays idempotent either way — the rewrite would have written identical values."*
+
+Consequences: re-importing an unchanged JSONL rewrites every row, leaves the Dolt working set dirty, produces a spurious commit, and (because every row's revision moved) manufactures a cross-clone conflict on the next pull for every issue in the file. Compounding B1, the exported value is also *discarded* on import — `insertIssueRow` binds `issueops.NewRevision()`, not `issue.Revision` — so the field is pure write-only noise.
+
+**Fix:** exclude `revision` from the upsert assignment set entirely (an import is not a content write to the CAS timeline), or bind `issue.Revision` and only mint when the incoming value is zero.
+
+**B3 — Exit code 13 now means two contradictory things.**
+`cmd/bd/if_revision.go:21` — `const ExitConditionalWriteUnsupported = 13`
+vs. main `cmd/bd/update.go:642` — `const ExitGuardMismatch = 13`
+
+Main shipped 13 as *"a racer won — skip gracefully, this is retryable."* This PR ships 13 as *"gate refusal — a caller must **not** retry it as if it were a race"* and puts the retryable case on 9. The two are semantically inverted on the same number. Any wrapper written against main's contract misreads this PR's output, and vice versa.
+
+The PR's own audit comment (`cmd/bd/cas.go:16-18`, "Verified free: 1, 2, 10-12") is stale — it predates #5008. That staleness is how the collision happened, and it will happen again on the next rebase unless the codes are centralized.
+
+**Fix:** on rebase, map `--if-revision`/`bd cas` mismatch to the existing `ExitGuardMismatch` (13) — semantically it *is* a guard mismatch — and allocate a new free code for the gate refusal. Add a single `exitcodes.go` registry so the next contributor can't collide.
+
+**B4 — The guarded write paths silently drop validation and routing the unguarded paths perform.**
+`internal/storage/dolt/conditional.go:78-90` (`UpdateIssueIfMatch`)
+
+`DoltStore.UpdateIssue` (`internal/storage/dolt/issues.go:183`) does three things before delegating:
+1. `validateUpdateMetadata(updates)` — metadata-schema validation (GH#1416 Phase 2)
+2. wisp routing
+3. `DemoteToWisp` when `no_history`/`wisp` is in the update set
+
+`UpdateIssueIfMatch` does only (2), via `IsActiveWispInTx`. So:
+
+- `bd update &lt;id&gt; --if-revision N --metadata '{...}'` writes metadata that bypasses the configured schema. Reachable: `cmd/bd/update.go:283` puts `--metadata` into `updates`, which flows into `regularUpdates` and then into the guarded call at `cmd/bd/update.go:462`.
+- `bd update &lt;id&gt; --if-revision N --no-history` sets the `no_history` column in place instead of migrating the row to the `wisps` table. `no_history` is an allowed update field (`internal/storage/issueops/update.go:23`) and reachable from `cmd/bd/update.go:277`. Note CI's `TestConformanceE2E/update-no-history-demote` is red.
+
+The same omission hits the slots rewrite: `internal/storage/dolt/slots.go:19` `SlotSet` now reaches `SetMetadataKeyInTx` directly, so `bd slot set` no longer validates against a configured metadata schema, and the recorded event payload changed shape (old `""` / new bare scalar, vs. the full old/new issue JSON `UpdateIssueInTx` records).
+
+**Fix:** route the guarded writes through the same pre-flight as the unguarded ones (main's `UpdateIssueChecked` shows the pattern — validate, then `withConn`), or better, per §1a/§1b, don't add parallel entry points at all.
+
+**B5 — The federation gate makes whole-row CAS dead on arrival for the normal beads topology, and is absent from the mode where it matters most.**
+`internal/storage/dolt/conditional_gate.go:66-79`; `internal/storage/embeddeddolt/conditional.go:46-73`
+
+`checkConditionalWriteGate` refuses whole-row CAS whenever *any* Dolt remote is configured. In beads, a configured remote is the documented normal state — `refs/dolt/data` sync via `bd dolt push`/`pull` is the architecture. So for essentially every real user, `bd update/close/assign/delete --if-revision` exits 13 unless they set `BD_ALLOW_UNSAFE_CAS=1`. Roughly half the PR's feature surface ships unusable by default, and neither `docs/cli-reference/cas.md` nor the `--if-revision` flag help mentions the gate or the env var (only the error string does).
+
+Worse, the gate is applied **only in `DoltStore`** (server mode). `EmbeddedDoltStore` — the default local mode, and the one with a Dolt remote in every synced repo — implements `UpdateIssueIfMatch`/`CloseIssueIfMatch`/`DeleteIssueIfMatch` with no gate at all. The safety check is missing from exactly the deployment it was written to protect.
+
+This is also self-contradictory within the PR: the gate's own doc comment says it fires *"until the revision-cell merge resolver lands"* — and the resolver is in this same diff.
+
+**Fix:** decide one way. Either the resolver closes the hole (drop the gate, keep the resolver), or it does not (keep the gate and apply it in `embeddeddolt` too, and document the limitation prominently). Shipping both, inconsistently, is the worst option.
+
+### SHOULD-FIX
+
+**S1 — Migration number collision.** `internal/storage/schema/migrations/0055_add_revision.up.sql`. Main already has `0055_move_leases_to_table` and is at `0059`. Two different `0055_*` migrations. Renumber to `0060` and update `internal/storage/schema/cli_migrations.go` (which conflicts).
+
+**S2 — The atomicity doc claim is wrong in one direction and self-contradictory in the other.** `internal/storage/issueops/conditional.go:44-48`: *"two concurrent writers necessarily write different values to the one metadata blob cell, so Dolt's cell-wise transaction merge forces a serialization conflict on all but one — no per-write nonce is required."* Two writers CAS-ing the same key to the **same** value produce a convergent cell write and would not conflict. What actually makes it sound is the fresh `revision = ?` nonce the same statement stamps (line 70) — i.e. a per-write nonce *is* required, and the code correctly has one. Fix the comment; it currently teaches a future maintainer that the nonce is removable.
+
+**S3 — Exhausted serialization retries surface as exit 1, not as a lost race.** `runIssueWrite` → `withRetryTx` (`internal/storage/dolt/store.go:897`) caps at `MaxElapsedTime` 5s (15s server). Beyond that `backoff.Retry` returns a raw 1213, which is not a `*PreconditionFailedError`, so `mapConditionalWriteError` (`cmd/bd/if_revision.go:73`) falls through to the generic handler and exit 1. Under sustained contention — precisely the case CAS exists for — the loser gets the wrong exit code. Map exhausted-serialization to the precondition code, or document it in the `ConditionalWriter` contract (which currently promises "may conservatively fail (return a precondition error)").
+
+**S4 — Guarded delete skips the reference-rewrite pass.** `cmd/bd/delete.go:484` `runGuardedDelete` bypasses the normal flow's text-reference rewriting and orphan reporting; the only record of that is a Go comment, not the flag help or `docs/cli-reference/delete.md`. Leaving dangling text references to a deleted ID is a data-quality regression relative to `bd delete --force`. Note `TestConformanceE2E/delete-force-reference-rewrite` is red in CI. Either reuse the cleanup or state the divergence in user-facing help.
+
+**S5 — Proxied mode is unimplemented, not just unsupported.** No `ConditionalWriter` on the proxied-server domain path, so `bd cas` and every `--if-revision` verb hard-fail there. The PR handles this honestly (never falls back silently), but for comparison main's #5008 wired guards through all three write stacks including proxied. If the goal is a primitive agents can rely on, mode-incomplete is a real gap; at minimum say so in the docs.
+
+**S6 — Concurrency tests are single-process only.** `internal/storage/dolt/conditional_test.go:180` and `internal/storage/embeddeddolt/revision_cas_test.go:22` are excellent (real Dolt, goroutine fan-out, exactly-one-winner, N−1 typed errors). But the failure mode #3575/#4657 describe is *cross-process* sub-second concurrency — separate `bd` invocations. Embedded Dolt's process-level file lock probably makes that safe, but nothing proves it. Add one multi-process test that shells the built binary.
+
+### NITs
+
+**N1 — The AST completeness guard has a false-negative hole.** `internal/storage/issueops/revision_guard_test.go:105`: `stampsRevision := strings.Contains(body, "revision")`. Any function whose body merely *mentions* the word (including in a comment — and several now do) passes without stamping. Tighten to something like `NewRevision()` or `revision = ?`. The guard's scope (`.` + `../domain/db`) is correct today — I verified no `UPDATE issues|wisps` exists outside those two dirs except in migrations — but the check itself is weaker than its docstring claims.
+
+**N2 — `docs/cli-reference/cas.md` documents no failure modes** beyond exit 9: no gate, no `BD_ALLOW_UNSAFE_CAS`, no proxied-mode limitation.
+
+**N3 — Dead-file churn.** The PR edits `internal/storage/mysql/schema.sql`, `internal/storage/postgres/schema.go`, `internal/storage/sqlite/schema.sql`, all deleted on main. Drop on rebase — these are the three modify/delete conflicts.
+
+### Verified sound (no findings)
+
+- `metadataJSONPath` / `validateMetadataKey` (`internal/storage/issueops/conditional.go:18-36`) — correct top-level-key quoting for dotted keys, correct escaping.
+- All placeholder/arg orderings in the guarded UPDATEs — I traced each; they match.
+- The retry-then-re-evaluate-guard pattern (`internal/storage/dolt/conditional.go:28-45`) — correct reuse of existing `withRetryTx`, and the `errCommitPhase` non-retry is the right conservative choice for CAS.
+- `NewRevision()` reroll-on-expected-match in `updateIssueInTx`/`closeIssueInTx` — right, and for the right stated reason (Dolt reports changed rows, not matched rows).
+- The `auxOrExemptMarkers` exemption analysis (is_blocked recompute, lease heartbeat) — genuinely good reasoning that survives the redesign.
+- CLI combination guards (`--if-revision` rejects `--claim`, label/parent edits, multi-ID, `--cascade`) — careful, and better than partially-guarding.
+- Docs regen is clean; no spurious federation tree.
+- `CGO_ENABLED=0 go build -tags gms_pure_go ./...` is green at PR head; the pure-Go revision unit tests pass.
+
+---
+
+## 3. Conflict inventory vs current main
+
+`git merge-tree` against `upstream/main`: **23 conflicting files.**
+
+**Modify/delete (trivial — drop the PR side):** `internal/storage/mysql/schema.sql`, `internal/storage/postgres/schema.go`, `internal/storage/sqlite/schema.sql`.
+
+**Trivial content conflicts (adjacent-line):** `docs/cli-reference/index.md`, `internal/storage/sqlbuild/sqlbuild.go`, `internal/storage/issueops/scan.go`, `internal/storage/issueops/lease.go`, `internal/storage/domain/db/issue_scan_parity_test.go`, `internal/telemetry/storage.go`.
+
+**Substantive — semantic reconciliation required, not textual:**
+
+| File | Why |
+|---|---|
+| `internal/storage/versioncontrolops/mergesettle.go` | Main rewrote this area around `automerge.go` (field-level 3-way merge). The PR's whole issues-conflict path is superseded. |
+| `internal/storage/storage.go` | Main added `ExpectedAssignee`/`ExpectedStatus`/`ErrStatusMismatch` to `UpdateIssueOptions`; PR adds a parallel `ConditionalWriter` + `PreconditionFailedError`. §1a. |
+| `cmd/bd/update.go` | Main added `--if-assignee`/`--if-status` + `ExitGuardMismatch`; PR adds `--if-revision` + colliding 13. §B3. |
+| `cmd/bd/close.go` | Main delegated `bd close` to the engine's guarded close (#4911/#4903). |
+| `internal/storage/issueops/update.go`, `close.go`, `claim.go`, `unclaim.go` | Main's `CheckExpectedFieldsInTx`/`CheckVersionInTx` land in the same functions the PR is threading `expectedRevision` through. |
+| `internal/storage/dolt/slots.go`, `internal/storage/embeddeddolt/slots.go` | Main rebuilt these on `MergeMetadata`; the PR rewrites them differently and less completely. §1b/§B4. |
+| `internal/storage/issueops/helpers.go` | Main added `row_lock` to `issueUpsertColumns`; PR adds `revision`. Ordering invariant (`updated_at` last) must survive. |
+| `internal/storage/schema/cli_migrations.go` | Migration number collision. §S1. |
+| `internal/storage/hook_decorator.go`, `internal/storage/domain/db/issue.go` | Mechanical once the above are settled. |
+
+This is not a rebase; it is a re-scope. The author already recognized this — his own 2026-07-19 comment parks the branch pending rebase, citing five failed automated attempts.
+
+---
+
+## 4. Test coverage assessment
+
+26 new test functions. **Quality is well above average for this repo's inbound PRs.**
+
+Strong:
+- Real-Dolt one-winner concurrency for both metadata CAS (`conditional_test.go:180`) and whole-row CAS (`revision_cas_test.go:96`, `embeddeddolt/revision_cas_test.go:22`), asserting exactly-1 win, N−1 typed precondition errors, and **zero raw errors** — that last assertion is what makes the serialization claim testable rather than asserted.
+- `TestAllIssueRowWritesBumpRevision` + `TestRevisionGuardHasTeeth` — an AST completeness guard *with a meta-test proving the guard fires*. That is genuinely good practice and worth keeping regardless of what happens to the rest.
+- `TestIssuesConflictTableExposesEveryColumn` — pins the `dolt_conflicts_issues` shape against real Dolt rather than assuming it.
+- Merge-resolver coverage of all five classes (revision-only, multi-column peer edit, updated_at wedge, real content conflict, modify/delete).
+
+Gaps:
+- **No CLI end-to-end test for `bd cas set/unset`.** `cmd/bd/if_revision_test.go` unit-tests three helpers; nothing exercises exit 9, the JSON conflict body, or the `--if`/`--if-absent` flag rules through the binary. Given that the exit-code contract is the whole point, this is the biggest hole.
+- **No test that `bd export`/`import` round-trips.** The existing protocol corpus caught it instead — which is the system working, but the PR should have owned that.
+- **No test that a configured metadata schema is still enforced** through the new `SlotSet` / `cas set` paths. It isn't (B4), and nothing noticed.
+- **No proxied-mode coverage** (feature absent).
+- **No multi-process concurrency test** (S6).
+- `conditional_gate_test.go` covers the gate's *error* and *env override*, and `TestConditionalWriteGateRefusesWithRemote` covers `DoltStore` — but there is no embedded twin, which is why B5's asymmetry went unnoticed.
+
+---
+
+## 5. Recommended maintainer response
+
+**Verdict: not land-after-rebase, not request-changes-and-park. Split — absorb three slices now, re-scope the core.**
+
+Per PR_MAINTAINER_GUIDELINES, the throughput-maximizing move here is to extract the parts that are still novel and land them with attribution, and give the author a precise, short re-scope for the rest — rather than leave a 3700-line branch rotting against a main that has moved under it four separate times.
+
+**Absorb now (maintainer-authored, `Co-Authored-By: Julian Knutsen`):**
+
+1. **Fresh-token minting on merge resolution** — `freshRevisionDistinctFrom` applied to `row_lock` inside `automerge.go`. ~15 lines. Fixes a live hazard in main today, independent of this PR: `ExpectedVersion` can be defeated by a stale token surviving an LWW-settled merge.
+2. **The AST completeness guard** — `TestAllIssueRowWritesBumpRevision` + `TestRevisionGuardHasTeeth`, retargeted at `row_lock`, with N1's `strings.Contains` weakness fixed. This is the piece that makes "widen row_lock stamping" (§1a) safe to do at all.
+3. **The exemption analysis** — the `auxOrExemptMarkers` reasoning about `is_blocked` recompute and lease heartbeat is correct and non-obvious; it should be preserved as documentation on `freshRowLock` regardless.
+
+**Ask the author to re-scope the rest as two small PRs on current main:**
+
+- **PR A — metadata CAS.** Add `expected *string` / `ifAbsent` preconditions to the *existing* `issueops.MergeMetadataInTx`, and put `bd cas set/unset` on top of that. No new storage interface, no schema change, keeps validation and the full event. ~200 lines including tests.
+- **PR B — `--if-revision` on the existing `RowVersion`.** Widen `row_lock` stamping to all content writes (guarded by slice 2 above), expose `UpdateIssueChecked`/`CloseIssueChecked`'s `ExpectedVersion` as `--if-revision`, reuse `ExitGuardMismatch`. No new column, no migration, no merge resolver, no gate.
+
+**Drop entirely:** the `revision` column and migration, `internal/storage/issueops/revision.go`, the `ConditionalWriter` interface, the mergesettle rewrite, the federation gate, the three dead schema files.
+
+### Draft first-response comment — key points to make
+
+Open by naming what's good, specifically, before anything else — this is a 16-day-old zero-response PR from a repeat contributor whose last two branches also collided with main, and the tone has to acknowledge that the collisions are partly the project's fault for not answering sooner.
+
+1. **Apologize for the silence.** 16 days, no maintainer word, on a PR that clearly took real effort. Say it plainly, once, and don't dwell.
+2. **Lead with the craft.** Name three things by name: the one-winner real-Dolt concurrency tests, the AST guard with its own teeth-test, and the `is_blocked`/heartbeat exemption analysis. These are better than what most PRs here ship.
+3. **Deliver the collision honestly and specifically.** Main moved four times under this branch — #4911 (his own, merged 07-22: `RowVersion` + `MergeMetadata`), #5008 (07-24: `--if-assignee`/`--if-status` + exit 13), #34695bdb6 (07-24: field-level automerge), #5006 (verified claim writes). Link each. Frame it as "you were right about the problem twice over — the second solution landed while this was waiting," not as "this is stale."
+4. **Make the duplication argument concretely, not abstractly.** `revision` vs `row_lock`: same type, same opacity, same equality-only contract, same tables. `CompareAndSetMetadataKeyInTx` vs `MergeMetadataInTx`: same transaction shape, same retry. Show the two-PR re-scope and the line-count difference — it's a much easier sell than "please rebase 3700 lines."
+5. **State the two hard blockers that are not about duplication**, because he'll want to know CI isn't just conflicts: the JSONL round-trip protocol violation (§J6.5/§J6.6, with the exact CI excerpt and the `TestRowVersionNeverSerialized` precedent) and the exit-13 collision. These would block even a conflict-free version.
+6. **Tell him what's being absorbed and credited now**, and that it lands with `Co-Authored-By` whether or not he takes the re-scope. That's the difference between "your work was rejected" and "your work shipped in a different shape."
+7. **Ask one design question, don't decide it for him:** the federation gate contradicts the merge resolver in the same diff. Which did he conclude was true? That answer determines whether `--if-revision` is usable for anyone with a remote, and he has real-Dolt data none of us do.
+
+---
+
+### Files referenced
+
+- PR worktree: `/var/home/matt/dev/mybd/.worktrees/beads/pr-4682-review`
+- Main checkout: `/var/home/matt/dev/mybd/bd-main`
+- Competing/superseding design doc on main: `/var/home/matt/dev/mybd/bd-main/PROPOSAL-cas-conditional-update.md`
+- Superseding merge implementation: `/var/home/matt/dev/mybd/bd-main/internal/storage/versioncontrolops/automerge.go`
+- Existing whole-row CAS contract: `/var/home/matt/dev/mybd/bd-main/internal/storage/storage.go:300-350`
+- Existing atomic metadata merge: `/var/home/matt/dev/mybd/bd-main/internal/storage/dolt/slots.go:12-53`</result>
+<usage><subagent_tokens>160372</subagent_tokens><tool_uses>64</tool_uses><duration_ms>684889</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0975941b4d3f5e02</task-id>
+<tool-use-id>toolu_01LogEHoVsgDN7PcdveZszEu</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/dba5e7da-98eb-4e34-b447-fab9cf383bf3/tasks/a0975941b4d3f5e02.output</output-file>
+<status>completed</status>
+<summary>Agent "Freshness recon: 12 test-ci issues" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Summary
+
+Full findings written to `/tmp/claude-1000/-var-home-matt-dev-mybd/0cfae7ae-f32b-4ece-8102-f6c52d6a5649/scratchpad/sweep-test-ci-freshness.md`
+
+**12-Row Summary Table:**
+
+| Issue | State | Freshness Read |
+|-------|-------|-----------------|
+| 3811 | OPEN | Stale — 12 days, reproducible under CI load but no fix progress |
+| 4937 | OPEN | Recent + has fix — external patch (290eee721) available but not integrated |
+| 5031 | CLOSED | Recently resolved — closed yesterday (likely via recent PR merges) |
+| 5034 | CLOSED | Recently resolved — closed yesterday (CI infrastructure update) |
+| 5070 | OPEN | Active — PR 5073 open and in flight to fix conformance timeout |
+| 4860 | OPEN | Stale — 9 days, structural CI config blocks doctor Dolt tests, blocking PR 4858 |
+| 4638 | OPEN | Old — 19 days, clustered Windows issues, no PR yet |
+| 3805 | OPEN | Very stale — 81 days, Windows hook tests, no progress |
+| 3800 | OPEN | Very stale — 81 days, Windows hook execution, skipped not fixed |
+| 3796 | OPEN | Very stale — 81 days, Windows path heredoc issue, no progress |
+| 3798 | OPEN | Very stale — 81 days, Windows file lock cleanup, assertions pass but cleanup fails |
+| 5071 | OPEN | Active — PR 5074 open, fixing POSIX-only fixtures for Windows tests |</result>
+<usage><subagent_tokens>39881</subagent_tokens><tool_uses>7</tool_uses><duration_ms>111814</duration_ms></usage>
+</task-notification>
