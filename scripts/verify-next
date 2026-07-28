@@ -48,6 +48,16 @@ verify_env=()
 [[ -n "$VERIFY_CC" && -x "$VERIFY_CC" ]] && verify_env+=("CC=$VERIFY_CC")
 [[ -n "$VERIFY_CXX" && -x "$VERIFY_CXX" ]] && verify_env+=("CXX=$VERIFY_CXX")
 
+# Go writes link/compile scratch to TMPDIR; on tmpfs /tmp (often 20G shared
+# with every other session's test fixtures) full suites die with
+# "disk quota exceeded" mid-link (observed 2026-07-28, mybd-psxg.2/uiiu).
+# Route Go's scratch to disk-backed storage. VERIFY_GOTMPDIR= disables.
+VERIFY_GOTMPDIR="${VERIFY_GOTMPDIR-/var/tmp/verify-gotmp}"
+if [[ -n "$VERIFY_GOTMPDIR" ]]; then
+  mkdir -p "$VERIFY_GOTMPDIR" 2>/dev/null &&
+    verify_env+=("GOTMPDIR=$VERIFY_GOTMPDIR" "TMPDIR=$VERIFY_GOTMPDIR")
+fi
+
 if [[ $# -gt 1 ]]; then
   usage >&2
   exit 2
