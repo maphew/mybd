@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "136d680964ce",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-27-open-pr-overlap-clusters.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/13/6d680964ce/0/metadata.json",
+      "transcript": "/13/6d680964ce/0/full.jsonl",
+      "compact_transcript": "/13/6d680964ce/0/transcript.jsonl",
+      "content_hash": "/13/6d680964ce/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 20897,
+    "cache_read_tokens": 1106632,
+    "output_tokens": 12007,
+    "api_call_count": 12
+  }
+}
