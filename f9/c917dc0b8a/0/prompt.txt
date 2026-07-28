@@ -1,0 +1,11 @@
+You are assisting a maintainer of gastownhall/beads with duplicate-PR dispositions and pre-merge review. In /tmp/claude-1000/-var-home-matt-dev-mybd/50a1f1f4-5639-400a-ad1e-00224fa105a6/scratchpad/diffs/ you have, for PRs 4288 4348 4350 4720 4764 4804 3802 3806 3812 4828 4206 5086 5087: NNNN.diff (full diff vs main) and NNNN.meta.json (title, body, all comments and reviews). Read them and answer:
+
+PART A — duplicate supersession checks (compare diffs line-by-line, cite evidence):
+A1. Does 4348 (keep-candidate) cover everything 4288 does about suppressing empty Dolt commits — especially any embedded/ephemeral code paths or test coverage present only in 4288? List anything 4288 has that 4348 lacks and say whether it matters.
+A2. Does 4720 (keep-candidate, mergeable) fully cover 4350's mol-bond operand routing fix? List any unique test coverage or edge-case handling in 4350 absent from 4720, and whether it's worth absorbing before closing 4350.
+A3. Does 4804 (keep-candidate) cover 4764's migration-lock skip? List anything unique in 4764 (draft) and whether it matters.
+A4. 5086 vs 5087 (same author, proxied-server DB creation): confirm 5087 strictly contains/supersedes 5086's behavior, or identify any behavioral difference where the narrower 5086 does something 5087 does not.
+
+PART B — merge-safety review of small mergeable PRs (3802, 3806, 3812, 4828, 4206): for each, verdict SAFE / SAFE-WITH-NITS / NOT-SAFE for merging as-is, with one-paragraph rationale. Check: does the diff do what the title says, any behavior change beyond stated scope, test-only vs production code, red flags in existing review comments (read the meta.json reviews/comments — if a prior reviewer requested changes that were never addressed, flag it).
+
+Output a Markdown report with clear A1-A4 verdicts (COVERED / GAPS: ...) and B verdicts per PR. Be concrete and cite file/hunk evidence.
