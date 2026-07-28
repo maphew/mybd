@@ -37,7 +37,7 @@ mybd	claude-code	b342548b-c790-484b-a21d-8fd8ded97712	2026-07-25	786	digested	sw
 mybd	claude-code	7c0a9e9e-2c70-46ee-ac80-b9c2f4c342e8	2026-07-25	831	digested	sweep-3d	prime-truncation find
 mybd	claude-code	b943fbbb-db5d-47f2-bad4-95841d5b6adb	2026-07-24	90	skipped-trivial	sweep-3d	
 mybd	claude-code	b7fca1f7-8626-4c9e-baf4-59e5b46342ef	2026-07-25	24	skipped-trivial	sweep-3d	
-mybd	claude-code	ca11a7ab-9889-4762-9487-da28f6c03780	2026-07-25	104	skipped-inflight	sweep-3d	this audit session
+mybd	claude-code	ca11a7ab-9889-4762-9487-da28f6c03780	2026-07-25	2313	synthesized	sweep-2d-0727	was inflight in sweep-3d, now complete
 mybd	codex	019f8f94-674a-b2c9db33	2026-07-23	1625	digested	sweep-3d	
 mybd	codex	019f91be-8802-d4d8a086	2026-07-23	810	digested	sweep-3d	
 mybd	codex	019f91c4-cea6-06050395	2026-07-23	1538	digested	sweep-3d	
@@ -48,3 +48,23 @@ mybd	codex	019f9a18-f9ae-d90ba750	2026-07-25	1692	digested	sweep-3d
 mybd	codex	019f9b26-6ebe-5bf7ff1d	2026-07-25	436	digested	sweep-3d	codex-side machinery retro (lq8i.2)
 mybd	amp	T-019f8f5b+4more	2026-07-22..24	0	skipped-no-transcript	sweep-3d	5 threads server-side only; cli.log clean
 mybd	kilocode	none	-	0	skipped-inactive	sweep-3d	no activity since 2026-01/03
+mybd	claude-code	108e8ad4-b658-41e7-b464-5a8394bea2cd	2026-07-25	1125	synthesized	sweep-2d-0727	
+mybd	claude-code	43f58618-5bd9-468d-b237-dd0613a009d9	2026-07-25	319	synthesized	sweep-2d-0727	
+mybd	claude-code	13e762f9-e24a-4921-97f1-8d18137fbd14	2026-07-26	243	synthesized	sweep-2d-0727	
+mybd	claude-code	6d370e33-c71a-459a-b63b-a860d033f9c8	2026-07-25	953	synthesized	sweep-2d-0727	
+mybd	claude-code	96d8b3bb-6269-4077-96cd-8b4d6cfea88d	2026-07-25	1684	synthesized	sweep-2d-0727	
+mybd	claude-code	70d60b78-c307-4ebe-b1c2-d21d1e13c77f	2026-07-25	1258	synthesized	sweep-2d-0727	
+mybd	claude-code	dba5e7da-98eb-4e34-b447-fab9cf383bf3	2026-07-26	121	synthesized	sweep-2d-0727	
+mybd	claude-code	dae40981-2fb3-4a2a-9f6b-fdab4e746416	2026-07-26	1528	synthesized	sweep-2d-0727	
+mybd	claude-code	121a1545-9773-489f-b3ae-5acca5e4ffd6	2026-07-26	185	synthesized	sweep-2d-0727	
+mybd	claude-code	e4d4db15-8aa8-49e2-abb1-e56fa80987d6	2026-07-26	892	synthesized	sweep-2d-0727	
+mybd	claude-code	61b85b60-5931-45cd-a13c-d1f0ceb3b684	2026-07-26	340	synthesized	sweep-2d-0727	
+mybd	claude-code	03353724-8668-472c-a128-448f9652b221	2026-07-26	2214	synthesized	sweep-2d-0727	
+mybd	claude-code	915209f2-a8a2-40ad-8ccf-15b221d410ad	2026-07-26	1117	synthesized	sweep-2d-0727	
+mybd	claude-code	0cfae7ae-f32b-4ece-8102-f6c52d6a5649	2026-07-26	1914	synthesized	sweep-2d-0727	
+mybd	claude-code	1bdfcf27-aa49-44ad-b764-7fce84998d06	2026-07-26	254	synthesized	sweep-2d-0727	
+mybd	claude-code	68b8c9f9-3ded-4207-8db5-cd8d38975d4f	2026-07-26	1243	synthesized	sweep-2d-0727	
+mybd	claude-code	524e528f-fb27-4deb-8156-929f23dbcefa	2026-07-26	1363	synthesized	sweep-2d-0727	
+mybd	claude-code	9b719735-0a21-4c0f-8fc9-e5ab1b9dea5e	2026-07-26	1413	synthesized	sweep-2d-0727	
+mybd	claude-code	3db8e4ec-6015-47e9-99e9-2c9c33281f72	2026-07-27	353	skipped-inflight	sweep-2d-0727	active during sweep
+mybd	claude-code	c1284883-2506-4a06-8b09-894086e3fb2a	2026-07-27	80	skipped-inflight	sweep-2d-0727	this retro session
