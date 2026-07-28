@@ -1,0 +1,1 @@
+tackle ready items, clustering into batches and delegating as appropriate. Check for freshness  against gh repo before initiating work. Loop until context window is ~70% consumed  then end session. We are not only ones active here.
