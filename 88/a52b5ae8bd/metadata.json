@@ -3,7 +3,7 @@
   "checkpoint_id": "88a52b5ae8bd",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 3,
+  "checkpoints_count": 4,
   "files_touched": [
     "reports/2026-07-28-rebase-debt-worklist.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/88/a52b5ae8bd/1/transcript.jsonl",
       "content_hash": "/88/a52b5ae8bd/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/88/a52b5ae8bd/2/metadata.json",
+      "transcript": "/88/a52b5ae8bd/2/full.jsonl",
+      "compact_transcript": "/88/a52b5ae8bd/2/transcript.jsonl",
+      "content_hash": "/88/a52b5ae8bd/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 56198,
-    "cache_creation_tokens": 214309,
-    "cache_read_tokens": 24163724,
-    "output_tokens": 89991,
-    "api_call_count": 192
+    "input_tokens": 56202,
+    "cache_creation_tokens": 215695,
+    "cache_read_tokens": 24265909,
+    "output_tokens": 91639,
+    "api_call_count": 194
   }
 }
