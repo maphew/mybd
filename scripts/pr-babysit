@@ -595,7 +595,10 @@ done < <(jq -c '.[]' <<<"$CLOSE_QUEUE")
 REVIEW_REPO="${PR_BABYSIT_REVIEW_REPO:-gastownhall/beads}"
 REVIEW_SELF_LOGINS="${PR_BABYSIT_SELF_LOGINS:-maphew}"
 REVIEW_CREATE_LIMIT="${PR_BABYSIT_REVIEW_CREATE_LIMIT:-10}"
-REVIEW_STATE="$STATE_DIR/review-sweep.state"
+# State is scoped per watched repo: a REVIEW_REPO change must start its own
+# watermark (first pass seeds silently), not inherit another repo's file and
+# flood the queue with that repo's entire backlog.
+REVIEW_STATE="$STATE_DIR/review-sweep.${REVIEW_REPO//\//_}.state"
 REVIEW_LIST_LIMIT=200
 
 is_self_login() {
@@ -627,7 +630,7 @@ review_enqueue() {
   local existing all r bead
   all='[]'
   while IFS= read -r r; do
-    existing="$(bd list --external-ref "$r" --json 2>/dev/null)" || { log "review: $REVIEW_REPO#$pr bd list failed; retained"; return 1; }
+    existing="$(bd list --external-ref "$r" --limit 0 --json 2>/dev/null)" || { log "review: $REVIEW_REPO#$pr bd list failed; retained"; return 1; }
     jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$existing" || { log "review: $REVIEW_REPO#$pr bd list malformed; retained"; return 1; }
     all="$(jq -c --argjson more "$existing" '. + $more' <<<"$all")"
   done < <(review_refs "$pr")
@@ -670,6 +673,10 @@ Review per PR_MAINTAINER_GUIDELINES.md, then close this bead (post-review activi
 # Attribution for same-head activity and for moved heads.  Suppress only when
 # every attributable post-baseline event is self; anything unreadable or
 # unattributable counts as non-self (fail-open toward queueing a review).
+# Known coverage boundary: an updatedAt bump that surfaces in none of
+# comments/reviews/commits (label edits, milestone changes, and inline
+# review-thread replies not wrapped in a submitted review) is treated as
+# quiet and the baseline advances — the next surfaced activity re-queues.
 review_activity_is_self_only() {
   local pr="$1" base_epoch="$2" head_moved="$3" act_err act ts_authors
   act_err="$STATE_DIR/gh-review.err"
@@ -677,10 +684,19 @@ review_activity_is_self_only() {
   rm -f "$act_err"
   jq -e '(.comments | type == "array") and (.reviews | type == "array") and (.commits | type == "array")' >/dev/null 2>/dev/null <<<"$act" || return 1
   # Comments and reviews newer than the baseline, tagged with author login.
-  ts_authors="$(jq -r '((.comments + .reviews)[]) | [((.createdAt // .submittedAt) // ""), ((.author.login) // "")] | @tsv' <<<"$act" 2>/dev/null)" || return 1
+  # Unit separator, not @tsv: tab is IFS whitespace, so a leading tab (empty
+  # timestamp) would be stripped by read and shift the login into $ts.
+  ts_authors="$(jq -r '((.comments + .reviews)[]) | [((.createdAt // .submittedAt) // ""), ((.author.login) // "")] | join("\u001f")' <<<"$act" 2>/dev/null)" || return 1
   local ts login ts_epoch
-  while IFS=$'\t' read -r ts login; do
-    [[ -n "$ts" ]] || { [[ -n "$login" ]] && return 1; continue; }
+  while IFS=$'\x1f' read -r ts login; do
+    if [[ -z "$ts" ]]; then
+      # No timestamp: a self login here is the maintainer's own pending
+      # (unsubmitted) review — never a re-queue trigger.  A non-self or
+      # missing login with no timestamp is unattributable: queue.
+      [[ -z "$login" ]] && continue
+      is_self_login "$login" && continue
+      return 1
+    fi
     ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null)" || return 1
     [[ -n "$ts_epoch" ]] || return 1
     if (( ts_epoch > base_epoch )); then is_self_login "$login" || return 1; fi
@@ -732,7 +748,10 @@ review_sweep() {
   fi
 
   review_created=0; review_dropped=0
-  new_state="$(mktemp "$STATE_DIR/review-sweep.state.XXXXXX")" || { log "review: mktemp failed; sweep skipped"; return 0; }
+  # Stale temp files can only come from a crashed prior pass — the flock at
+  # the top of the script guarantees no concurrent writer.
+  rm -f "$REVIEW_STATE".tmp.*
+  new_state="$(mktemp "$REVIEW_STATE.tmp.XXXXXX")" || { log "review: mktemp failed; sweep skipped"; return 0; }
   local item num title url author old_upd old_head old_draft reason base_epoch head_moved
   while read -r item; do
     num="$(jq -r '.number' <<<"$item")"; upd="$(jq -r '.updatedAt' <<<"$item")"
@@ -788,11 +807,16 @@ review_sweep() {
   # unclaimed beads in the watched repo are closed, and only after a direct
   # per-PR state confirmation (the list above may be truncated).
   local rq rbead rref rrepo rpr rstate_json rstate rq_err
-  rq="$(bd list --label review-needed --json 2>/dev/null)" || return 0
+  rq="$(bd list --label review-needed --limit 0 --json 2>/dev/null)" || return 0
   jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$rq" || return 0
   while read -r item; do
     rbead="$(jq -r '.id // empty' <<<"$item")"; [[ -n "$rbead" ]] || continue
     [[ "$(jq -r '.status' <<<"$item")" == open && -z "$(jq -r '.assignee // empty' <<<"$item")" ]] || continue
+    # A bead in another lane — or parked by one (merge-blocked/close-blocked
+    # deliberately hold a needs-a-human signal open) — is never closed here.
+    if jq -e '(.labels // []) | (index("merge-when-green") // index("close-when-quiet") // index("merge-blocked") // index("close-blocked")) != null' >/dev/null 2>/dev/null <<<"$item"; then
+      continue
+    fi
     rref="$(jq -r '.external_ref // empty' <<<"$item")"
     if [[ "$rref" =~ ^gh:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
       rrepo="${BASH_REMATCH[1]}"; rpr="${BASH_REMATCH[2]}"

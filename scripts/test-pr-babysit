@@ -53,12 +53,13 @@ printf '%s\n' "$*" >>"$FAKE_BD_LOG"
 [[ -z "${FAKE_BD_FAIL_MATCH:-}" || " $* " != *"$FAKE_BD_FAIL_MATCH"* ]] || exit 1
 case "${1:-}" in
   list)
+    # Like production bd, closed beads are excluded unless --status names them.
     if [[ " $* " == *" --label "* ]]; then
       lbl=""; for arg in "$@"; do [[ "${next:-}" == 1 ]] && lbl="$arg" && unset next; [[ "$arg" == "--label" ]] && next=1; done
-      jq --arg l "$lbl" '[.[] | select((.labels // []) | index($l))]' "$FAKE_QUEUE"
+      jq --arg l "$lbl" '[.[] | select(.status != "closed") | select((.labels // []) | index($l))]' "$FAKE_QUEUE"
     else
       ref=""; for arg in "$@"; do [[ "${next:-}" == 1 ]] && ref="$arg" && unset next; [[ "$arg" == "--external-ref" ]] && next=1; done
-      jq --arg ref "$ref" '[.[] | select(.external_ref == $ref)]' "$FAKE_QUEUE"
+      jq --arg ref "$ref" '[.[] | select(.status != "closed") | select(.external_ref == $ref)]' "$FAKE_QUEUE"
     fi
     ;;
   show) jq --arg id "$2" '[.[] | select(.id == $id)]' "$FAKE_QUEUE" ;;
@@ -582,7 +583,7 @@ reset_review() {
   jq -cn '[]' >"$FAKE_QUEUE"
   export PR_BABYSIT_REVIEW=1 FAKE_PR_LIST='[]'
 }
-review_state() { cat "$XDG_STATE_HOME/pr-babysit/review-sweep.state" 2>/dev/null; }
+review_state() { cat "$XDG_STATE_HOME/pr-babysit/review-sweep.gastownhall_beads.state" 2>/dev/null; }
 patrol_log() { cat "$XDG_STATE_HOME/pr-babysit/patrol.log" 2>/dev/null; }
 
 # Activation seeds the baseline silently (watermark: no backlog flood).
@@ -685,6 +686,47 @@ run_patrol
 patrol_log | grep -q 'creation cap' || fail "cap deferral was not logged"
 run_patrol
 [[ "$(count '^create' "$FAKE_BD_LOG")" == 2 ]] || fail "capped PR was not retried next pass"
+
+# Re-queue after close: a CLOSED prior review bead does not suppress a fresh
+# one — later contributor activity queues a new review cycle.
+reset_review review-requeue
+export FAKE_PR_LIST="[$(pr_json 410 "$T0" "$head_a" false)]"
+run_patrol   # seed
+jq -cn '[{id:"mybd-prior", status:"closed", assignee:"", labels:["review-needed"], external_ref:"gh-pr-410", notes:"", metadata:{}}]' >"$FAKE_QUEUE"
+export FAKE_PR_LIST="[$(pr_json 410 "$T1" "$head_a" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json "[{\"createdAt\":\"$T1\",\"author\":{\"login\":\"contributor\"}}]")"
+run_patrol
+grep -q -- 'external-ref=gh-pr-410' "$FAKE_BD_LOG" || fail "closed prior bead suppressed the re-queue"
+
+# An unreadable activity view fails open: the event queues a review.
+reset_review review-activity-fail
+export FAKE_PR_LIST="[$(pr_json 420 "$T0" "$head_a" false)]"
+run_patrol   # seed
+export FAKE_PR_LIST="[$(pr_json 420 "$T1" "$head_a" false)]" FAKE_ACTIVITY_EXIT=1
+run_patrol
+grep -q -- 'external-ref=gh-pr-420' "$FAKE_BD_LOG" || fail "unreadable activity view did not fail open"
+
+# The maintainer's own pending (unsubmitted) review — login, no timestamp —
+# never re-queues; a non-self pending entry stays fail-open.
+reset_review review-pending
+export FAKE_PR_LIST="[$(pr_json 430 "$T0" "$head_a" false)]"
+run_patrol   # seed
+export FAKE_PR_LIST="[$(pr_json 430 "$T1" "$head_a" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json '[]' '[{"author":{"login":"maphew"}}]')"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "own pending review re-queued the PR"
+export FAKE_PR_LIST="[$(pr_json 430 "$T2" "$head_a" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json '[]' '[{"author":{"login":"contributor"}}]')"
+run_patrol
+grep -q -- 'external-ref=gh-pr-430' "$FAKE_BD_LOG" || fail "non-self pending entry did not fail open"
+
+# The reverse pass never closes a queue entry that another lane parked, even
+# unclaimed: merge-blocked/close-blocked hold a needs-a-human signal open.
+reset_review review-cleanup-parked
+jq -cn '[{id:"mybd-parked", status:"open", assignee:"", labels:["review-needed","merge-blocked"], external_ref:"gh-pr-702", notes:"", metadata:{}}]' >"$FAKE_QUEUE"
+export FAKE_PR_STATE=MERGED
+run_patrol
+[[ "$(count '^close mybd-parked' "$FAKE_BD_LOG")" == 0 ]] || fail "parked (merge-blocked) queue entry was closed"
 
 # A failed bd create retains the baseline and retries.
 reset_review review-create-fail
