@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "ba559e539e63",
+  "session_id": "50a1f1f4-5639-400a-ad1e-00224fa105a6",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-28T20:08:12.202214406Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-28-rebase-debt-classification.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "3510682d0af4",
+  "checkpoint_transcript_start": 183,
+  "transcript_lines_at_start": 183,
+  "compact_transcript_start": 36,
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 128606,
+    "cache_read_tokens": 1569033,
+    "output_tokens": 15061,
+    "api_call_count": 15
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-28T20:08:12.154894341Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 135,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 135,
+    "total_lines_changed": 135,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}

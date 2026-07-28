@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "ba559e539e63",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-28-rebase-debt-classification.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ba/559e539e63/0/metadata.json",
+      "transcript": "/ba/559e539e63/0/full.jsonl",
+      "compact_transcript": "/ba/559e539e63/0/transcript.jsonl",
+      "content_hash": "/ba/559e539e63/0/content_hash.txt",
+      "prompt": "/ba/559e539e63/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 128606,
+    "cache_read_tokens": 1569033,
+    "output_tokens": 15061,
+    "api_call_count": 15
+  }
+}
