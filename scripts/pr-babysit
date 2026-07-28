@@ -296,7 +296,8 @@ while read -r item; do
     rerun_head="$(jq -r '.pr_babysit_rerun_head // empty' <<<"$metadata")"
     legacy_spent=0; [[ "$notes" == *"flake-rerun-done"* ]] && legacy_spent=1
     if [[ "$rerun_policy" == allowed && "$rerun_head" != "$head" && "$legacy_spent" == 0 ]]; then
-      runs="$(jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | (.link // "") | capture("/runs/(?<id>[0-9]+)")?.id // empty' <<<"$checks" | sort -u)"
+      # ()? instead of postfix ?. — jq 1.7 rejects the latter at compile time.
+      runs="$(jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | (((.link // "") | capture("/runs/(?<id>[0-9]+)").id)? // empty)' <<<"$checks" | sort -u)"
       if [[ -z "$runs" ]]; then block "$bead" "$metadata" "$notes" "checks-no-rerun-target:$head" "Failing checks have no rerunnable run; needs agent judgment."; continue; fi
       # Reserve before calling GitHub: a crash after reservation conservatively
       # spends the one-rerun budget for this head.
