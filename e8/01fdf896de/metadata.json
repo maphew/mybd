@@ -3,7 +3,7 @@
   "checkpoint_id": "e801fdf896de",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-28-duncan4123-disposition-drafts.md"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/e8/01fdf896de/0/transcript.jsonl",
       "content_hash": "/e8/01fdf896de/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/e8/01fdf896de/1/metadata.json",
+      "transcript": "/e8/01fdf896de/1/full.jsonl",
+      "compact_transcript": "/e8/01fdf896de/1/transcript.jsonl",
+      "content_hash": "/e8/01fdf896de/1/content_hash.txt",
+      "prompt": "/e8/01fdf896de/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 46,
-    "cache_creation_tokens": 21468,
-    "cache_read_tokens": 4183906,
-    "output_tokens": 13685,
-    "api_call_count": 23
+    "input_tokens": 52,
+    "cache_creation_tokens": 50518,
+    "cache_read_tokens": 4305411,
+    "output_tokens": 15081,
+    "api_call_count": 26
   }
 }

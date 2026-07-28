@@ -1,0 +1,5 @@
+sweep github open PRs, oldest to newest, and look for duplicates, overlap and opportunities to consolidate and/or group into clusters. beware of gh and bd commands that automatically apply limits to results, making it look like there are less items than there are.
+
+---
+
+quota limit approaching, lean on codex. your role is orchestration.
