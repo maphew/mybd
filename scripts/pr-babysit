@@ -580,3 +580,241 @@ while read -r item; do
     close_retain "$bead" "$metadata" "gh pr close failed"
   fi
 done < <(jq -c '.[]' <<<"$CLOSE_QUEUE")
+
+# --- review-needed: zero-token review-coverage detector ----------------------
+# The third lane never merges, closes, or posts anything upstream.  It keeps a
+# `review-needed` queue in bd so that PR reviews happen on first open and on
+# follow-up activity, watermarked from lane activation (owner decision, maphew
+# 2026-07-28: no backlog flood; the pre-activation backlog is a one-time sweep
+# bead).  Per-ref baselines live in a tri-drift-style state file; a baseline
+# only advances after the event it encodes has been handled, so any gh/bd
+# failure retries on the next pass.  The lane's only mutations are bead
+# creation, adding the review-needed label to an unclaimed bead, and closing
+# unclaimed review-needed beads whose PR terminated upstream — claimed beads
+# and beads in the merge/close lanes are never touched.
+REVIEW_REPO="${PR_BABYSIT_REVIEW_REPO:-gastownhall/beads}"
+REVIEW_SELF_LOGINS="${PR_BABYSIT_SELF_LOGINS:-maphew}"
+REVIEW_CREATE_LIMIT="${PR_BABYSIT_REVIEW_CREATE_LIMIT:-10}"
+REVIEW_STATE="$STATE_DIR/review-sweep.state"
+REVIEW_LIST_LIMIT=200
+
+is_self_login() {
+  local login="$1" self
+  [[ -n "$login" ]] || return 1   # unattributable activity is never "self"
+  for self in ${REVIEW_SELF_LOGINS//,/ }; do
+    [[ "$login" == "$self" ]] && return 0
+  done
+  return 1
+}
+
+# Canonical bd refs for a PR in the watched repo.  tri-pull's dedup only sees
+# gh-pr-N style refs, so created beads use that form for the default repo to
+# stay visible to the triage pipeline; other repos get the explicit gh: form.
+review_refs() {
+  local pr="$1"
+  if [[ "$REVIEW_REPO" == "gastownhall/beads" ]]; then
+    printf 'gh-pr-%s\ngh:%s#%s\n' "$pr" "$REVIEW_REPO" "$pr"
+  else
+    printf 'gh:%s#%s\n' "$REVIEW_REPO" "$pr"
+  fi
+}
+
+# Ensure a review-needed queue entry exists for one PR.  Returns 0 when the
+# event is durably represented in bd (baseline may advance), 1 when it is not
+# (baseline must be retained so the next pass retries).
+review_enqueue() {
+  local pr="$1" title="$2" url="$3" author="$4" reason="$5"
+  local existing all r bead
+  all='[]'
+  while IFS= read -r r; do
+    existing="$(bd list --external-ref "$r" --json 2>/dev/null)" || { log "review: $REVIEW_REPO#$pr bd list failed; retained"; return 1; }
+    jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$existing" || { log "review: $REVIEW_REPO#$pr bd list malformed; retained"; return 1; }
+    all="$(jq -c --argjson more "$existing" '. + $more' <<<"$all")"
+  done < <(review_refs "$pr")
+  # Someone already owns the PR (claimed bead), a patrol lane owns its tail,
+  # or it is already queued: the event is covered, nothing to add.
+  if jq -e 'any(.[]; .status == "in_progress" or ((.assignee // "") != "") or (((.labels // []) | index("review-needed") // index("merge-when-green") // index("close-when-quiet")) != null))' >/dev/null 2>/dev/null <<<"$all"; then
+    return 0
+  fi
+  bead="$(jq -r '[.[] | select(.status == "open")][0].id // empty' <<<"$all")"
+  if [[ -n "$bead" ]]; then
+    if bd update "$bead" --add-label review-needed \
+         --append-notes "[pr-babysit $(date -u +%FT%TZ)] review-needed: $reason ($url)" >/dev/null 2>&1; then
+      log "review: labeled $bead review-needed for $REVIEW_REPO#$pr ($reason)"
+      return 0
+    fi
+    log "review: label mutation failed for $bead ($REVIEW_REPO#$pr); retained"
+    return 1
+  fi
+  if (( review_created >= REVIEW_CREATE_LIMIT )); then
+    review_dropped=$((review_dropped + 1))
+    return 1
+  fi
+  local ref
+  ref="$(review_refs "$pr" | head -n1)"
+  if bd create --title="Review: $title ($REVIEW_REPO#$pr)" \
+       --description="$url
+
+Author: $author
+Queued by the pr-babysit review lane: $reason.
+Review per PR_MAINTAINER_GUIDELINES.md, then close this bead (post-review activity re-queues automatically)." \
+       --type=task --priority=2 --labels review-needed --external-ref="$ref" >/dev/null 2>&1; then
+    review_created=$((review_created + 1))
+    log "review: created review-needed bead for $REVIEW_REPO#$pr ($reason)"
+    return 0
+  fi
+  log "review: bd create failed for $REVIEW_REPO#$pr; retained"
+  return 1
+}
+
+# Attribution for same-head activity and for moved heads.  Suppress only when
+# every attributable post-baseline event is self; anything unreadable or
+# unattributable counts as non-self (fail-open toward queueing a review).
+review_activity_is_self_only() {
+  local pr="$1" base_epoch="$2" head_moved="$3" act_err act ts_authors
+  act_err="$STATE_DIR/gh-review.err"
+  act="$(gh pr view "$pr" --repo "$REVIEW_REPO" --json comments,reviews,commits 2>"$act_err")" || { [[ -s "$act_err" ]] && log "review: gh pr view (activity $REVIEW_REPO#$pr) stderr: $(tr '\n' ' ' <"$act_err" | cut -c1-200)"; rm -f "$act_err"; return 1; }
+  rm -f "$act_err"
+  jq -e '(.comments | type == "array") and (.reviews | type == "array") and (.commits | type == "array")' >/dev/null 2>/dev/null <<<"$act" || return 1
+  # Comments and reviews newer than the baseline, tagged with author login.
+  ts_authors="$(jq -r '((.comments + .reviews)[]) | [((.createdAt // .submittedAt) // ""), ((.author.login) // "")] | @tsv' <<<"$act" 2>/dev/null)" || return 1
+  local ts login ts_epoch
+  while IFS=$'\t' read -r ts login; do
+    [[ -n "$ts" ]] || { [[ -n "$login" ]] && return 1; continue; }
+    ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null)" || return 1
+    [[ -n "$ts_epoch" ]] || return 1
+    if (( ts_epoch > base_epoch )); then is_self_login "$login" || return 1; fi
+  done <<<"$ts_authors"
+  if [[ "$head_moved" == 1 ]]; then
+    # A moved head is self only when commits newer than the baseline exist and
+    # every one of them is authored solely by self logins.  A push with no
+    # newer committedDate (force-push to an older commit) is unattributable.
+    local newer verdict
+    newer="$(jq -r --argjson base "$base_epoch" '
+      [.commits[] | select(((.committedDate // "") | length) > 0)
+        | select((.committedDate | fromdateiso8601? // 0) > $base)]
+      | if length == 0 then "none"
+        elif all(.[]; ((.authors // []) | length > 0) and all(.authors[]; (.login // "") != "")) then "attributed"
+        else "unattributed" end' <<<"$act" 2>/dev/null)" || return 1
+    [[ "$newer" == attributed ]] || return 1
+    verdict="$(jq -r --argjson base "$base_epoch" --arg selfs "$REVIEW_SELF_LOGINS" '
+      ($selfs | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $self
+      | [.commits[] | select((.committedDate | fromdateiso8601? // 0) > $base) | .authors[].login]
+      | all(.[]; . as $l | $self | index($l) != null)' <<<"$act" 2>/dev/null)" || return 1
+    [[ "$verdict" == true ]] || return 1
+  fi
+  return 0
+}
+
+review_sweep() {
+  [[ "${PR_BABYSIT_REVIEW:-1}" == 1 ]] || return 0
+  local list_err prs first_run=0 new_state
+  list_err="$STATE_DIR/gh-review-list.err"
+  prs="$(gh pr list --repo "$REVIEW_REPO" --state open --limit "$REVIEW_LIST_LIMIT" \
+        --json number,title,url,author,updatedAt,headRefOid,isDraft 2>"$list_err")" || {
+    [[ -s "$list_err" ]] && log "review: gh pr list stderr: $(tr '\n' ' ' <"$list_err" | cut -c1-200)"
+    rm -f "$list_err"; log "review: gh pr list failed; sweep skipped"; return 0; }
+  rm -f "$list_err"
+  if ! jq -e 'type == "array" and all(.[]; type == "object" and (.number | type == "number") and (.title | type == "string") and (.updatedAt | type == "string") and (.headRefOid | type == "string") and (.isDraft | type == "boolean"))' >/dev/null 2>/dev/null <<<"$prs"; then
+    log "review: gh pr list returned malformed data; sweep skipped"; return 0
+  fi
+  if [[ "$(jq 'length' <<<"$prs")" -ge "$REVIEW_LIST_LIMIT" ]]; then
+    log "review: WARNING open-PR list hit the $REVIEW_LIST_LIMIT cap; coverage may be truncated"
+  fi
+  [[ -f "$REVIEW_STATE" ]] || first_run=1
+  declare -A base_upd=() base_head=() base_draft=()
+  local key upd head draft
+  if (( ! first_run )); then
+    while read -r key upd head draft; do
+      [[ -n "$key" && -n "$upd" ]] || continue
+      base_upd["$key"]="$upd"; base_head["$key"]="$head"; base_draft["$key"]="${draft:-false}"
+    done <"$REVIEW_STATE"
+  fi
+
+  review_created=0; review_dropped=0
+  new_state="$(mktemp "$STATE_DIR/review-sweep.state.XXXXXX")" || { log "review: mktemp failed; sweep skipped"; return 0; }
+  local item num title url author old_upd old_head old_draft reason base_epoch head_moved
+  while read -r item; do
+    num="$(jq -r '.number' <<<"$item")"; upd="$(jq -r '.updatedAt' <<<"$item")"
+    head="$(jq -r '.headRefOid' <<<"$item")"; draft="$(jq -r '.isDraft' <<<"$item")"
+    title="$(jq -r '.title' <<<"$item")"; url="$(jq -r '.url // empty' <<<"$item")"
+    author="$(jq -r '.author.login // empty' <<<"$item")"
+    key="$REVIEW_REPO#$num"
+    old_upd="${base_upd[$key]:-}"; old_head="${base_head[$key]:-}"; old_draft="${base_draft[$key]:-}"
+    if (( first_run )); then
+      printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"; continue
+    fi
+    reason=""; head_moved=0
+    if [[ -z "$old_upd" ]]; then
+      # First sighting after activation: a genuinely new PR.
+      if [[ "$draft" == true ]] || is_self_login "$author"; then
+        printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"; continue
+      fi
+      reason="opened since the last patrol pass"
+    elif [[ "$draft" == true ]]; then
+      # Drafts are not review requests; keep the baseline current so the
+      # draft->ready flip is the event, not the noise underneath it.
+      printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"; continue
+    elif [[ "$old_draft" == true ]]; then
+      reason="marked ready for review"
+    elif [[ "$head" != "$old_head" || "$upd" != "$old_upd" ]]; then
+      [[ "$head" != "$old_head" ]] && head_moved=1
+      base_epoch="$(date -u -d "$old_upd" +%s 2>/dev/null)"
+      if [[ -z "$base_epoch" ]]; then
+        reason="new activity (unreadable baseline timestamp)"
+      elif review_activity_is_self_only "$num" "$base_epoch" "$head_moved"; then
+        printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"; continue
+      elif (( head_moved )); then
+        reason="new commits since the last look"
+      else
+        reason="new comments or reviews since the last look"
+      fi
+    else
+      printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"; continue
+    fi
+    if review_enqueue "$num" "$title" "$url" "$author" "$reason"; then
+      printf '%s %s %s %s\n' "$key" "$upd" "$head" "$draft" >>"$new_state"
+    else
+      # Event not yet represented in bd: retain the old baseline (if any) so
+      # the next pass re-detects it.  A brand-new PR simply stays unseen.
+      [[ -n "$old_upd" ]] && printf '%s %s %s %s\n' "$key" "$old_upd" "$old_head" "$old_draft" >>"$new_state"
+    fi
+  done < <(jq -c '.[]' <<<"$prs")
+  (( review_dropped > 0 )) && log "review: creation cap ($REVIEW_CREATE_LIMIT) reached; $review_dropped PR(s) deferred to the next pass"
+  mv -f "$new_state" "$REVIEW_STATE"
+  (( first_run )) && log "review: baseline seeded for $(jq 'length' <<<"$prs") open PRs (watermark activation)"
+
+  # Reverse pass: drop queue entries whose PR terminated upstream.  Only
+  # unclaimed beads in the watched repo are closed, and only after a direct
+  # per-PR state confirmation (the list above may be truncated).
+  local rq rbead rref rrepo rpr rstate_json rstate rq_err
+  rq="$(bd list --label review-needed --json 2>/dev/null)" || return 0
+  jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$rq" || return 0
+  while read -r item; do
+    rbead="$(jq -r '.id // empty' <<<"$item")"; [[ -n "$rbead" ]] || continue
+    [[ "$(jq -r '.status' <<<"$item")" == open && -z "$(jq -r '.assignee // empty' <<<"$item")" ]] || continue
+    rref="$(jq -r '.external_ref // empty' <<<"$item")"
+    if [[ "$rref" =~ ^gh:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
+      rrepo="${BASH_REMATCH[1]}"; rpr="${BASH_REMATCH[2]}"
+    elif [[ "$rref" =~ ^gh-pr-([1-9][0-9]*)$ ]]; then
+      rrepo="gastownhall/beads"; rpr="${BASH_REMATCH[1]}"
+    else
+      continue
+    fi
+    [[ "$rrepo" == "$REVIEW_REPO" ]] || continue
+    jq -e --argjson n "$rpr" 'any(.[]; .number == $n)' >/dev/null 2>/dev/null <<<"$prs" && continue
+    rq_err="$STATE_DIR/gh-review-close.err"
+    rstate_json="$(gh pr view "$rpr" --repo "$rrepo" --json state 2>"$rq_err")" || { rm -f "$rq_err"; continue; }
+    rm -f "$rq_err"
+    rstate="$(jq -er '.state | strings' <<<"$rstate_json" 2>/dev/null)" || continue
+    if [[ "$rstate" == MERGED || "$rstate" == CLOSED ]]; then
+      if bd close "$rbead" --reason "PR $rrepo#$rpr $rstate upstream; review no longer needed (pr-babysit review lane)." >/dev/null 2>&1; then
+        log "review: $rbead closed ($rrepo#$rpr $rstate upstream)"
+      else
+        log "review: close failed for $rbead ($rrepo#$rpr $rstate)"
+      fi
+    fi
+  done < <(jq -c '.[]' <<<"$rq")
+}
+
+review_sweep

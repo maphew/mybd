@@ -312,10 +312,12 @@ scripts/pr-babysit
 scripts/install-pr-babysit
 ```
 
-Two zero-token lanes, one patrol. `pr-babysit` is the only actor that mutates
-either kind of tail; both handoff scripts hand a decision to it and end the
-session — see AGENTS.md "PR Merge Tails (babysitter pattern)" for the fuller
-narrative (transient-block budgets, re-arm sweep, base-health gating).
+Three zero-token lanes, one patrol. `pr-babysit` is the only actor that
+mutates a merge or close tail; both handoff scripts hand a decision to it and
+end the session — see AGENTS.md "PR Merge Tails (babysitter pattern)" for the
+fuller narrative (transient-block budgets, re-arm sweep, base-health gating).
+The third lane (review-needed, below) has no handoff script: it watches
+upstream directly.
 
 **merge-when-green** — `pr-handoff` labels a bd bead `merge-when-green` and
 records `pr_babysit_repo`/`pr_babysit_pr`/`pr_babysit_method`/
@@ -348,6 +350,35 @@ the bead `close-when-quiet` and records `pr_close_after` (RFC3339, now +
 A PR can only be in one lane at a time: `pr-close-handoff` refuses to hand
 off a bead that already carries `merge-when-green`, and the patrol leaves a
 bead alone (logged, untouched) if it somehow carries both labels.
+
+**review-needed** — a detector, not an executor: it makes sure PR reviews
+*get queued*, on first open and on follow-up activity; agent sessions consume
+the queue via `bd ready`. The patrol sweeps open PRs in
+`PR_BABYSIT_REVIEW_REPO` (default `gastownhall/beads`) each pass against
+per-PR baselines in `${XDG_STATE_HOME:-~/.local/state}/pr-babysit/review-sweep.state`
+(tri-drift pattern; the first pass seeds silently, so activation never floods
+`bd ready` with the pre-existing backlog — that is a one-time manual sweep,
+bead mybd-88rdq). Queue-worthy events:
+
+- a PR opened since the last pass (unless authored by a self login)
+- a draft flipped to ready for review (drafts are otherwise ignored, with
+  their baseline kept current so the flip itself is the event)
+- a moved head, unless every attributable new commit is authored solely by
+  self logins (`PR_BABYSIT_SELF_LOGINS`, comma-separated, default `maphew`)
+- new comments/reviews, unless all post-baseline activity is by self logins —
+  without this filter the lane would re-queue every PR we just reviewed
+
+On an event the lane adds `review-needed` to an existing open unclaimed bead
+for that PR (either ref form, `gh:owner/repo#N` or `gh-pr-N`), or creates one
+(ref `gh-pr-N` for the default repo so tri-pull's dedup sees it; capped at
+`PR_BABYSIT_REVIEW_CREATE_LIMIT`/pass, default 10, deferrals logged). It
+never touches claimed beads or beads in the other two lanes, never posts
+upstream, and closes unclaimed queue entries whose PR merged/closed upstream.
+A baseline only advances after its event is durably represented in bd, so
+unreadable gh/bd data means retry next pass, and attribution failures err
+toward queueing a review rather than staying silent. Reviewers just close the
+bead when done — later activity re-queues automatically. Disable with
+`PR_BABYSIT_REVIEW=0`.
 
 Install the timer once with `scripts/install-pr-babysit` (systemd user unit,
 fires every 12 minutes); patrol log at

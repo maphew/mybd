@@ -13,7 +13,15 @@ cat >"$FAKE_BIN/gh" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_GH_LOG"
 case "${1:-} ${2:-}" in
+  "pr list")
+    printf '%s\n' "${FAKE_PR_LIST:-[]}"; exit "${FAKE_PR_LIST_EXIT:-0}"
+    ;;
   "pr view")
+    if [[ " $* " == *"comments,reviews,commits"* ]]; then
+      act_default='{"comments":[],"reviews":[],"commits":[]}'
+      printf '%s\n' "${FAKE_PR_ACTIVITY:-$act_default}"
+      exit "${FAKE_ACTIVITY_EXIT:-0}"
+    fi
     if [[ -n "${FAKE_PR_BODY:-}" ]]; then printf '%s\n' "$FAKE_PR_BODY"; exit "${FAKE_PR_EXIT:-0}"; fi
     state="${FAKE_PR_STATE:-OPEN}"
     head="${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
@@ -121,6 +129,9 @@ chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemct
 export PATH="$FAKE_BIN:$PATH"
 export PR_BABYSIT_PREFLIGHT="$FAKE_BIN/preflight"
 export PR_BABYSIT_SETTLE_DELAY=0
+# The review lane is exercised by its own cases below; the merge/close cases
+# run with it disabled so their gh/bd expectations stay exact.
+export PR_BABYSIT_REVIEW=0
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
@@ -133,6 +144,8 @@ reset() {
   export FAKE_QUEUE="$CASE/queue.json" FAKE_BD_LOG="$CASE/bd.log" FAKE_GH_LOG="$CASE/gh.log" FAKE_MERGE_MARK="$CASE/merged" FAKE_PREFLIGHT_MARK="$CASE/preflight" FAKE_SYSTEMD_ANALYZE_LOG="$CASE/analyze.log"
   export XDG_STATE_HOME="$CASE/state"
   unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS FAKE_PREFLIGHT_SETTLES
+  unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
+  export PR_BABYSIT_REVIEW=0
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
@@ -551,5 +564,136 @@ export FAKE_PR_STATE=CLOSED FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":
 run_patrol
 jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "sweep mutated a closed-unmerged blocked bead"
 [[ "$(count '^close ' "$FAKE_BD_LOG")" == 0 ]] || fail "sweep closed a closed-unmerged bead"
+
+# --- review-needed lane -------------------------------------------------------
+
+head_c=cccccccccccccccccccccccccccccccccccccccc
+T0=2026-07-28T00:00:00Z; T1=2026-07-28T01:00:00Z; T2=2026-07-28T02:00:00Z
+
+pr_json() { # $1=number $2=updatedAt $3=head $4=isDraft [$5=author]
+  jq -cn --argjson n "$1" --arg upd "$2" --arg head "$3" --argjson draft "$4" --arg author "${5:-contributor}" \
+    '{number:$n, title:"Example title", url:("https://github.com/gastownhall/beads/pull/" + ($n|tostring)), author:{login:$author}, updatedAt:$upd, headRefOid:$head, isDraft:$draft}'
+}
+activity_json() { # $1=comments $2=reviews $3=commits
+  jq -cn --argjson c "${1:-[]}" --argjson r "${2:-[]}" --argjson k "${3:-[]}" '{comments:$c, reviews:$r, commits:$k}'
+}
+reset_review() {
+  reset "$1" '{}'
+  jq -cn '[]' >"$FAKE_QUEUE"
+  export PR_BABYSIT_REVIEW=1 FAKE_PR_LIST='[]'
+}
+review_state() { cat "$XDG_STATE_HOME/pr-babysit/review-sweep.state" 2>/dev/null; }
+patrol_log() { cat "$XDG_STATE_HOME/pr-babysit/patrol.log" 2>/dev/null; }
+
+# Activation seeds the baseline silently (watermark: no backlog flood).
+reset_review review-seed
+export FAKE_PR_LIST="[$(pr_json 200 "$T0" "$head_a" false)]"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "activation pass created beads"
+review_state | grep -q "gastownhall/beads#200 $T0 $head_a false" || fail "activation did not seed the baseline"
+patrol_log | grep -q 'baseline seeded for 1 open PRs' || fail "activation was not logged"
+
+# A PR opened after activation gets a review-needed bead; a self-authored one
+# does not.  A pass with no changes stays silent.
+export FAKE_PR_LIST="[$(pr_json 200 "$T0" "$head_a" false),$(pr_json 201 "$T1" "$head_b" false),$(pr_json 202 "$T1" "$head_c" false maphew)]"
+run_patrol
+grep -q -- '--labels review-needed --external-ref=gh-pr-201' "$FAKE_BD_LOG" || fail "new PR did not create a review-needed bead"
+[[ "$(count 'external-ref=gh-pr-202' "$FAKE_BD_LOG")" == 0 ]] || fail "self-authored PR was queued for review"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 1 ]] || fail "quiet pass re-created a review bead"
+
+# Claimed beads and beads already in a patrol lane suppress queueing; an open
+# unclaimed stub is labeled instead of duplicated.
+reset_review review-existing
+run_patrol   # seed empty
+export FAKE_PR_LIST="[$(pr_json 300 "$T1" "$head_a" false),$(pr_json 301 "$T1" "$head_b" false),$(pr_json 302 "$T1" "$head_c" false)]"
+jq -cn '[{id:"mybd-claimed", status:"in_progress", assignee:"maphew", labels:[], external_ref:"gh-pr-300", notes:"", metadata:{}},
+         {id:"mybd-lane", status:"open", assignee:"", labels:["close-when-quiet"], external_ref:"gh:gastownhall/beads#301", notes:"", metadata:{}},
+         {id:"mybd-stub", status:"open", assignee:"", labels:["tri:pending"], external_ref:"gh-pr-302", notes:"", metadata:{}}]' >"$FAKE_QUEUE"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "covered PRs created duplicate beads"
+[[ "$(count 'update mybd-claimed' "$FAKE_BD_LOG")" == 0 ]] || fail "claimed bead was mutated"
+[[ "$(count 'update mybd-lane --add-label review-needed' "$FAKE_BD_LOG")" == 0 ]] || fail "lane-owned bead was labeled review-needed"
+grep -q 'update mybd-stub --add-label review-needed' "$FAKE_BD_LOG" || fail "open stub was not labeled review-needed"
+
+# Same-head activity by self logins alone is suppressed; contributor activity
+# queues a review.
+reset_review review-self
+export FAKE_PR_LIST="[$(pr_json 400 "$T0" "$head_a" false)]"
+run_patrol   # seed
+export FAKE_PR_LIST="[$(pr_json 400 "$T1" "$head_a" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json "[{\"createdAt\":\"$T1\",\"author\":{\"login\":\"maphew\"}}]")"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "self-only comment queued a review"
+export FAKE_PR_LIST="[$(pr_json 400 "$T2" "$head_a" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json "[{\"createdAt\":\"$T2\",\"author\":{\"login\":\"contributor\"}}]")"
+run_patrol
+grep -q -- 'external-ref=gh-pr-400' "$FAKE_BD_LOG" || fail "contributor comment did not queue a review"
+
+# A moved head with exclusively self-authored new commits is suppressed; a
+# contributor push (or unattributable commits) queues a review.
+reset_review review-push
+export FAKE_PR_LIST="[$(pr_json 500 "$T0" "$head_a" false)]"
+run_patrol   # seed
+export FAKE_PR_LIST="[$(pr_json 500 "$T1" "$head_b" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json '[]' '[]' "[{\"committedDate\":\"$T1\",\"authors\":[{\"login\":\"maphew\"}]}]")"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "self-only push queued a review"
+export FAKE_PR_LIST="[$(pr_json 500 "$T2" "$head_c" false)]"
+export FAKE_PR_ACTIVITY="$(activity_json '[]' '[]' "[{\"committedDate\":\"$T2\",\"authors\":[]}]")"
+run_patrol
+grep -q -- 'external-ref=gh-pr-500' "$FAKE_BD_LOG" || fail "unattributable push did not queue a review"
+
+# Drafts wait: no bead while draft, queued when marked ready.
+reset_review review-draft
+run_patrol   # seed empty
+export FAKE_PR_LIST="[$(pr_json 600 "$T1" "$head_a" true)]"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "draft PR was queued for review"
+export FAKE_PR_LIST="[$(pr_json 600 "$T2" "$head_a" false)]"
+run_patrol
+grep -q -- 'external-ref=gh-pr-600' "$FAKE_BD_LOG" || fail "ready-for-review flip did not queue"
+patrol_log | grep -q 'marked ready for review' || fail "ready flip reason missing from log"
+
+# Queue entries whose PR terminated upstream are closed — unclaimed only.
+reset_review review-cleanup
+jq -cn '[{id:"mybd-done", status:"open", assignee:"", labels:["review-needed"], external_ref:"gh-pr-700", notes:"", metadata:{}},
+         {id:"mybd-busy", status:"in_progress", assignee:"maphew", labels:["review-needed"], external_ref:"gh-pr-701", notes:"", metadata:{}}]' >"$FAKE_QUEUE"
+export FAKE_PR_STATE=MERGED
+run_patrol
+grep -q '^close mybd-done' "$FAKE_BD_LOG" || fail "terminated PR did not close its queue entry"
+[[ "$(count '^close mybd-busy' "$FAKE_BD_LOG")" == 0 ]] || fail "claimed queue entry was closed"
+
+# A failed gh pr list leaves the baseline untouched; the event is re-detected.
+reset_review review-list-fail
+export FAKE_PR_LIST="[$(pr_json 800 "$T0" "$head_a" false)]"
+run_patrol   # seed
+export FAKE_PR_LIST="[$(pr_json 800 "$T0" "$head_a" false),$(pr_json 801 "$T1" "$head_b" false)]" FAKE_PR_LIST_EXIT=1
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 0 ]] || fail "failed list still created beads"
+unset FAKE_PR_LIST_EXIT
+run_patrol
+grep -q -- 'external-ref=gh-pr-801' "$FAKE_BD_LOG" || fail "event lost after transient list failure"
+
+# The per-pass creation cap defers, and deferred PRs are retried next pass.
+reset_review review-cap
+export PR_BABYSIT_REVIEW_CREATE_LIMIT=1
+run_patrol   # seed empty
+export FAKE_PR_LIST="[$(pr_json 810 "$T1" "$head_a" false),$(pr_json 811 "$T1" "$head_b" false)]"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 1 ]] || fail "creation cap was not enforced"
+patrol_log | grep -q 'creation cap' || fail "cap deferral was not logged"
+run_patrol
+[[ "$(count '^create' "$FAKE_BD_LOG")" == 2 ]] || fail "capped PR was not retried next pass"
+
+# A failed bd create retains the baseline and retries.
+reset_review review-create-fail
+run_patrol   # seed empty
+export FAKE_PR_LIST="[$(pr_json 901 "$T1" "$head_a" false)]" FAKE_BD_FAIL_ON=create
+run_patrol
+patrol_log | grep -q 'bd create failed for gastownhall/beads#901' || fail "create failure was not logged"
+unset FAKE_BD_FAIL_ON
+run_patrol
+patrol_log | grep -q 'created review-needed bead for gastownhall/beads#901' || fail "create was not retried after failure"
 
 echo "pr-babysit behavioural tests: PASS"

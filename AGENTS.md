@@ -523,6 +523,17 @@ other lane. Closing the bead yourself at any point (e.g. `bd close`) cancels
 the pending close: there is nothing left in the queue for the patrol to act
 on.
 
+The patrol's third lane, **review-needed**, is a zero-token detector that
+keeps review work queued: PRs newly opened upstream, drafts flipped to ready,
+contributor pushes, and contributor comments/reviews each get a
+`review-needed` bead (or the label on an existing unclaimed stub), watermarked
+from lane activation. Self-authored activity is filtered out so our own
+review comments don't re-queue the PR. Sessions consume the queue via
+`bd ready`: review per PR_MAINTAINER_GUIDELINES.md, then close the bead —
+follow-up activity re-queues it automatically. The lane never touches claimed
+beads or beads in the merge/close lanes and never posts upstream. Details and
+knobs: `scripts/README.md` "pr-babysit / pr-handoff".
+
 ## Quick Reference
 
 ```bash
