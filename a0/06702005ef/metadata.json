@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "a006702005ef",
+  "strategy": "manual-commit",
+  "branch": "feat/pr-babysit-review-lane",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "scripts/pr-babysit",
+    "scripts/test-pr-babysit"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a0/06702005ef/0/metadata.json",
+      "transcript": "/a0/06702005ef/0/full.jsonl",
+      "compact_transcript": "/a0/06702005ef/0/transcript.jsonl",
+      "content_hash": "/a0/06702005ef/0/content_hash.txt",
+      "prompt": "/a0/06702005ef/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 90902,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 899840,
+    "output_tokens": 10849,
+    "api_call_count": 17
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "a006702005ef",
+  "session_id": "019faa1f-8346-7b71-b0f6-75a07e6a5728",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-28T19:18:45.957756189Z",
+  "branch": "feat/pr-babysit-review-lane",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "scripts/pr-babysit",
+    "scripts/test-pr-babysit"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "e49c97cda898",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 90902,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 899840,
+    "output_tokens": 10849,
+    "api_call_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-28T19:18:45.930256396Z",
+    "agent_lines": 76,
+    "agent_removed": 10,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 76,
+    "total_lines_changed": 86,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
