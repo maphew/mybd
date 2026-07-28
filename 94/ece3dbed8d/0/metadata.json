@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "94ece3dbed8d",
+  "session_id": "50a1f1f4-5639-400a-ad1e-00224fa105a6",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-28T04:57:47.747350483Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-27-open-pr-overlap-clusters.md"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "c1a37dab121f",
+  "checkpoint_transcript_start": 42,
+  "transcript_lines_at_start": 42,
+  "compact_transcript_start": 10,
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 18495,
+    "cache_read_tokens": 503579,
+    "output_tokens": 3531,
+    "api_call_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-28T04:57:47.728899798Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 368,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 368,
+    "total_lines_changed": 368,
+    "agent_percentage": 0,
+    "metric_version": 2
+  }
+}
