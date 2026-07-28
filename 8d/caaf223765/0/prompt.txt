@@ -1,0 +1,40 @@
+<task-notification>
+<task-id>acf6ffd9fead5ffbd</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/dba5e7da-98eb-4e34-b447-fab9cf383bf3/tasks/acf6ffd9fead5ffbd.output</output-file>
+<status>completed</status>
+<summary>Agent "v1.1.2 repro verification batch" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All done. Cleanup verified: no rig processes remain, scratch worktree removed, /tmp/a2.jsonl deleted.
+
+# v1.1.2 verification verdicts (bead mybd-xvw9d)
+
+**Rig:** bd built from tag v1.1.2 (`git worktree add --detach .../v112-rig/src v1.1.2`; `CGO_ENABLED=1 go build -buildvcs=false -tags gms_pure_go`; binary reports `bd version 1.1.2 (dev)`). All tests ran under an isolated `HOME` in the scratchpad; external server tests used PATH `dolt version 2.2.2` (`dolt sql-server --data-dir . --host 127.0.0.1 --port 13307`), which hosted three bd databases simultaneously (t4, t1, t3) — a genuinely shared server.
+
+## 1. mybd-zlqec — server-mode auto-import overwrite / OOM family (gh 4239, 4128) — **FIXED**
+Repro attempted: server-mode project (`bd init -p t1 --server --external --server-host 127.0.0.1 --server-port 13307`), created t1-04t/t1-ubm, `bd export -o .beads/issues.jsonl`, then made the DB newer than the jsonl (`bd update t1-04t --title "live row v2 NEWER-THAN-JSONL"`, `bd close t1-ubm`), then `touch .beads/issues.jsonl` so its mtime tempts any mtime-based auto-import. Ran `bd list`, `bd ready`, `bd stats`, plus a write (`bd create`).
+Evidence for close comment:
+- jsonl content: `t1-04t | live row v1 (open)`, `t1-ubm | second live row (open)`
+- After reads: `bd show t1-04t` → title `live row v2 NEWER-THAN-JSONL`; `t1-ubm` → status `closed` (stale jsonl said open — not clobbered)
+- After the write command: exactly 3 issues, no duplication, no re-import, no lock fight, all commands returned instantly. No auto-import fires in server mode at all (matches #4170 gate).
+
+## 2. mybd-5vvos — six embedded-mode failure modes (gh 4135) — **FIXED** (practical shapes; several modes architecturally impossible now)
+Repro attempted (split-brain/auto-flush shape): embedded clone A created `t2-0wa "original title"`, exported jsonl, updated DB title, touched jsonl mtime → reads never clobbered DB. Two-clone divergence: clone B imported A's jsonl, made a later local edit, then re-imported A's newer export.
+Evidence: `bd import /tmp/a2.jsonl` → **`Imported 0 issues from a2.jsonl (1 stale skipped; use --allow-stale to restore older rows)`**; B's later edit survived.
+Architecture notes for the close comment: `export.auto` defaults **false** (no issues.jsonl even created at init); import is explicit with a stale-row guard; IDs are hash-suffixed (`t2-0wa`) not sequential, eliminating the split-brain ID-collision mode; sync is Dolt-remote based (`refs/dolt/data`), so jsonl-as-sync (the root of all six 1.0.4 modes) is off the data path entirely. Identity/chain-drop modes not individually re-run — their trigger mechanism (auto import/export flush) no longer exists.
+
+## 3. mybd-j881 — p0 close-fails/create-hangs on shared dolt sql-server, is_blocked/wisps column (gh 4468) — **FIXED**
+Repro attempted: project t3 on the shared external server already hosting two other bd databases; dep chain A←B←C (`bd dep add`); `bd close t3-3ez` (triggers is_blocked recompute of dependents over both issue and wisps ID sets); `bd create` immediately after.
+Evidence: `✓ Closed t3-3ez` (exit 0, instant); `bd create` returned `t3-nya` with no hang; recompute correct (`bd ready` now shows t3-5sj; `bd blocked` shows only t3-ln2 blocked by t3-5sj). Schema check on the live server DB: `wisp_dependencies` has typed `depends_on_issue_id`/`depends_on_wisp_id` (no physical `depends_on_id`), `wisps.is_blocked` exists — the exact columns the recompute queries (confirms the earlier codex-scout static recon with a live shared-server run). Caveat: wisps tables were empty (no formulas available to pour a molecule), but the reporter's failure was the query referencing a missing column, which fails regardless of rows — that query ran clean.
+
+## 4. mybd-veofl — migration 0028 "nothing to commit" fatal on fresh server-mode DB (gh 4137) — **FIXED**
+Repro attempted: fresh `bd init -p t4 --server --external` against the external dolt sql-server.
+Evidence: init completed (`✓ bd initialized successfully! Mode: server`); `bd create`/`bd list` work; `SELECT COUNT(*), MAX(version) FROM schema_migrations` → **53 / 53** applied; zero "nothing to commit" strings in the server log.
+
+## 5. mybd-3aev4 — bd list blocker-count references removed `depends_on_id` (gh 4297) — **FIXED**
+Repro attempted: embedded project t5, two issues, `bd dep add t5-fu0 t5-bcn`, then `bd list --json`, `bd list`, `bd blocked`, `bd ready`.
+Evidence: no SQL errors anywhere; `bd list --json` returns correct `dependency_count`/`dependent_count` and the dependency object; `bd blocked` prints `Blocked by 1 open dependencies: [t5-bcn]`. Note for the comment: in v1.1.2 the issues-side `dependencies` table legitimately retains `depends_on_id` (it's the wisps tables that use typed columns), and all blocker-count surfaces query it without error.
+
+**Summary: 5/5 FIXED on v1.1.2** — all family issues (4239, 4128, 4135, 4468, 4137, 4297, and by extension 4245/3948/3880) are candidates for close-with-explanation drafts via the human-gated tri-submit path. Rig artifacts (logs, test projects) remain under `/tmp/claude-1000/-var-home-matt-dev-mybd/fdae65ec-2284-4d0b-9c0b-f3f002b96df1/scratchpad/v112-rig/` for inspection; no processes left running; the bd-main scratch worktree was removed.</result>
+<usage><subagent_tokens>65827</subagent_tokens><tool_uses>33</tool_uses><duration_ms>351399</duration_ms></usage>
+</task-notification>

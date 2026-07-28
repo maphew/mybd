@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "8dcaaf223765",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "reports/2026-07-28-v112-verification-close-drafts.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/8d/caaf223765/0/metadata.json",
+      "transcript": "/8d/caaf223765/0/full.jsonl",
+      "compact_transcript": "/8d/caaf223765/0/transcript.jsonl",
+      "content_hash": "/8d/caaf223765/0/content_hash.txt",
+      "prompt": "/8d/caaf223765/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 248,
+    "cache_creation_tokens": 159943,
+    "cache_read_tokens": 26803300,
+    "output_tokens": 86332,
+    "api_call_count": 124
+  }
+}
