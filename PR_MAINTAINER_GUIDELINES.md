@@ -23,12 +23,6 @@ Mechanical mappings when reading the imported doc from this repo:
 - The imported signing rule (`engdocs/AGENT_SIGNING.md`) is implemented here by
   AGENTS.md and `scripts/agent-sig.sh`.
 
-Import status: the "Prior art is part of the review" and "Rebases are
-maintainer work" sections land upstream via gastownhall/beads#5094 (bead
-mybd-jus2j). Until `bd-main` is pulled past that merge, the authoritative local
-text is this repo's git history (commit `2cffec709`); once it lands, drop this
-paragraph.
-
 ## How a Review Opens and Closes
 
 The imported rules protect the contributor's *code*. These protect the reason
