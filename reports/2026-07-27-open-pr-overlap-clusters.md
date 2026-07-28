@@ -366,3 +366,19 @@ Recommended action: Start independent review with the small mergeable test/confi
 - Duplicate primary assignments: **0**
 
 The supplied snapshot was read successfully, but durable Beads tracking could not be updated because the environment exposed the embedded Dolt database read-only.
+---
+
+## 2026-07-28 verification addendum (execution pass)
+
+A Codex diff-level verification pass (gpt-5.6-sol high, session 019fa975-32fd-7d93-880f-19d0dd0cbe6e) was run before acting on the duplicate recommendations. Corrections to the snapshot analysis above:
+
+- **D2 is wrong**: 4288 and 4348 are **complementary, not duplicates**. 4288 guards selective `-m` commit paths (staged-set checks incl. the embedded/ephemeral `doltAddAndCommitInTx` path); 4348 guards the whole-working-set UOW path plus `dolt_ignore` filtering. 4348's global pending check cannot protect a selective commit with an unrelated dirty table. Neither was closed; re-port tracked in mybd-nathu.
+- **D3 confirmed**: 4720 covers all of 4350's production behavior (and improves it). Two unique 4350 tests queued for port with attribution (mybd-bc9cc); 4350 in close-when-quiet lane (mybd-37b0x, disposition posted 07-26).
+- **D4 confirmed**: 4804 strictly safer (pass-completion sentinel closes the mid-pass fast-path window 4764 leaves open). Disposition posted, close lane mybd-iy34u.
+- **D5 softened**: 5087 contains 5086 line-for-line but intentionally narrows behavior (ordinary commands lose implicit DB creation). Stack-intent question posted on 5086; no close lane pending author answer (mybd-457m0).
+- **D1 deferred**: attachments trio remains under open owner decision mybd-982o; no closes before the bytes-survive-push call.
+- **C1 outcome reversed**: all five seanmartinsmith PRs (3797/3801/3802/3806/3812) were already absorbed into main via #4600 (commit 7865493f7) — closed as retired 07-28 per pre-authorized grace (mybd-qy7m), not merged.
+- Singleton quick-wins re-checked: 4828 has an unresolved CHANGES_REQUESTED (metrics init-order not fixed by the diff) — stays open, not merge-ready; 4206 gated on storage-maintainer approval.
+- O7 write-semantics/ownership cluster and C4/C5 (steveyegge + julianknutsen) deliberately untouched per owner direction 2026-07-28: give the authors time to sort out the design overlap themselves.
+
+Open-PR count after this pass: 104 → 99 (five retired), with two more in patrol close lanes.
