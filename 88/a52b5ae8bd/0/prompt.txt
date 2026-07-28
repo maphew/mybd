@@ -1,0 +1,9 @@
+You are analyzing the open PR queue of gastownhall/beads for a maintainer. Read the file /tmp/claude-1000/-var-home-matt-dev-mybd/50a1f1f4-5639-400a-ad1e-00224fa105a6/scratchpad/pr-merged.json — an array of all 104 open PRs sorted oldest to newest, each with: number, title, author, createdAt, updatedAt, mergeable (MERGEABLE/CONFLICTING/UNKNOWN), isDraft, changedFiles count, labels, and the list of changed file paths.
+
+Task: sweep oldest to newest and identify:
+1. DUPLICATES — PRs solving the same problem (same or near-same files + same intent from titles). List each duplicate set with PR numbers, and which one looks canonical (prefer newer/mergeable/smaller unless title suggests otherwise).
+2. OVERLAP — PRs that touch the same subsystem/files enough that merging one will conflict or partially obsolete others. Build these as named clusters (e.g. by subsystem: sync/dolt, CLI commands, server mode, docs, CI, etc.).
+3. CONSOLIDATION opportunities — groups that could be reviewed/merged as one batch (same author with related PRs, stacked/dependent-looking branches, mechanical same-shape changes across many PRs).
+4. SINGLETONS — PRs touching files nothing else touches (safe to review independently).
+
+Output a well-structured Markdown report: summary stats up top (total, drafts, conflicting count, cluster count), then a section per finding category. For every cluster give: cluster name, PR list as one line each ('#NNNN (author, age, mergeable-state, N files): title'), shared files/subsystem, and a one-sentence recommended action. Be exhaustive — every one of the 104 PRs must appear in exactly one primary cluster or the singletons list; include a final coverage check stating the count adds to 104. Compute ages relative to today 2026-07-27.

@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "88a52b5ae8bd",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-28-rebase-debt-worklist.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/88/a52b5ae8bd/0/metadata.json",
+      "transcript": "/88/a52b5ae8bd/0/full.jsonl",
+      "compact_transcript": "/88/a52b5ae8bd/0/transcript.jsonl",
+      "content_hash": "/88/a52b5ae8bd/0/content_hash.txt",
+      "prompt": "/88/a52b5ae8bd/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 55844,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 440064,
+    "output_tokens": 4035,
+    "api_call_count": 15
+  }
+}
