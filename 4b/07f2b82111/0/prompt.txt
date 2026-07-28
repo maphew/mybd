@@ -1,0 +1,5 @@
+Prep for work bringing mybd and bd-main up to date with origin and upstream. Sweep local bead items and github PRs & issues, and report what's been happening over last few days. the good, bad, and ugly. what's your feel on the best (and worst) directions to send the next batch of agents
+
+---
+
+Unjam the queue. usage limit approaching, lean on codex more in this session.
