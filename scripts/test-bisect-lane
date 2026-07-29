@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# test-bisect-lane - hermetic self-test for scripts/bisect-next.
+#
+# Builds a throwaway git repo with a known culprit commit and drives bisect-next
+# through its job-file mode (BISECT_JOB_FILE), which bypasses bd, gh, and the
+# network entirely. Asserts:
+#   1. a clean linear history bisects to the exact culprit commit
+#   2. the oracle guard rejects a range whose "good" endpoint already fails
+#   3. the oracle guard rejects a range whose "bad" endpoint passes
+#   4. a non-ancestor good is refused
+#   5. the real .beads database and bd-main clone are never touched, and gh is
+#      never invoked (offline)
+#
+# Exit 0 = all pass. No arguments.
+set -uo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BISECT_NEXT="$SELF_DIR/bisect-next"
+ROOT="$(cd "$SELF_DIR/.." && pwd)"
+
+[[ -x "$BISECT_NEXT" ]] || { echo "FATAL: $BISECT_NEXT not executable"; exit 1; }
+
+fail=0
+pass() { echo "  PASS: $*"; }
+bad() { echo "  FAIL: $*"; fail=1; }
+# expect <actual> <want> <label>
+expect() { if [[ "$1" == "$2" ]]; then pass "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
+
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/bisect-test.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+
+# Offline + isolation guard: a fake gh/bd on PATH that fails loudly if the code
+# under test tries to reach the real tools in job-file mode.
+mkdir -p "$TMP/bin"
+cat >"$TMP/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "test-bisect-lane: gh must not be called in job-file mode" >&2
+exit 97
+EOF
+cat >"$TMP/bin/bd" <<'EOF'
+#!/usr/bin/env bash
+echo "test-bisect-lane: bd must not be called in job-file mode" >&2
+exit 97
+EOF
+chmod +x "$TMP/bin/gh" "$TMP/bin/bd"
+
+# --- Build a linear repo: commits 0..5, commit 3 introduces BROKEN. ---
+REPO="$TMP/repo"
+mkdir -p "$REPO"
+git -C "$REPO" init -q
+git -C "$REPO" config user.email test@example.com
+git -C "$REPO" config user.name "Bisect Test"
+git -C "$REPO" config commit.gpgsign false
+
+declare -a SHAS
+for i in 0 1 2 3 4 5; do
+  if [[ "$i" -ge 3 ]]; then echo "BROKEN" >"$REPO/marker.txt"; else echo "ok" >"$REPO/marker.txt"; fi
+  echo "commit $i" >"$REPO/file-$i.txt"
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -q -m "commit $i"
+  SHAS[i]="$(git -C "$REPO" rev-parse HEAD)"
+done
+CULPRIT="${SHAS[3]}"
+
+# marker.txt present at every commit; command passes (0) when BROKEN absent,
+# fails (nonzero) when present.
+CMD='! grep -q BROKEN marker.txt'
+
+run_job() {
+  # run_job <good> <bad> [cmd] [step_timeout] ; echoes the job file path
+  local good="$1" bad="$2" cmd="${3:-$CMD}" step="${4:-45m}" jf="$TMP/job.$RANDOM"
+  {
+    echo "repo=$REPO"
+    echo "good=$good"
+    echo "bad=$bad"
+    echo "cmd=$cmd"
+  } >"$jf"
+  PATH="$TMP/bin:$PATH" \
+    BISECT_JOB_FILE="$jf" \
+    BISECT_WORKTREE_BASE="$TMP/wt" \
+    BISECT_LOG_DIR="$TMP/logs" \
+    BISECT_STEP_TIMEOUT="$step" \
+    BISECT_KEEP_WORKTREE=never \
+    "$BISECT_NEXT" >/dev/null 2>>"$TMP/stderr" || true
+  echo "$jf"
+}
+
+result_of() { grep -E "^$2=" "$1" | tail -n1 | cut -d= -f2-; }
+
+echo "test 1: linear history bisects to the culprit"
+jf="$(run_job "${SHAS[0]}" "${SHAS[5]}")"
+expect "$(result_of "$jf" result_state)" "done" "state=done"
+expect "$(result_of "$jf" result_culprit)" "$CULPRIT" "culprit is commit 3"
+
+echo "test 2: guard rejects a 'good' that already fails"
+jf="$(run_job "${SHAS[3]}" "${SHAS[5]}")"   # good=3 already BROKEN
+expect "$(result_of "$jf" result_state)" "unreproducible" "good-fails rejected"
+
+echo "test 3: guard rejects a 'bad' that passes"
+jf="$(run_job "${SHAS[0]}" "${SHAS[2]}")"   # bad=2 still ok (passes)
+expect "$(result_of "$jf" result_state)" "unreproducible" "bad-passes rejected"
+
+echo "test 4: non-ancestor good is refused"
+# Make a divergent branch so good is not an ancestor of bad.
+git -C "$REPO" checkout -q -b side "${SHAS[1]}"
+echo "sidewaysok" >"$REPO/side.txt"; git -C "$REPO" add -A; git -C "$REPO" commit -q -m "side"
+SIDE="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" checkout -q "${SHAS[5]}"
+jf="$(run_job "$SIDE" "${SHAS[5]}")"
+expect "$(result_of "$jf" result_state)" "unreproducible" "non-ancestor good refused"
+
+echo "test 6: a bad endpoint that TIMES OUT is classified skip, not blamed"
+# The command hangs only where BROKEN is present, so the bad endpoint times out
+# under a 2s step cap; the guard must call that unreproducible, never 'bad'.
+SLOWCMD='if grep -q BROKEN marker.txt; then sleep 30; fi; ! grep -q BROKEN marker.txt'
+jf="$(run_job "${SHAS[0]}" "${SHAS[5]}" "$SLOWCMD" 2s)"
+expect "$(result_of "$jf" result_state)" "unreproducible" "timeout bad-endpoint -> unreproducible"
+
+echo "test 5: isolation — real .beads and bd-main untouched, gh/bd not called"
+if grep -q "must not be called" "$TMP/stderr" 2>/dev/null; then
+  bad "gh or bd was invoked in job-file mode"
+else
+  pass "gh/bd never invoked"
+fi
+# The real coordination repo's tracker state must be unchanged by this test.
+if git -C "$ROOT" status --porcelain -- .beads 2>/dev/null | grep -q .; then
+  bad ".beads shows changes after test"
+else
+  pass ".beads untouched"
+fi
+if [[ -e "$ROOT/bd-main" ]] && git -C "$ROOT/bd-main" worktree list 2>/dev/null | grep -q "$TMP"; then
+  bad "a worktree was added to bd-main"
+else
+  pass "bd-main clone untouched"
+fi
+
+echo
+if [[ "$fail" == 0 ]]; then
+  echo "ALL PASS"
+  exit 0
+fi
+echo "FAILURES above. stderr:"; sed 's/^/    /' "$TMP/stderr" 2>/dev/null || true
+exit 1

@@ -298,7 +298,10 @@ raises a **`base-red`** P0 bead after ~1h of consecutive red passes (per base
 branch, one bead, self-withdrawing on recovery). If one shows up in `bd ready`,
 it is the stop-the-line signal: fix or rerun the base first, and expect the
 parked lanes to resume on their own - they are not blocked and need no re-arm.
-See `scripts/README.md` "pr-babysit / pr-handoff".
+See `scripts/README.md` "pr-babysit / pr-handoff". A zero-token bisect lane
+(`scripts/bisect-next`, run from the verify-babysit timer) auto-bisects a
+newly-raised `base-red` bead and files the culprit commit onto it, so the bead
+often arrives pre-diagnosed - see `scripts/README.md` "bisect-next".
 
 Assume you are not working alone.
 Use git worktrees by default.

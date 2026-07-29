@@ -65,6 +65,11 @@ CLOSE_RETRY_LIMIT=10      # consecutive unreadable/malformed close-when-quiet pa
 RED_BASE_ESCALATE_LIMIT="${PR_BABYSIT_RED_BASE_LIMIT:-5}"  # consecutive passes (~1h at 12m) on a red base before its bead is raised
 RED_BASE_NOTE_EVERY=10    # passes between follow-up notes on a standing red-base bead (~2h)
 RED_BASE_STATE="$STATE_DIR/red-base"
+# When a base-red bead is raised, also mark it bisect_state=queued so the
+# zero-token bisect lane (scripts/bisect-next) can pre-diagnose the culprit
+# commit. This only writes one metadata key at creation; all bisect work
+# happens out-of-band in bisect-next. Set PR_BABYSIT_BISECT=0 to disable.
+BISECT_AUTOQUEUE="${PR_BABYSIT_BISECT:-1}"
 # Every merge flips mergeStateStatus to UNKNOWN for every other open PR, so a
 # green backlog would otherwise drain at one PR per pass while burning the
 # others' transient budgets.  On a transient-only block, wait briefly for
@@ -483,9 +488,15 @@ What is needed here is a decision about the base itself: rerun a suspected flake
 
 Raised automatically by scripts/pr-babysit; patrol log: $LOG"
 
+  local meta
+  if [[ "$BISECT_AUTOQUEUE" == 1 ]]; then
+    meta="$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k, bisect_state:"queued"}')"
+  else
+    meta="$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k}')"
+  fi
   bd create "Base branch $key has been red for $count patrol passes; $lanes merge lane(s) parked" \
     -t bug -p 0 -l base-red \
-    --metadata "$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k}')" \
+    --metadata "$meta" \
     --description "$desc" --json 2>/dev/null | jq -r '.id // empty'
 }
 

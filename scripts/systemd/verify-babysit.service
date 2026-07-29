@@ -11,8 +11,17 @@ Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/us
 Environment=VERIFY_TIMEOUT=100m
 # bd resolves its database from the cwd; without this the run sees no queue.
 WorkingDirectory=@ROOT@
-ExecStart="@ROOT@/scripts/verify-next"
-TimeoutStartSec=110min
+# verify-next exits nonzero when a verification legitimately FAILS; the leading
+# "-" keeps that routine outcome from aborting the activation before the bisect
+# step runs. Running both in one oneshot serializes them for free (systemd will
+# not start a new activation while this one is still running), so the two heavy
+# git-worktree consumers never overlap.
+ExecStart=-@ROOT@/scripts/verify-next
+ExecStart=-@ROOT@/scripts/bisect-next
+# Headroom for a verify pass (VERIFY_TIMEOUT) followed by a bisect (two oracle
+# guard runs at BISECT_STEP_TIMEOUT plus git bisect at BISECT_TIMEOUT) in the
+# same activation. base-red is rare, so this ceiling is almost never approached.
+TimeoutStartSec=300min
 # Full Beads/Dolt suites are process and disk heavy; stay polite on a
 # workstation that may have interactive sessions running.
 Nice=10

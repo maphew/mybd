@@ -335,6 +335,59 @@ done
 The verifier intentionally uses local git, local bd metadata, and local logs
 only. It does not call GitHub Actions or poll GitHub status.
 
+## bisect-next (red-base bisect lane)
+
+```bash
+scripts/bisect-next [bd-id]          # run one queued base-red bisect job (FIFO if no id)
+scripts/bisect-enqueue <bd-id> [cmd] # manually (re)queue a base-red bead
+```
+
+Zero-token companion to the pr-babysit **base-red** lane. When pr-babysit
+raises a `base-red` P0 bead it also marks it `bisect_state=queued` (one extra
+metadata key at creation; disable with `PR_BABYSIT_BISECT=0`). `bisect-next`
+picks up one such job and files the culprit commit back onto the same bead, so
+the stop-the-line signal arrives pre-diagnosed.
+
+What one run does, keyed off the bead's `pr_babysit_red_base` (`repo@branch`):
+
+1. Confirm `repo` is the local upstream (`TRI_UPSTREAM`); anything else is
+   `skipped` — we can only bisect a branch we clone.
+2. `git fetch upstream <branch>`; **bad** = the current `upstream/<branch>` tip.
+3. **good** = the most recent successful CI run (`gh run list --status success`)
+   whose head is an ancestor of bad. None found ⇒ `no-good-sha`.
+4. **Oracle guards (the correctness rail):** in a detached worktree under
+   `.worktrees/beads/bisect-*`, run the command at good (must PASS) and at bad
+   (must FAIL). Either disagreeing ⇒ `unreproducible` — CI-red is not proof the
+   failure reproduces locally (different suite, flake, CI-only), and we never
+   bisect an unconfirmed range.
+5. `git bisect start bad good` + `git bisect run`; parse the first bad commit.
+6. Write `bisect_culprit`/`bisect_culprit_subject`/`bisect_log` + one note.
+
+It **only ever** writes `bisect_*` metadata and one note. It never touches the
+bead's status, labels, claim, or assignee — the base-red lane owns that bead's
+lifecycle (including closing it on recovery); this lane only annotates.
+
+Terminal `bisect_state`: `done` | `unreproducible` | `no-good-sha` | `skipped`
+| `failed`. Defaults: `bisect_cmd`=`make test` (override via `BISECT_CMD` or a
+`bisect_cmd` key), `BISECT_TIMEOUT`=90m (whole bisect), `BISECT_STEP_TIMEOUT`=45m
+(per suite run), `BISECT_KEEP_WORKTREE`=`failed`, `BISECT_MAX_GOOD_SCAN`=50.
+
+**Serialization.** `bisect-next` runs as a second sequential `ExecStart` in the
+existing `verify-babysit` oneshot (after `verify-next`, each prefixed `-` so a
+routine verification failure does not skip it). Because systemd never overlaps
+activations of a oneshot, the two heavy git-worktree consumers never run
+concurrently — no shared lock needed. `bisect-next` additionally `flock`s
+against a second `bisect-next`. The one uncovered race is a **manually** run
+`verify-next`/`bisect-next` firing during a timer activation; as with
+`verify-next`, don't run them by hand while the timer is installed unless
+debugging.
+
+`test-bisect-lane` is the regression test: it drives `bisect-next` through its
+hermetic job-file mode (`BISECT_JOB_FILE`, which bypasses bd, gh, and the
+network) against a throwaway repo with a known culprit, and asserts the real
+`.beads` DB and `bd-main` clone are never touched. Re-run it after any change
+to the lane.
+
 ## pr-babysit / pr-handoff (merge-tail patrol)
 
 ```bash
