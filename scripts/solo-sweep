@@ -275,6 +275,11 @@ bd list -l solo-sweep:proposed
 $sig"
   if [[ -n "$tree" ]] && commit="$(git commit-tree "$tree" -p HEAD -m "$msg" 2>>"$LOG")"; then
     if git update-ref -m "solo-sweep run $runs" HEAD "$commit" "$start_head" 2>>"$LOG"; then
+      # commit-tree/update-ref move HEAD without touching the real index, so
+      # the index still describes the OLD tree: the report reads as a staged
+      # deletion plus an untracked file, and the dirty gate then refuses every
+      # later fire. Run 1 (2026-07-29) bricked the lane exactly this way.
+      git read-tree HEAD 2>>"$LOG" || log "run $runs: WARNING — index resync failed"
       log "run $runs: committed $commit ($REPORT_REL)"
     else
       log "run $runs: update-ref refused (HEAD moved); commit $commit is unreferenced"

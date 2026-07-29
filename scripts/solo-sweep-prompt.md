@@ -23,6 +23,16 @@ general shell: anything not explicitly allowed is denied, and the GitHub token
 is read-only. This is not a hazing ritual — it is what lets the owner leave a
 model running for a week. Do not spend the run probing the edges of it.
 
+Read-only recon beyond plain file reading goes through `scripts/solo-recon`:
+
+    scripts/solo-recon api <endpoint> [--paginate]   GitHub REST, GET only
+    scripts/solo-recon log|show|blame <mybd|beads> [args...]
+
+Use `api repos/gastownhall/beads/issues/<n>/timeline` for the strategy
+report's step-1 timeline enumeration — full-text `gh search` alone misses
+commit-message-only and unlinked fixes, which is exactly how a stale stub
+survives a sweep. `log beads …` reaches the beads source in `bd-main/`.
+
 Your only write verb is `scripts/solo-bd`:
 
     scripts/solo-bd note <bd-id> <close|consolidate|flesh-out|keep-open> <text>

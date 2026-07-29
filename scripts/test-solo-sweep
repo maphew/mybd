@@ -33,60 +33,77 @@ mkdir -p "$STATE_DIR"
 LOG="$STATE_DIR/sweep.log"
 printf 'dummy\n' >"$STATE_DIR/gh-token-readonly"
 
-last_log() { tail -n1 "$LOG" 2>/dev/null | cut -d' ' -f2-; }
+# Several runner messages are multi-line, so match against the tail of the log
+# rather than its final line — an earlier version read only the last line and
+# reported real passes as failures.
+last_log() { tail -n6 "$LOG" 2>/dev/null | tr '\n' ' '; }
 arm()      { printf '%s\n' "$(( $(date +%s) + 86400 ))" >"$STATE_DIR/until"; }
 
 echo "== wrapper rails =="
 
 rm -f "$STATE_DIR/until" "$STATE_DIR/disabled"
+
+: >"$LOG"
 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  ABORT*deadline*) ok "refuses to run with no deadline file";;
+  *ABORT*deadline*) ok "refuses to run with no deadline file";;
   *) bad "refuses to run with no deadline file — got: $(last_log)";;
 esac
 
 printf '%s\n' "$(( $(date +%s) - 60 ))" >"$STATE_DIR/until"
+
+: >"$LOG"
 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  skip:*expired*) ok "skips once the deadline has passed";;
+  *skip:*expired*) ok "skips once the deadline has passed";;
   *) bad "skips once the deadline has passed — got: $(last_log)";;
 esac
 
 # A run must fit entirely inside the window, not merely start inside it.
 printf '%s\n' "$(( $(date +%s) + 600 ))" >"$STATE_DIR/until"
+
+: >"$LOG"
 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  skip:*outlive*) ok "refuses to start a run that would outlive the window";;
+  *"not starting a run that would outlive"*) ok "refuses to start a run that would outlive the window";;
   *) bad "refuses to start a run that would outlive the window — got: $(last_log)";;
 esac
 
 arm; touch "$STATE_DIR/disabled"
+
+: >"$LOG"
 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  skip:*kill\ switch*) ok "kill switch stops the lane";;
+  *"kill switch present"*) ok "kill switch stops the lane";;
   *) bad "kill switch stops the lane — got: $(last_log)";;
 esac
 rm -f "$STATE_DIR/disabled"
 
 arm; printf '99\n' >"$STATE_DIR/runs"
+
+: >"$LOG"
 SOLO_SWEEP_MAX_RUNS=5 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  skip:*run\ cap*) ok "run cap stops the lane";;
+  *"run cap reached"*) ok "run cap stops the lane";;
   *) bad "run cap stops the lane — got: $(last_log)";;
 esac
 printf '0\n' >"$STATE_DIR/runs"
 
 # The read-only token is mandatory, not advisory.
 arm; mv "$STATE_DIR/gh-token-readonly" "$STATE_DIR/tok.bak"
+
+: >"$LOG"
 "$SWEEP" --dry-run >/dev/null 2>&1
 case "$(last_log)" in
-  ABORT*read-only\ token*) ok "refuses to run without a read-only gh token";;
-  ABORT*missing*) printf '  skip token gate — lane not merged to main yet (earlier gate fired first)\n';;
+  *"no read-only token"*) ok "refuses to run without a read-only gh token";;
+  *ABORT*missing*) printf '  skip token gate — lane not merged to main yet (earlier gate fired first)\n';;
   *) bad "refuses to run without a read-only gh token — got: $(last_log)";;
 esac
 mv "$STATE_DIR/tok.bak" "$STATE_DIR/gh-token-readonly"
 
 arm
+
+: >"$LOG"
 out="$("$SWEEP" --dry-run 2>&1)"
 if grep -q '^theme=' <<<"$out"; then
   ok "dry run selects a theme ($(sed -n 's/^theme=\([^ ]*\).*/\1/p' <<<"$out"))"
@@ -115,6 +132,10 @@ grep -q 'limit 0' "$SWEEP" \
 grep -q 'git pull --rebase' "$SWEEP" \
   && bad "no unattended rebase of the main checkout" \
   || ok "no unattended rebase of the main checkout"
+
+grep -q 'read-tree HEAD' "$SWEEP" \
+  && ok "resyncs the index after update-ref (else the next run sees a dirty tree)" \
+  || bad "resyncs the index after update-ref"
 
 grep -q 'GIT_INDEX_FILE' "$SWEEP" \
   && ok "commits through a scratch index (bare commit would take the whole index)" \
@@ -155,6 +176,16 @@ fac note "mybd-hs98a" "close" "--status closed" \
   && bad "rejects text carrying a bd flag" || ok "rejects text carrying a bd flag"
 fac create "t" "d" 0 \
   && bad "refuses to file p0 beads" || ok "refuses to file p0 beads"
+RECON="$ROOT/scripts/solo-recon"
+"$RECON" api "repos/x/y/issues/1/comments" -X POST >/dev/null 2>&1 \
+  && bad "solo-recon rejects a write method" || ok "solo-recon rejects a write method"
+"$RECON" api "user/../admin" >/dev/null 2>&1 \
+  && bad "solo-recon rejects an out-of-set endpoint" || ok "solo-recon rejects an out-of-set endpoint"
+"$RECON" log evil >/dev/null 2>&1 \
+  && bad "solo-recon rejects an arbitrary repo path" || ok "solo-recon rejects an arbitrary repo path"
+"$RECON" log beads -c core.pager=sh >/dev/null 2>&1 \
+  && bad "solo-recon rejects git config injection" || ok "solo-recon rejects git config injection"
+
 grep -q 'RESERVED_LABELS' "$FACADE" \
   && ok "facade knows the reserved-label set" || bad "facade knows the reserved-label set"
 

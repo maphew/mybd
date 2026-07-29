@@ -30,11 +30,8 @@
       "Bash(gh issue view:*)",
       "Bash(gh issue list:*)",
       "Bash(gh search:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
       "Bash(git diff:*)",
       "Bash(git grep:*)",
-      "Bash(git blame:*)",
       "Bash(git status:*)",
       "Bash(bd show:*)",
       "Bash(bd list:*)",
@@ -52,7 +49,9 @@
       "Bash(head:*)",
       "Bash(tail:*)",
       "Edit(//var/home/matt/dev/mybd/reports/**)",
-      "Edit(/home/matt/dev/mybd/reports/**)"
+      "Edit(/home/matt/dev/mybd/reports/**)",
+      "Bash(scripts/solo-recon:*)",
+      "Bash(scripts/agent-sig.sh:*)"
     ],
     "deny": [
       "Bash(gh pr comment:*)",

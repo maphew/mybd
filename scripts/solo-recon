@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# solo-recon — read-only recon verbs for the unattended solo-sweep lane.
+#
+# Run 1 (2026-07-29) reported the gap this closes. The lane's allowlist has no
+# `gh api`, because `gh api` also POSTs — so the strategy report's step-1
+# timeline enumeration could not run, and every "no fix PR found" claim fell
+# back to full-text search, which misses commit-message-only and unlinked
+# fixes. The lane said so honestly in its caveats, but weaker evidence means
+# weaker dispositions, and disposition accuracy is the entire point.
+#
+# Likewise `git log` was allowed but useless: the beads source lives in
+# bd-main/, so every real query is `git -C bd-main log ...`, which the
+# `Bash(git log:*)` prefix never matched.
+#
+# So: exact verbs, GET only, no argument that could turn a read into a write.
+#
+#   solo-recon api <endpoint> [--paginate]   gh api --method GET
+#   solo-recon log <repo> [git-log-args...]  git -C <repo> log
+#   solo-recon show <repo> <rev>             git -C <repo> show
+#   solo-recon blame <repo> <file>           git -C <repo> blame
+#
+# <repo> is 'mybd' or 'beads' (bd-main/), never an arbitrary path.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+common_dir="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || exit 1
+[[ "$common_dir" = /* ]] || common_dir="$ROOT/$common_dir"
+ROOT="$(cd "$(dirname "$common_dir")" && pwd)"
+
+die() { printf 'solo-recon: %s\n' "$*" >&2; exit 2; }
+
+resolve_repo() {
+  case "$1" in
+    mybd)  printf '%s' "$ROOT" ;;
+    beads) printf '%s' "$ROOT/bd-main" ;;
+    *) die "repo must be 'mybd' or 'beads', got: $1" ;;
+  esac
+}
+
+# gh api is a write tool wearing a read tool's name.  Force the method and
+# refuse every flag that supplies a body or changes the verb.
+guard_api_args() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --paginate|--slurp) ;;
+      -X*|--method*|-f|--field|-F|--raw-field|--input|-i|--include|--silent)
+        die "flag not permitted on a read-only api call: $a" ;;
+      -*) die "unrecognised flag on api call: $a" ;;
+      *) die "unexpected positional argument: $a" ;;
+    esac
+  done
+}
+
+# git log/show/blame have no write options, but -c injects config (pagers,
+# external diff commands), so reject it wherever it appears.
+guard_git_args() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      -c|-c=*|--exec*|--upload-pack*|--output*)
+        die "flag not permitted: $a" ;;
+    esac
+  done
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+  api)
+    ep="${1:-}"; shift 2>/dev/null || true
+    [[ -n "$ep" ]] || die "usage: solo-recon api <endpoint> [--paginate]"
+    [[ "$ep" != -* ]] || die "endpoint may not start with '-'"
+    # Read endpoints only: repos/…, search/…, users/…, orgs/…
+    ok_re='^(repos|search|users|orgs)/[A-Za-z0-9._/?=&%,:{}-]*$'
+    [[ "$ep" =~ $ok_re ]] \
+      || die "endpoint not in the read-only set (repos|search|users|orgs)/…: $ep"
+    guard_api_args "$@"
+    exec gh api --method GET "$ep" "$@"
+    ;;
+
+  log|show|blame)
+    repo="${1:-}"; shift 2>/dev/null || true
+    [[ -n "$repo" ]] || die "usage: solo-recon $cmd <mybd|beads> [args...]"
+    dir="$(resolve_repo "$repo")" || exit 2
+    [[ -d "$dir/.git" || -f "$dir/.git" ]] || die "not a git repo: $dir"
+    guard_git_args "$@"
+    exec git -C "$dir" "$cmd" "$@"
+    ;;
+
+  *)
+    sed -n '/^#   solo-recon api/,/^#   solo-recon blame/p' "$0" | sed 's/^# *//'
+    exit 2
+    ;;
+esac
