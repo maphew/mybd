@@ -1,0 +1,2 @@
+{"v":1,"agent":"claude-code","cli_version":"0.9.0","type":"user","ts":"2026-07-29T23:48:13.061Z","content":[{"id":"d28290a4-9694-4449-9a77-67ef44819470","text":"reply with the single word READY"}]}
+{"v":1,"agent":"claude-code","cli_version":"0.9.0","type":"assistant","ts":"2026-07-29T23:48:15.512Z","id":"msg_011CdXF2Nsb7EShcgvm27S7y","input_tokens":2,"output_tokens":4,"content":[{"text":"READY","type":"text"}]}
