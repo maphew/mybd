@@ -3,7 +3,7 @@
   "checkpoint_id": "84cd5b61c196",
   "strategy": "manual-commit",
   "branch": "feat/ready-lanes",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "reports/2026-07-29-ready-queue-health-audit.md",
     "scripts/README.md",
@@ -16,13 +16,20 @@
       "compact_transcript": "/84/cd5b61c196/0/transcript.jsonl",
       "content_hash": "/84/cd5b61c196/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/84/cd5b61c196/1/metadata.json",
+      "transcript": "/84/cd5b61c196/1/full.jsonl",
+      "compact_transcript": "/84/cd5b61c196/1/transcript.jsonl",
+      "content_hash": "/84/cd5b61c196/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 2,
-    "cache_creation_tokens": 880,
-    "cache_read_tokens": 211877,
-    "output_tokens": 229,
-    "api_call_count": 1
+    "input_tokens": 12,
+    "cache_creation_tokens": 5183,
+    "cache_read_tokens": 653878,
+    "output_tokens": 4099,
+    "api_call_count": 6
   }
 }
