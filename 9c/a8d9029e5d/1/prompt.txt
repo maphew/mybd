@@ -1,0 +1,1 @@
+Run this one command and nothing else: scripts/pr-babysit --help
