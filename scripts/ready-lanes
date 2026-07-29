@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# ready-lanes - split `bd ready` into own-work vs upstream-mirror lanes.
+#
+# Usage:
+#   scripts/ready-lanes [--mirror] [--all] [--limit N] [--json]
+#
+# Why: as of 2026-07-29 `bd ready` returns ~335 items, of which ~56% are stubs
+# mirrored from gastownhall/beads (upstream issues and PRs) and ~53% carry the
+# default P2. At that depth the queue stops being a to-do list: five P0
+# data-loss beads were sitting invisibly inside it. This wrapper restores the
+# "what should I do next" reading without mutating any beads.
+#
+# The lane rule is derived at READ time from external_ref, so newly mirrored
+# stubs classify themselves and nothing needs bulk relabelling:
+#
+#   own-work lane      - no external_ref (our own beads: fixes, reviews, chores)
+#   upstream-mirror    - external_ref set (gh-iss-*, gh-pr-*, gh:owner/repo#n)
+#
+# Measured against a description-text probe on the 2026-07-29 ready set, the
+# rule agreed on 331/335 items (3 mirrored stubs lacked an external_ref, 1
+# own-work bead carried one). Good enough to triage by; not a load-bearing
+# invariant, so treat a surprising lane as a mislabelled bead, not a bug here.
+#
+# P0 is hoisted above both lanes because urgency should never depend on which
+# lane an item landed in - that hoist is the whole point of the script. Only P0:
+# on the 2026-07-29 set a P0+P1 hoist was 85 items, which is another haystack.
+# P1 is not hidden, it sorts to the head of its own lane.
+#
+# Exit status is 0 whenever bd answered; this is a view, not a gate.
+set -euo pipefail
+. "$(dirname "$0")/_tri-lib.sh"
+tri_require bd jq
+
+show_mirror=0
+show_all=0
+as_json=0
+limit=0          # 0 = unlimited, matching `bd ready --limit 0`
+listing_cap=15   # per-lane display cap unless --all
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mirror) show_mirror=1 ;;
+    --all)    show_all=1 ;;
+    --json)   as_json=1 ;;
+    --limit)  shift; limit="${1:-0}" ;;
+    -h|--help)
+      sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) tri_die "unknown argument: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+raw="$(bd ready --limit "$limit" --json 2>/dev/null)" \
+  || tri_die "bd ready failed - is the tracker DB reachable? try scripts/check-beads-config"
+
+# bd emits `null` rather than [] for an empty result set.
+[ -n "$raw" ] && [ "$raw" != "null" ] || raw='[]'
+
+# Single jq pass: tag every item with its lane, then let the callers slice it.
+tagged="$(printf '%s' "$raw" | jq '
+  map(. + {lane: (if (.external_ref // "") == "" then "own" else "mirror" end)})
+')"
+
+if [ "$as_json" -eq 1 ]; then
+  printf '%s\n' "$tagged"
+  exit 0
+fi
+
+count() { printf '%s' "$tagged" | jq "[.[] | select($1)] | length"; }
+
+# Ordered by priority then age, oldest first - within a lane, the thing that has
+# waited longest at the highest priority is the honest "next".
+render() {
+  local filter="$1" cap="$2"
+  printf '%s' "$tagged" | jq -r --argjson cap "$cap" '
+    [.[] | select('"$filter"')]
+    | sort_by(.priority, .created_at)
+    | (if $cap > 0 then .[0:$cap] else . end)
+    | .[]
+    | "  P\(.priority)  \(.id)\t\(.title[0:78])"
+  ' | column -t -s $'\t'
+}
+
+total="$(count 'true')"
+own="$(count '.lane == "own"')"
+mirror="$(count '.lane == "mirror"')"
+urgent="$(count '.priority == 0')"
+
+cap=$([ "$show_all" -eq 1 ] && echo 0 || echo "$listing_cap")
+
+echo "ready: $total total  |  own-work: $own  |  upstream-mirror: $mirror"
+echo
+
+if [ "$urgent" -gt 0 ]; then
+  echo "── P0 — both lanes, surfaced first ($urgent) ──"
+  render '.priority == 0' 0
+  echo
+fi
+
+shown_lane=$([ "$show_mirror" -eq 1 ] && echo mirror || echo own)
+# Count only what this section actually lists: the lane minus its hoisted P0s.
+hidden="$(count ".lane == \"$shown_lane\" and .priority > 0")"
+p1="$(count ".lane == \"$shown_lane\" and .priority == 1")"
+
+label=$([ "$show_mirror" -eq 1 ] && echo "upstream-mirror" || echo "own-work")
+echo "── $label lane, P1+ ($hidden, of which P1: $p1) ──"
+render ".lane == \"$shown_lane\" and .priority > 0" "$cap"
+
+if [ "$cap" -gt 0 ] && [ "$hidden" -gt "$cap" ]; then
+  echo "  … $((hidden - cap)) more (--all to list)"
+fi
+
+if [ "$show_mirror" -eq 0 ] && [ "$mirror" -gt 0 ]; then
+  echo
+  echo "  $mirror upstream-mirrored items hidden (--mirror to work that lane)"
+fi

@@ -47,6 +47,38 @@ Re-running `tri-pull` daily is idempotent. It only mirrors items lacking the
 Pair with `tri-sync` (below) to also auto-close bd stubs whose upstream item
 has since been merged or closed.
 
+## ready-lanes (readable `bd ready`)
+
+```bash
+scripts/ready-lanes            # P0 hoist + own-work lane
+scripts/ready-lanes --mirror   # P0 hoist + upstream-mirror lane
+scripts/ready-lanes --all      # no per-lane display cap
+scripts/ready-lanes --json     # the ready set, each item tagged with .lane
+```
+
+Step 2 of the daily workflow ("review the digest / `bd ready`") stops working
+once the queue is deep enough. On 2026-07-29 `bd ready` returned ~335 items:
+~56% were stubs mirrored from `gastownhall/beads`, ~53% carried the default P2,
+and five P0 data-loss beads were sitting invisibly inside the pile.
+
+`ready-lanes` is a read-only view over `bd ready --json` that splits it in two
+and hoists P0 above both:
+
+| lane | rule | what it holds |
+|------|------|---------------|
+| own-work | no `external_ref` | our fixes, reviews, campaigns, chores |
+| upstream-mirror | `external_ref` set | `gh-iss-*` / `gh-pr-*` stubs from triage |
+
+The rule is derived at read time, so newly mirrored stubs classify themselves
+and no bulk relabelling is needed. On the 2026-07-29 set it agreed with a
+description-text probe on 331/335 items (3 mirrored stubs had no `external_ref`,
+1 own-work bead had one) — good enough to triage by, not a load-bearing
+invariant. A bead in a surprising lane is a mislabelled bead, not a script bug.
+
+Only **P0** is hoisted. A P0+P1 hoist was 85 items on the same set, which is
+just a second haystack; P1 is not hidden, it sorts to the head of its own lane.
+This is a view, not a gate — it exits 0 whenever `bd` answered.
+
 ## tri-daily (unattended Layer 2 wrapper)
 
 ```bash
