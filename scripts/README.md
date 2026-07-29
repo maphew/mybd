@@ -351,6 +351,34 @@ A PR can only be in one lane at a time: `pr-close-handoff` refuses to hand
 off a bead that already carries `merge-when-green`, and the patrol leaves a
 bead alone (logged, untouched) if it somehow carries both labels.
 
+**base-red** — not a lane you hand off to; a hand the patrol raises for
+itself. Agents run `PR_PREFLIGHT_BLOCK_RED_BASE=1`, so a red base branch
+blocks every `merge-when-green` lane behind it. That block is correct and the
+lanes are deliberately left armed — no lane caused it, and blocking them would
+burn N re-arms on one condition. But a red base was also the only persistent
+condition with no counter and no escalation, so it could stall the whole queue
+indefinitely in silence (2026-07-28: upstream main red ~8h, seven lanes
+parked, 39 patrol passes to the log alone).
+
+The patrol now tracks each red base in
+`${XDG_STATE_HOME:-~/.local/state}/pr-babysit/red-base` (one TAB-separated
+`key<TAB>passes<TAB>first_seen<TAB>bead` record per `repo@branch`; unparseable
+records are dropped and logged rather than trusted) and after
+`PR_BABYSIT_RED_BASE_LIMIT` consecutive passes (default 5, ~1h) creates one
+P0 bead labelled `base-red` naming the base, the failing run, and how many
+lanes are parked. Follow-up notes are rate-limited to one per 10 passes; the
+per-pass record lives in the patrol log.
+
+Everything here is keyed per base: a green sighting of `main` never withdraws
+an escalation for `release-1.2`, and only a *positively observed* green base
+of the same identity closes the bead. An empty queue is absence of evidence,
+not recovery. The corollary is worth knowing: if every parked lane is merged,
+blocked or closed while the base is still red, no lane remains to observe
+recovery and the bead stays open until a human closes it. The bead says so.
+
+Nothing about this lane can block, unclaim, or otherwise mutate a merge tail —
+it only ever creates, notes, or closes its own `base-red` bead.
+
 **review-needed** — a detector, not an executor: it makes sure PR reviews
 *get queued*, on first open and on follow-up activity; agent sessions consume
 the queue via `bd ready`. The patrol sweeps open PRs in

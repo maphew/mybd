@@ -62,6 +62,9 @@ TRANSIENT_BLOCK_LIMIT=3   # patrol passes before a transient-only block escalate
 CHECKS_UNAVAILABLE_LIMIT=10  # passes with no readable checks before escalation
 REARM_LIMIT=2             # automatic re-arms per head before a human owns it
 CLOSE_RETRY_LIMIT=10      # consecutive unreadable/malformed close-when-quiet passes before escalation
+RED_BASE_ESCALATE_LIMIT="${PR_BABYSIT_RED_BASE_LIMIT:-5}"  # consecutive passes (~1h at 12m) on a red base before its bead is raised
+RED_BASE_NOTE_EVERY=10    # passes between follow-up notes on a standing red-base bead (~2h)
+RED_BASE_STATE="$STATE_DIR/red-base"
 # Every merge flips mergeStateStatus to UNKNOWN for every other open PR, so a
 # green backlog would otherwise drain at one PR per pass while burning the
 # others' transient budgets.  On a transient-only block, wait briefly for
@@ -172,6 +175,37 @@ rearm_sweep() {
       log "$bead: re-arm mutation failed"
     fi
   done < <(jq -c '.[]' <<<"$blocked")
+}
+
+# A red base is a condition of the BASE, not of any lane behind it: no lane
+# caused it and every lane behind it is equally stuck.  So the lanes stay armed
+# (see the preflight-red-base transition below) and the escalation is one bead
+# per red base branch, rather than N blocked tails each needing a re-arm.
+#
+# Everything here is keyed by "repo@branch" because the queue can span several
+# bases at once.  A green sighting of one base must never be read as recovery
+# of a different one, and each base carries its own counter.  These accumulate
+# across the merge loop, which runs in this shell (the loop is fed by process
+# substitution, not a pipe), and are consumed by red_base_escalate after it.
+RED_BASE_SIGHTINGS=""   # one "key<TAB>detail" line per lane parked behind a red base
+GREEN_BASE_KEYS=""      # one "key" line per base positively observed green
+
+# Record one lane parked behind a red base, naming the base and the failing-run
+# detail from the preflight block line so the escalation cites the run.
+red_base_note() {
+  local repo="$1" blocks="$2" line branch detail
+  line="$(grep -E "$RED_BASE_BLOCK_RE" <<<"$blocks" | head -n1)"
+  branch="$(sed -nE 's/^\[block\] Base branch (.+) CI is RED(:.*)?$/\1/p' <<<"$line")"
+  detail="$(sed -nE 's/^\[block\] Base branch .+ CI is RED: (.*)$/\1/p' <<<"$line")"
+  RED_BASE_SIGHTINGS+="$repo@${branch:-unknown}"$'\t'"$detail"$'\n'
+}
+
+# Record a base positively observed green.  Keyed identically to the red side;
+# only an exact key match counts as recovery.
+green_base_note() {
+  local repo="$1" out="$2" branch
+  branch="$(sed -nE 's/^\[pass\] Base branch (.+) CI is green( \(.*)?$/\1/p' <<<"$out" | head -n1)"
+  GREEN_BASE_KEYS+="$repo@${branch:-unknown}"$'\n'
 }
 
 cd "$ROOT" || exit 1
@@ -332,6 +366,8 @@ while read -r item; do
     elif [[ -n "$blocks" ]] && grep -qE "$RED_BASE_BLOCK_RE" <<<"$blocks"; then
       # Red base retains without consuming the transient budget: storms end on
       # their own schedule and must not convert waiting tails into blocks.
+      # It is escalated globally instead — see red_base_escalate.
+      red_base_note "$repo" "$blocks"
       transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
     elif [[ -n "$blocks" ]]; then
       # Transient-only blocks (merge state UNKNOWN/UNSTABLE, checks still
@@ -354,6 +390,10 @@ while read -r item; do
     transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
     continue
   fi
+  # A positively observed green base is the only thing that clears a standing
+  # red-base escalation for that same base.  "No lanes reported red" is absence
+  # of evidence — an empty queue must not be read as recovery.
+  green_base_note "$repo" "$preflight_out"
   # A fully healthy preflight resets the transient budget: the counter tracks
   # consecutive transient sightings, not lifetime ones.
   if [[ "$(jq -r '.pr_babysit_transient // empty' <<<"$metadata")" == "$head":* ]]; then
@@ -388,6 +428,144 @@ while read -r item; do
     transition "$bead" "$metadata" "$notes" "merge-failed:$head" "Merge attempt failed; retained under patrol." || log "$bead: transition failed"
   fi
 done < <(jq -c '.[]' <<<"$QUEUE")
+
+# --- red base: one bounded hand raised per red base branch -------------------
+# Every other persistent condition in this patrol ends in a bead surfacing via
+# `bd ready`.  A red base was the exception: lanes were retained forever with
+# no counter and no escalation, so on 2026-07-28 upstream main sat red for ~8h
+# while seven armed lanes waited and 39 patrol passes went to the log alone.
+# This raises one bead per red base after a bounded wait, leaves the lanes
+# armed, and withdraws the bead when that same base is observed green again.
+#
+# State file: one TAB-separated record per tracked base —
+#   key<TAB>consecutive_passes<TAB>first_seen<TAB>escalation_bead   (bead may be empty)
+
+# Records are validated rather than trusted.  `cut` echoes the whole line for
+# every field when a record has no tabs, which would make a truncated record
+# read as a plausible bead id and suppress escalation forever — precisely the
+# silent failure this lane exists to end.  An unparseable record is dropped.
+red_base_state_read() {
+  local k c f b extra
+  [[ -f "$RED_BASE_STATE" ]] || return 0
+  while IFS=$'\t' read -r k c f b extra || [[ -n "${k:-}" ]]; do
+    [[ -n "$k" ]] || continue
+    if [[ -n "${extra:-}" || ! "$c" =~ ^[0-9]+$ || -z "$f" ]]; then
+      log "red-base: dropping unparseable state record for '$k'"; continue
+    fi
+    if [[ -n "$b" && ! "$b" =~ ^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9.]+$ ]]; then
+      log "red-base: dropping state record with malformed bead id for '$k'"; continue
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$k" "$c" "$f" "$b"
+  done <"$RED_BASE_STATE"
+}
+
+# Standing escalation bead for a base, found by patrol-written metadata so the
+# bead — not the state file — is the record of truth after state loss.
+# Exit 1 means "could not ask", which must never be read as "none exists".
+red_base_existing_bead() {
+  local key="$1" out
+  # Status is filtered in jq, not passed to `bd list`: this lane must never
+  # emit a mutation-shaped argument list, and `--status open` reads like one.
+  out="$(bd list --label base-red --limit 0 --json 2>/dev/null)" || return 1
+  jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$out" || return 1
+  jq -r --arg k "$key" 'map(select(.status == "open" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$out"
+}
+
+red_base_create() {
+  local key="$1" count="$2" first="$3" lanes="$4" detail="$5" desc
+  desc="The pr-babysit patrol has observed base branch $key red for $count consecutive passes, since $first. $lanes merge lane(s) are parked behind it and cannot merge while it is red (agents run PR_PREFLIGHT_BLOCK_RED_BASE=1).
+
+Preflight reported: ${detail:-(no detail parsed)}
+
+The parked lanes are NOT blocked and need no re-arm: they resume automatically once the base is green. This bead closes itself on the next patrol pass in which a lane observes $key green — note that if every parked lane is merged, blocked or closed while the base is still red, no lane remains to make that observation and this bead will stay open until a human closes it.
+
+What is needed here is a decision about the base itself: rerun a suspected flake, or land the fix for the base. While it is red that fix is the only mergeable PR — see PR_MAINTAINER_GUIDELINES.md 'Base-Branch Health'.
+
+Raised automatically by scripts/pr-babysit; patrol log: $LOG"
+
+  bd create "Base branch $key has been red for $count patrol passes; $lanes merge lane(s) parked" \
+    -t bug -p 0 -l base-red \
+    --metadata "$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k}')" \
+    --description "$desc" --json 2>/dev/null | jq -r '.id // empty'
+}
+
+red_base_escalate() {
+  local now state keys key rec count first bead lanes detail newstate="" tmp
+  now="$(date -u +%FT%TZ)"
+  state="$(red_base_state_read)"
+  # Union of bases already tracked and bases observed red this pass.
+  keys="$( { cut -f1 <<<"$state"; cut -f1 <<<"$RED_BASE_SIGHTINGS"; } | grep -v '^$' | sort -u )"
+  [[ -n "$keys" ]] || { rm -f "$RED_BASE_STATE"; return 0; }
+
+  while read -r key; do
+    [[ -n "$key" ]] || continue
+    rec="$(awk -F'\t' -v k="$key" '$1 == k {print; exit}' <<<"$state")"
+    count=0; first="$now"; bead=""
+    if [[ -n "$rec" ]]; then
+      count="$(cut -f2 <<<"$rec")"; first="$(cut -f3 <<<"$rec")"; bead="$(cut -f4 <<<"$rec")"
+    fi
+    lanes="$(awk -F'\t' -v k="$key" '$1 == k {n++} END {print n + 0}' <<<"$RED_BASE_SIGHTINGS")"
+
+    if (( lanes == 0 )); then
+      # Not observed red this pass.  Only a positively observed GREEN base of
+      # this exact identity is recovery; every other reason a lane did not
+      # report (queue empty, lanes merged away, bd unavailable, a different
+      # base green) is absence of evidence, and the record carries forward.
+      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS"; then
+        if [[ -z "$bead" ]]; then
+          log "red-base: $key recovered before escalating"; continue
+        elif bd close "$bead" --reason "Base branch $key recovered; parked merge lanes resumed with no manual action." >/dev/null 2>&1; then
+          log "red-base: $key recovered; escalation bead $bead closed"; continue
+        else
+          log "red-base: $key recovered but closing $bead failed; retrying next pass"
+        fi
+      fi
+      newstate+="$key"$'\t'"$count"$'\t'"$first"$'\t'"$bead"$'\n'
+      continue
+    fi
+
+    detail="$(awk -F'\t' -v k="$key" '$1 == k {print $2; exit}' <<<"$RED_BASE_SIGHTINGS")"
+    count=$((count + 1))
+    if [[ -z "$bead" ]]; then
+      if ! bead="$(red_base_existing_bead "$key")"; then
+        # Could not read bd.  Creating now risks a duplicate bead, so hold the
+        # count and decide next pass.
+        log "red-base: $key red but bd is unreadable; escalation decision deferred"
+        newstate+="$key"$'\t'"$count"$'\t'"$first"$'\t'"$bead"$'\n'
+        continue
+      fi
+    fi
+    if [[ -z "$bead" ]] && (( count >= RED_BASE_ESCALATE_LIMIT )); then
+      bead="$(red_base_create "$key" "$count" "$first" "$lanes" "$detail")"
+      if [[ -n "$bead" ]]; then
+        log "red-base: ESCALATED $key after $count passes (red since $first); $lanes lane(s) parked; bead $bead"
+      else
+        # Do not advance past the limit on a failed create: the next pass must
+        # retry rather than silently never raising a hand.
+        count=$((RED_BASE_ESCALATE_LIMIT - 1))
+        log "red-base: escalation bead creation failed for $key; will retry next pass"
+      fi
+    elif [[ -n "$bead" ]] && (( count % RED_BASE_NOTE_EVERY == 0 )); then
+      # Follow-ups are rate-limited: the patrol log carries the per-pass record,
+      # so the durable bead does not need one note every 12 minutes.
+      bd update "$bead" --append-notes "[pr-babysit $now] $key still red after $count passes (since $first); $lanes lane(s) parked." >/dev/null 2>&1 \
+        || log "red-base: note append to $bead failed"
+    fi
+    log "red-base: $key red since $first, $lanes lane(s) parked (pass $count${bead:+, bead $bead})"
+    newstate+="$key"$'\t'"$count"$'\t'"$first"$'\t'"$bead"$'\n'
+  done <<<"$keys"
+
+  if [[ -z "$newstate" ]]; then
+    rm -f "$RED_BASE_STATE"
+    return 0
+  fi
+  # Written atomically so a crash cannot leave a short record behind.
+  tmp="$RED_BASE_STATE.tmp.$$"
+  if printf '%s' "$newstate" >"$tmp" && mv -f "$tmp" "$RED_BASE_STATE"; then :; else
+    rm -f "$tmp"; log "red-base: state write failed"
+  fi
+}
+red_base_escalate
 
 # --- close-when-quiet: decline offers become closes after a quiet window ----
 # A close-when-quiet bead already carries its disposition; the disposing

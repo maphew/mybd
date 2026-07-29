@@ -293,6 +293,13 @@ hard-blocks (rather than warns) when the base branch is red. While upstream
 main is red, the only mergeable PR is the fix for main - stop-the-line, see
 [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) "Base-Branch Health".
 
+A red base stalls every armed merge lane behind it, so the pr-babysit patrol
+raises a **`base-red`** P0 bead after ~1h of consecutive red passes (per base
+branch, one bead, self-withdrawing on recovery). If one shows up in `bd ready`,
+it is the stop-the-line signal: fix or rerun the base first, and expect the
+parked lanes to resume on their own - they are not blocked and need no re-arm.
+See `scripts/README.md` "pr-babysit / pr-handoff".
+
 Assume you are not working alone.
 Use git worktrees by default.
 Write reports as md only — no html twins (policy change 2026-07-07; read long

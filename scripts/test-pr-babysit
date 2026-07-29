@@ -307,6 +307,58 @@ export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":"https://github.com/x
 # Red-base-only failures retain the bead; a policy block becomes actionable.
 reset red-base "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED: Main failed at 2026-07-24T00:00:00Z'
 run_patrol; [[ "$(grep -c -- '--status open' "$FAKE_BD_LOG" || true)" == 0 ]] || fail "red base blocked bead"
+
+# A red base raises exactly one bead per base — after a bounded wait, never
+# blocking the lanes parked behind it — and withdraws it on that base's
+# recovery.  PR_BABYSIT_RED_BASE_LIMIT keeps the budget cheap to exercise.
+red_state="$CASE/state/pr-babysit/red-base"
+export PR_BABYSIT_RED_BASE_LIMIT=3
+run_patrol   # pass 2 of 3
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 0 ]] || fail "red base escalated before its budget"
+grep -q $'^gastownhall/beads@main\t2\t' "$red_state" || fail "red base counter did not advance"
+run_patrol  # reaches the limit
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "red base did not raise exactly one bead"
+grep -q 'create Base branch gastownhall/beads@main has been red' "$FAKE_BD_LOG" || fail "escalation bead does not name the base"
+[[ "$(grep -c -- '--status open' "$FAKE_BD_LOG" || true)" == 0 ]] || fail "red base blocked a parked lane"
+run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "red base raised a duplicate bead"
+
+# Follow-up notes are rate-limited to one per RED_BASE_NOTE_EVERY passes, not
+# one per pass: the patrol log carries the per-pass record.
+for _ in 1 2 3 4 5 6 7; do run_patrol; done
+[[ "$(count 'still red after' "$FAKE_BD_LOG")" == 1 ]] || fail "standing red-base bead took an unbounded note stream"
+
+# An empty queue means no lane observed the base at all; that is absence of
+# evidence, not recovery, and must not withdraw a standing escalation.
+saved_queue="$(cat "$FAKE_QUEUE")"; printf '[]\n' >"$FAKE_QUEUE"
+run_patrol
+[[ -f "$red_state" ]] || fail "empty queue cleared red-base state"
+printf '%s\n' "$saved_queue" >"$FAKE_QUEUE"
+
+# Recovery is keyed: a green sighting of a DIFFERENT base is not recovery of
+# the tracked one.  Track a second, still-red base and let only main go green.
+printf 'gastownhall/beads@release-1.2\t9\t2026-07-28T00:00:00Z\tmybd-other\n' >>"$red_state"
+unset FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT
+run_patrol
+grep -q '^close mybd-other' "$FAKE_BD_LOG" && fail "green base withdrew a different base's escalation"
+grep -q $'^gastownhall/beads@release-1.2\t9\t' "$red_state" || fail "untouched base's record was not carried forward"
+# ...while the base that was actually observed green is withdrawn, and its
+# lanes resume with no re-arm (this pass merges).
+grep -q '^close mybd-created' "$FAKE_BD_LOG" || fail "recovered base did not withdraw its escalation"
+grep -q '^gastownhall/beads@main' "$red_state" && fail "recovered base survived in state"
+
+# A truncated or hand-edited record is dropped, not trusted: read back through
+# `cut` it would look like a plausible bead id and suppress escalation forever.
+reset red-base-corrupt "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 \
+  FAKE_PREFLIGHT_OUTPUT='[block] Base branch main CI is RED: Main failed at 2026-07-24T00:00:00Z' \
+  PR_BABYSIT_RED_BASE_LIMIT=3
+mkdir -p "$CASE/state/pr-babysit"; printf 'gastownhall/beads@main\n' >"$CASE/state/pr-babysit/red-base"
+run_patrol; run_patrol; run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "corrupt state record suppressed escalation"
+grep -q 'dropping unparseable state record' "$CASE/state/pr-babysit/patrol.log" || fail "corrupt state record was silently discarded"
+unset PR_BABYSIT_RED_BASE_LIMIT
+
 reset policy-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge conflict detected'
 run_patrol; grep -q -- '--status open' "$FAKE_BD_LOG" || fail "policy block did not open/block bead"
 reset partial-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"fail","link":""}]' FAKE_BD_FAIL_ON=update
