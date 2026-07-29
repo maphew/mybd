@@ -133,3 +133,8 @@ Machine-checked against `conflict-classes.jsonl`:
 - Extra PRs: **0**
 
 Durable Beads tracking could not be updated because the embedded Dolt database failed to open on the read-only filesystem.
+---
+
+## Execution addendum (2026-07-28, mybd-q9t6d)
+
+The maintainer-rebase batch ran same-day: merge-of-main (no force-push) in isolated worktrees, conflicts resolved by parallel builder agents, each build + targeted-tested, pushed to contributor forks via maintainer-edit access, resolution comment posted per PR. Outcomes: **7 refreshed** (3837 — full port of the auth-classification onto the restructured `cmd/bd/dolt.go`, now covering 4 call sites; 4376, 4409, 4804, 4806, 4808, 4959) and **1 retired** — 4257 proved byte-identical to main after the merge (the author had self-absorbed it via #4097/commit 42be8e871); retirement comment + close-when-quiet lane mybd-s8edp. All eight authors were invited to sanity-check their resolution. CI runs on the refreshed heads; review/merge decisions proceed as normal queue work.
