@@ -37,6 +37,7 @@ DEADLINE_FILE="$STATE_DIR/until"
 RUNS_FILE="$STATE_DIR/runs"
 TOKEN_FILE="${SOLO_SWEEP_GH_TOKEN_FILE:-$STATE_DIR/gh-token-readonly}"
 TRANSCRIPT_DIR="$STATE_DIR/transcripts"
+TRANSIENT_FILE="$STATE_DIR/transient"
 mkdir -p "$TRANSCRIPT_DIR"
 
 MAX_RUNS="${SOLO_SWEEP_MAX_RUNS:-40}"
@@ -44,6 +45,11 @@ MAX_STUBS="${SOLO_SWEEP_MAX_STUBS:-12}"
 RUN_TIMEOUT="${SOLO_SWEEP_TIMEOUT:-45m}"
 MAX_USD="${SOLO_SWEEP_MAX_USD:-8}"
 MODEL="${SOLO_SWEEP_MODEL:-fable}"
+# If the primary model's credit pool is exhausted, optionally finish the run on
+# a fallback rather than losing the fire. Empty = no fallback (costs nothing
+# without the owner's say-so).
+FALLBACK_MODEL="${SOLO_SWEEP_FALLBACK_MODEL:-}"
+MAX_TRANSIENT="${SOLO_SWEEP_MAX_TRANSIENT:-6}"
 EFFORT="${SOLO_SWEEP_EFFORT:-high}"
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
@@ -289,13 +295,55 @@ tail -n 25 "$transcript" | sed 's/^/    | /' >>"$LOG"
 # A partial run is not committed.  A timeout can land after solo-bd has
 # labelled stubs but before the report exists, which would silently retire
 # those stubs from the queue with no written record of why.
+# Not every failure deserves a durable stop. Quota exhaustion, rate limits and
+# upstream overload are conditions that fix themselves; parking on one would
+# throw away the rest of the week for something that clears in hours. Observed
+# 2026-07-29: run 2 died in 3s on "out of usage credits" and parked the lane.
+# Genuine faults still park. This mirrors pr-babysit's transient budget.
+TRANSIENT_RE='out of usage credits|rate limit|rate_limit|overloaded|Overloaded|529|503 |Service Unavailable|temporarily unavailable|ETIMEDOUT|ECONNRESET'
+
 if (( rc == 124 || rc == 137 )); then
   park "run $runs TIMED OUT after $RUN_TIMEOUT (theme=$THEME); nothing committed. \
 Inspect $transcript, then re-arm with scripts/install-solo-sweep --days N."
 elif (( rc != 0 )); then
+  if grep -qE "$TRANSIENT_RE" "$transcript" 2>/dev/null; then
+    # Retry on the fallback model in this same fire, if one is configured.
+    if [[ -n "$FALLBACK_MODEL" && "$FALLBACK_MODEL" != "$MODEL" ]]; then
+      log "run $runs: $MODEL unavailable (transient); retrying on $FALLBACK_MODEL"
+      start=$(date +%s)
+      timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
+        env ${MODEL_GH_TOKEN:+GH_TOKEN="$MODEL_GH_TOKEN"} \
+            ${MODEL_GH_CONFIG:+GH_CONFIG_DIR="$MODEL_GH_CONFIG"} GITHUB_TOKEN= \
+        claude -p "$prompt" --settings "$SETTINGS" --permission-mode default \
+          --model "$FALLBACK_MODEL" --effort "$EFFORT" --max-budget-usd "$MAX_USD" \
+          >"$transcript" 2>&1
+      rc=$?
+      elapsed=$(( $(date +%s) - start ))
+      tail -n 25 "$transcript" | sed 's/^/    | /' >>"$LOG"
+    fi
+  fi
+fi
+
+if (( rc != 0 )); then
+  if grep -qE "$TRANSIENT_RE" "$transcript" 2>/dev/null; then
+    nt=0; [[ -r "$TRANSIENT_FILE" ]] && nt="$(tr -dc '0-9' <"$TRANSIENT_FILE")"
+    nt=$(( ${nt:-0} + 1 ))
+    printf '%s\n' "$nt" >"$TRANSIENT_FILE"
+    # A transient failure did no work, so it must not burn a run from the cap.
+    printf '%s\n' "$(( runs - 1 ))" >"$RUNS_FILE"
+    if (( nt >= MAX_TRANSIENT )); then
+      park "run $runs: $nt consecutive transient failures (latest rc=$rc, theme=$THEME). \
+Last: $(grep -oE "$TRANSIENT_RE" "$transcript" 2>/dev/null | head -1). \
+This is no longer looking temporary — check quota/credits, then re-arm."
+    fi
+    log "run $runs: transient failure ($nt/$MAX_TRANSIENT), rc=$rc — not parking, next fire retries. \
+Reason: $(grep -oE "$TRANSIENT_RE" "$transcript" 2>/dev/null | head -1)"
+    exit 0
+  fi
   park "run $runs exited rc=$rc after ${elapsed}s (theme=$THEME); nothing committed. \
 Inspect $transcript, then re-arm with scripts/install-solo-sweep --days N."
 fi
+: >"$TRANSIENT_FILE"   # a clean run resets the transient budget
 log "run $runs: model completed in ${elapsed}s (theme=$THEME)"
 
 # --- validate what the agent produced ----------------------------------------

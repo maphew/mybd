@@ -144,6 +144,19 @@ grep -q 'GH_CONFIG_DIR' "$SWEEP" \
   && ok "model gets an empty gh config dir (no stored oauth to fall back on)" \
   || bad "model gets an empty gh config dir"
 
+# Quota exhaustion must not permanently park the lane (observed 2026-07-29).
+grep -q 'TRANSIENT_RE' "$SWEEP" \
+  && ok "transient failures are classified, not parked on" \
+  || bad "transient failures are classified, not parked on"
+grep -q 'out of usage credits' "$SWEEP" \
+  && ok "credit exhaustion is treated as transient" \
+  || bad "credit exhaustion is treated as transient"
+grep -q 'MAX_TRANSIENT' "$SWEEP" \
+  && ok "transient retries are bounded" || bad "transient retries are bounded"
+grep -q 'runs - 1' "$SWEEP" \
+  && ok "a transient failure does not burn a run from the cap" \
+  || bad "a transient failure does not burn a run from the cap"
+
 grep -q 'SOLO-SWEEP-STALLED' "$SWEEP" \
   && ok "a parked lane publishes a visible stall marker" \
   || bad "a parked lane publishes a visible stall marker"
