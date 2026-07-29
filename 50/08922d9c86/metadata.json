@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "5008922d9c86",
+  "strategy": "manual-commit",
+  "branch": "feat/solo-sweep",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "scripts/README.md",
+    "scripts/install-solo-sweep",
+    "scripts/solo-sweep",
+    "scripts/solo-sweep-prompt.md",
+    "scripts/systemd/solo-sweep.service",
+    "scripts/systemd/solo-sweep.timer",
+    "scripts/test-solo-sweep"
+  ],
+  "sessions": [
+    {
+      "metadata": "/50/08922d9c86/0/metadata.json",
+      "transcript": "/50/08922d9c86/0/full.jsonl",
+      "compact_transcript": "/50/08922d9c86/0/transcript.jsonl",
+      "content_hash": "/50/08922d9c86/0/content_hash.txt",
+      "prompt": "/50/08922d9c86/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 31219,
+    "cache_read_tokens": 187281,
+    "output_tokens": 409,
+    "api_call_count": 4
+  }
+}

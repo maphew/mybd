@@ -1,0 +1,5 @@
+Run these three Bash commands, each in its own separate Bash tool call, and report for EACH one verbatim whether it succeeded (and its output) or was denied/blocked:
+1: /usr/bin/git config --get user.name
+2: FOO=1 git config --get user.name
+3: env git config --get user.name
+Do not stop early; attempt all three even if one is denied. Then give a 3-line summary: '1: ALLOWED/DENIED', etc.

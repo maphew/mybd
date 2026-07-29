@@ -1,0 +1,66 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "5008922d9c86",
+  "session_id": "1df0022b-b17b-44ad-b058-39a3f4b12d83",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-29T05:51:54.511817143Z",
+  "branch": "feat/solo-sweep",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "scripts/README.md",
+    "scripts/install-solo-sweep",
+    "scripts/solo-sweep",
+    "scripts/solo-sweep-prompt.md",
+    "scripts/systemd/solo-sweep.service",
+    "scripts/systemd/solo-sweep.timer",
+    "scripts/test-solo-sweep"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5",
+  "turn_id": "7e09604fa6cf",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 31219,
+    "cache_read_tokens": 187281,
+    "output_tokens": 409,
+    "api_call_count": 4
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-29T05:51:54.509055172Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 0,
+    "total_lines_changed": 0,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 746,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/solo-sweep-settings.json": 106,
+        "AGENTS.md": 20,
+        "scripts/README.md": 62,
+        "scripts/install-solo-sweep": 85,
+        "scripts/solo-sweep": 215,
+        "scripts/solo-sweep-prompt.md": 83,
+        "scripts/systemd/solo-sweep.service": 8,
+        "scripts/systemd/solo-sweep.timer": 10,
+        "scripts/test-solo-sweep": 157
+      }
+    }
+  ]
+}
