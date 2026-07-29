@@ -12,3 +12,28 @@ ExecStart="@ROOT@/scripts/solo-sweep"
 # SIGTERM can land mid-commit and leave the checkout in a state the next run
 # refuses to touch.
 TimeoutStartSec=90min
+
+# --- sandbox -----------------------------------------------------------------
+# The permission allowlist is enforced by Claude Code; these are enforced by the
+# kernel. That distinction is the point: allowlist semantics can change under us
+# in a harness upgrade, and this lane runs unsupervised for a week.
+#
+# Verified by probe 2026-07-29: gh auth, bd, and claude all work under these
+# settings, and reads of ~/.ssh fail with EACCES.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# Everything outside these is read-only. bd's embedded Dolt DB lives under the
+# repo; Claude Code needs its own state and cache.
+ReadWritePaths=@ROOT@ %h/.claude %h/.cache %h/.config %h/.local/state %h/.local/share
+# Credentials and second runtimes this lane has no business touching. A leading
+# '-' keeps the unit startable when a path does not exist.
+InaccessiblePaths=-%h/.ssh -%h/.gnupg -%h/.aws -%h/.codex -%h/.docker -%h/.kube -%h/.npmrc -%h/.netrc

@@ -61,9 +61,72 @@ die() { log "ABORT: $*"; exit 1; }
 # Park the lane durably.  Used for any condition where continuing could make
 # things worse; a log line nobody reads for seven days is not a signal, so this
 # also stops the timer rather than retrying into the same wall.
+# Commit exactly one path through a scratch index.  A bare `git commit` takes
+# the whole index and `git add` of a directory sweeps in whatever another actor
+# wrote during the run.  commit-tree/update-ref bypass the real index, so it is
+# resynced afterwards: skipping that bricked the lane on 2026-07-29, when the
+# new report read as a staged deletion plus an untracked file and the dirty
+# gate then refused every later fire.
+COMMIT_SHA=""
+commit_one_file() {
+  local path="$1" msg="$2" parent tree commit tmp_index rc=1
+  COMMIT_SHA=""
+  parent="$(git rev-parse HEAD 2>/dev/null)" || return 1
+  tmp_index="$(mktemp "$STATE_DIR/.idx.XXXXXX")"; rm -f "$tmp_index"
+  if GIT_INDEX_FILE="$tmp_index" git read-tree HEAD 2>>"$LOG" \
+     && GIT_INDEX_FILE="$tmp_index" git add -- "$path" 2>>"$LOG"; then
+    tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree 2>>"$LOG")"
+    if [[ -n "$tree" ]] && commit="$(git commit-tree "$tree" -p "$parent" -m "$msg" 2>>"$LOG")"; then
+      if git update-ref -m "solo-sweep" HEAD "$commit" "$parent" 2>>"$LOG"; then
+        git read-tree HEAD 2>>"$LOG" || log "WARNING: index resync failed"
+        COMMIT_SHA="$commit"; rc=0
+      fi
+    fi
+  fi
+  rm -f "$tmp_index"
+  return $rc
+}
+
+push_head() {
+  local remote_url
+  remote_url="$(git config --get remote.origin.url 2>/dev/null)"
+  if [[ "$remote_url" != *maphew/mybd* ]]; then
+    log "refusing to push, unexpected origin '$remote_url'"; return 1
+  fi
+  git push --quiet origin HEAD:refs/heads/main 2>>"$LOG"
+}
+
+STALL_MARKER="reports/SOLO-SWEEP-STALLED.md"
+
+# Park the lane durably.  A parked lane is otherwise SILENT, and silence is
+# indistinguishable from "still working" — on 2026-07-29 a wrapper bug parked
+# the lane and cost two fires before a human happened to ask.  So parking also
+# publishes a marker: the owner is away, but whoever is watching the repo can
+# see it.
 park() {
-  log "PARKED: $*"
-  printf 'parked %s: %s\n' "$(date -u +%FT%TZ)" "$*" >"$DISABLED"
+  local reason="$*"
+  log "PARKED: $reason"
+  printf 'parked %s: %s\n' "$(date -u +%FT%TZ)" "$reason" >"$DISABLED"
+  {
+    printf '# solo-sweep lane STALLED\n\n'
+    printf -- '- **when:** %s\n' "$(date -u +%FT%TZ)"
+    printf -- '- **run:** %s\n' "${runs:-?}"
+    printf -- '- **theme:** %s\n' "${THEME:-unknown}"
+    printf -- '- **reason:** %s\n\n' "$reason"
+    printf 'The lane has stopped and will not fire again until re-armed.\n'
+    printf 'Nothing was committed for the failed run.\n\n'
+    printf -- '- investigate: `%s`\n' "${transcript:-$TRANSCRIPT_DIR/}"
+    printf -- '- resume: `scripts/install-solo-sweep --days N`\n'
+    printf -- '- stand down: `scripts/install-solo-sweep --disarm`\n'
+  } >"$ROOT/$STALL_MARKER" 2>/dev/null
+  if commit_one_file "$STALL_MARKER" "chore(solo-sweep): lane STALLED — $reason
+
+Published by the park path so a stall is visible to whoever is watching the
+repo, instead of being silent until the owner returns."; then
+    push_head && log "stall marker pushed" || log "stall marker committed, push failed"
+  else
+    log "WARNING: could not commit the stall marker"
+  fi
   exit 1
 }
 
@@ -119,12 +182,15 @@ if [[ ! -r "$TOKEN_FILE" ]]; then
      Mint a read-only fine-grained PAT, or set SOLO_SWEEP_ALLOW_WRITE_TOKEN=1 to override."
   fi
 else
-  tok="$(tr -d '[:space:]' <"$TOKEN_FILE")"
-  [[ -n "$tok" ]] || die "token file $TOKEN_FILE is empty"
-  export GH_TOKEN="$tok"
-  unset GITHUB_TOKEN
+  MODEL_GH_TOKEN="$(tr -d '[:space:]' <"$TOKEN_FILE")"
+  [[ -n "$MODEL_GH_TOKEN" ]] || die "token file $TOKEN_FILE is empty"
   gh_mode="read-only token"
 fi
+# The read-only token is applied to the MODEL invocation only, never exported
+# process-wide: origin is https with the gh oauth credential helper, so a
+# global read-only token would break this wrapper's own `git push` and
+# `bd dolt push`.  The lane would sweep all week and publish nothing, and we
+# would only discover it on the owner's return.
 unset TRI_ALLOW_UNATTENDED_POST   # never satisfy the publication gate
 export MYBD_SOLO_SWEEP=1
 
@@ -196,7 +262,18 @@ transcript="$TRANSCRIPT_DIR/$DATE-$THEME-run$runs.log"
 log "RUN $runs/$MAX_RUNS theme=$THEME remaining=$THEME_N gh=$gh_mode model=$MODEL budget=\$$MAX_USD"
 
 start=$(date +%s)
+# When a read-only token is in play, also hand the model an EMPTY gh config
+# dir: with no hosts.yml to fall back on, gh has no stored oauth credential to
+# find, so GH_TOKEN is the only authentication available to it. The wrapper's
+# own push, further down, still uses the real config.
+MODEL_GH_CONFIG=""
+if [[ -n "${MODEL_GH_TOKEN:-}" ]]; then
+  MODEL_GH_CONFIG="$(mktemp -d "$STATE_DIR/.ghcfg.XXXXXX")"
+fi
+
 timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
+  env ${MODEL_GH_TOKEN:+GH_TOKEN="$MODEL_GH_TOKEN"} \
+      ${MODEL_GH_CONFIG:+GH_CONFIG_DIR="$MODEL_GH_CONFIG"} GITHUB_TOKEN= \
   claude -p "$prompt" \
     --settings "$SETTINGS" \
     --permission-mode default \
@@ -206,6 +283,7 @@ timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
     >"$transcript" 2>&1
 rc=$?
 elapsed=$(( $(date +%s) - start ))
+[[ -n "$MODEL_GH_CONFIG" ]] && rm -rf "$MODEL_GH_CONFIG"
 tail -n 25 "$transcript" | sed 's/^/    | /' >>"$LOG"
 
 # A partial run is not committed.  A timeout can land after solo-bd has
@@ -261,54 +339,38 @@ sig="$(AGENT_MODEL="$MODEL" AGENT_REASONING="$EFFORT" \
        scripts/agent-sig.sh claude-code-solo-sweep --trailer 2>/dev/null)"
 [[ -n "$sig" ]] || sig="Agent-Signature: claude-code-solo-sweep-$MODEL-$EFFORT on behalf of $(git config user.name)"
 
-tmp_index="$(mktemp "$STATE_DIR/.index.XXXXXX")"
-rm -f "$tmp_index"
-if GIT_INDEX_FILE="$tmp_index" git read-tree HEAD 2>>"$LOG" \
-   && GIT_INDEX_FILE="$tmp_index" git add -- "$REPORT_REL" 2>>"$LOG"; then
-  tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree 2>>"$LOG")"
-  msg="report: solo-sweep run $runs — issue sweep theme:$THEME
+msg="report: solo-sweep run $runs — issue sweep theme:$THEME
 
 Unattended solo-sweep lane (scripts/solo-sweep).  Dispositions are PROPOSED
 only: nothing was published, closed, or merged.  Review with
 bd list -l solo-sweep:proposed
 
 $sig"
-  if [[ -n "$tree" ]] && commit="$(git commit-tree "$tree" -p HEAD -m "$msg" 2>>"$LOG")"; then
-    if git update-ref -m "solo-sweep run $runs" HEAD "$commit" "$start_head" 2>>"$LOG"; then
-      # commit-tree/update-ref move HEAD without touching the real index, so
-      # the index still describes the OLD tree: the report reads as a staged
-      # deletion plus an untracked file, and the dirty gate then refuses every
-      # later fire. Run 1 (2026-07-29) bricked the lane exactly this way.
-      git read-tree HEAD 2>>"$LOG" || log "run $runs: WARNING — index resync failed"
-      log "run $runs: committed $commit ($REPORT_REL)"
-    else
-      log "run $runs: update-ref refused (HEAD moved); commit $commit is unreferenced"
-    fi
-  else
-    log "run $runs: commit-tree failed; nothing committed"
-  fi
+
+if commit_one_file "$REPORT_REL" "$msg"; then
+  log "run $runs: committed $COMMIT_SHA ($REPORT_REL)"
 else
-  log "run $runs: could not stage $REPORT_REL; nothing committed"
+  log "run $runs: commit FAILED; nothing committed"
 fi
-rm -f "$tmp_index"
+
+# A good run clears a marker left by an earlier failure, so the repo stops
+# advertising a stall that has since been resolved.
+if [[ -n "$COMMIT_SHA" && -f "$ROOT/$STALL_MARKER" ]]; then
+  rm -f "$ROOT/$STALL_MARKER"
+  commit_one_file "$STALL_MARKER" "chore(solo-sweep): clear stall marker — lane recovered on run $runs" \
+    && log "run $runs: cleared the stall marker" \
+    || log "run $runs: WARNING — could not clear the stall marker"
+fi
 
 # --- sync --------------------------------------------------------------------
-# bd state syncs through Dolt, not git; the report syncs through git.  Push the
-# exact ref, and only if HEAD is what this run made it.
+# bd state syncs through Dolt; the report syncs through git.
 
 if [[ "$(git rev-parse HEAD)" != "$start_head" ]]; then
-  if ! bd dolt push >/dev/null 2>>"$LOG"; then
-    log "run $runs: bd dolt push FAILED — bead notes are local only"
-  fi
-  remote_url="$(git config --get remote.origin.url 2>/dev/null)"
-  if [[ "$remote_url" == *maphew/mybd* ]]; then
-    if git push --quiet origin HEAD:refs/heads/main 2>>"$LOG"; then
-      log "run $runs: pushed to origin/main"
-    else
-      log "run $runs: git push FAILED — work is committed locally only (no rebase attempted)"
-    fi
+  bd dolt push >/dev/null 2>>"$LOG" || log "run $runs: bd dolt push FAILED — bead notes are local only"
+  if push_head; then
+    log "run $runs: pushed to origin/main"
   else
-    log "run $runs: refusing to push, unexpected origin '$remote_url'"
+    log "run $runs: git push FAILED — committed locally only (no rebase attempted)"
   fi
 else
   log "run $runs: nothing committed, nothing pushed"

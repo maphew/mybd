@@ -133,6 +133,34 @@ grep -q 'git pull --rebase' "$SWEEP" \
   && bad "no unattended rebase of the main checkout" \
   || ok "no unattended rebase of the main checkout"
 
+# The read-only token must NOT be exported process-wide: origin is https with
+# the gh oauth helper, so a global read-only token silently breaks the
+# wrapper's own push and the lane publishes nothing all week.
+grep -q 'export GH_TOKEN' "$SWEEP" \
+  && bad "read-only token is not exported process-wide" \
+  || ok "read-only token is not exported process-wide"
+
+grep -q 'GH_CONFIG_DIR' "$SWEEP" \
+  && ok "model gets an empty gh config dir (no stored oauth to fall back on)" \
+  || bad "model gets an empty gh config dir"
+
+grep -q 'SOLO-SWEEP-STALLED' "$SWEEP" \
+  && ok "a parked lane publishes a visible stall marker" \
+  || bad "a parked lane publishes a visible stall marker"
+
+UNIT="$ROOT/scripts/systemd/solo-sweep.service"
+grep -q 'InaccessiblePaths=.*\.ssh' "$UNIT" \
+  && ok "unit hides ssh/gpg/cloud credentials from the lane" \
+  || bad "unit hides ssh/gpg/cloud credentials from the lane"
+grep -q 'ProtectSystem=strict' "$UNIT" \
+  && ok "unit mounts the filesystem read-only outside ReadWritePaths" \
+  || bad "unit mounts the filesystem read-only outside ReadWritePaths"
+if command -v systemd-analyze >/dev/null 2>&1; then
+  sed 's|@ROOT@|/var/home/matt/dev/mybd|g' "$UNIT" >"$SANDBOX/u.service"
+  systemd-analyze verify "$SANDBOX/u.service" >/dev/null 2>&1 \
+    && ok "unit passes systemd-analyze verify" || bad "unit passes systemd-analyze verify"
+fi
+
 grep -q 'read-tree HEAD' "$SWEEP" \
   && ok "resyncs the index after update-ref (else the next run sees a dirty tree)" \
   || bad "resyncs the index after update-ref"
