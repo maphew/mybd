@@ -1,0 +1,7 @@
+I'm going away for a week soon. is there some safe, slow but steady real work thing I can have you during that time? aided by scripts perhaps. for example pr-babysitter and verify-next have been doing wonders. we could set something up, trial it a for a few days, then make the call before I go. what do you think? what are the possibilities
+
+---
+
+yes, build and start trial.
+
+as another safety backstop, I'll ask Steve or Chris to watch my github gastownhall activity and to freeze my permissions if things go haywire.
