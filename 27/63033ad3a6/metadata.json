@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "2763033ad3a6",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-28-vishnujayvel-pr-wave-review.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/27/63033ad3a6/0/metadata.json",
+      "transcript": "/27/63033ad3a6/0/full.jsonl",
+      "compact_transcript": "/27/63033ad3a6/0/transcript.jsonl",
+      "content_hash": "/27/63033ad3a6/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 60,
+    "cache_creation_tokens": 43379,
+    "cache_read_tokens": 3852236,
+    "output_tokens": 16043,
+    "api_call_count": 30
+  }
+}
