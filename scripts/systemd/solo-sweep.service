@@ -4,5 +4,9 @@ Description=Unattended tri:claim issue-sweep lane (model-driven; proposes dispos
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=@ROOT@
 ExecStart="@ROOT@/scripts/solo-sweep"
-TimeoutStartSec=60min
+# Must exceed SOLO_SWEEP_TIMEOUT (45m) plus the commit/hook/push tail, or a
+# SIGTERM can land mid-commit and leave the checkout in a state the next run
+# refuses to touch.
+TimeoutStartSec=90min

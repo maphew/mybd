@@ -41,6 +41,39 @@ fi
 [[ -n "$DAYS" ]] || { echo "refusing to arm without --days N (the lane must expire)" >&2; exit 2; }
 [[ "$DAYS" =~ ^[0-9]+$ && "$DAYS" -ge 1 && "$DAYS" -le 30 ]] || { echo "--days must be 1..30" >&2; exit 2; }
 
+# A short supervised trial may run on inherited credentials; an unsupervised
+# window may not. The read-only token is the only rail that does not depend on
+# a permission pattern being exactly right.
+TRIAL_MAX_DAYS=3
+if [[ ! -r "$STATE_DIR/gh-token-readonly" && "$DAYS" -gt "$TRIAL_MAX_DAYS" ]]; then
+  cat >&2 <<EOF
+refusing to arm for $DAYS days without a read-only GitHub token.
+
+  Windows longer than $TRIAL_MAX_DAYS days are unsupervised, and the deny/allow
+  profile is a harness property that a Claude Code upgrade can change under
+  you. The token is the rail that holds regardless.
+
+  Mint a fine-grained PAT with READ-ONLY access (contents: read, issues: read,
+  pull requests: read) on gastownhall/beads and maphew/mybd, then:
+
+    install -m600 /dev/stdin $STATE_DIR/gh-token-readonly <<<'ghp_...'
+
+  Then re-run this command.
+EOF
+  exit 2
+fi
+
+# Arming a lane whose counter is already spent produces a confidently-installed
+# timer that skips every fire.
+if [[ -r "$STATE_DIR/runs" && "$RESET_RUNS" -eq 0 ]]; then
+  spent="$(tr -dc '0-9' <"$STATE_DIR/runs")"; spent="${spent:-0}"
+  cap="${MAX_RUNS:-${SOLO_SWEEP_MAX_RUNS:-40}}"
+  if (( spent >= cap )); then
+    echo "refusing to arm: run counter is $spent/$cap — pass --reset-runs to start a new window" >&2
+    exit 2
+  fi
+fi
+
 [[ -x "$STABLE_ROOT/scripts/solo-sweep" && -r "$STABLE_ROOT/.claude/solo-sweep-settings.json" ]] \
   || { echo "stable checkout is incomplete: $STABLE_ROOT (merge feat/solo-sweep to main first)" >&2; exit 1; }
 [[ ! "$STABLE_ROOT" =~ [[:space:]\"\'\\\;\|\&\$\<\>\`%] ]] || { echo "unsafe systemd path: $STABLE_ROOT" >&2; exit 1; }

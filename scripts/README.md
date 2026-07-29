@@ -435,32 +435,57 @@ backlog, following the procedure in
 the label `solo-sweep:proposed`. Review the batch on return with
 `bd list -l solo-sweep:proposed`.
 
-**What it may not do**, enforced rather than requested:
+### Why it is an allowlist
+
+The first draft used a permission **denylist**. Two independent reviewers (a
+Claude reviewer and `codex-agent reviewer`) broke it within minutes, and the
+bypasses were verified live, not theorised:
+
+| Bypass | Why the denylist missed it |
+|--------|---------------------------|
+| `/usr/bin/git …` | `argv[0]` is not canonicalised, so every deny entry was one path prefix from inert |
+| `python3 -c "open(p,'w').write(…)"` | interpreters are not `Edit`, so `Edit()` denies never saw the write |
+| `scripts/pr-babysit` | one allowed command that merges **and** closes PRs internally |
+| `bd update <id> --status closed` | closes an issue without the word `close` |
+| `bd update <id> --add-label merge-when-green` | does not act — it makes the *patrol* merge on the lane's behalf |
+| `codex exec -s workspace-write` | a second runtime with no profile at all |
+
+The lesson generalises: a denylist enumerates what you thought of, and this
+lane runs for a week unsupervised. So the profile now **allowlists** a small
+read-only vocabulary under `--permission-mode default`, where anything
+unmatched needs approval and headless has nobody to give it.
+
+That last row is the subtle one and it shaped the design: the lane cannot be
+contained by denying *verbs*, because other automation reads bd state as
+instructions. Hence `scripts/solo-bd`.
+
+### Rails
 
 | Rail | Mechanism |
 |------|-----------|
-| publishes nothing upstream | `gh pr/issue comment\|review\|edit\|close`, `gh api`, `tri-submit`, `tri-close` all in the deny profile; `TRI_ALLOW_UNATTENDED_POST` explicitly unset |
-| closes nothing | `bd close` denied; the prompt says judgment closes are the owner's |
-| merges nothing | `gh pr merge`, `pr-handoff`, `pr-close-handoff` denied |
-| never commits | `git commit`/`push`/`checkout`/`branch`/`stash` denied — the **wrapper** commits, and only `reports/` and `.beads/` |
-| cannot rewrite its own rails | `scripts/`, `.claude/`, `.githooks/`, `AGENTS.md`, `CLAUDE.md` denied to `Edit` |
-| expires | refuses to start without `$STATE/until`, and past it |
-| bounded | total-run cap (`--max-runs`), per-run stub cap, `timeout 45m`, `flock` |
-| fails closed | refuses to start on a dirty main checkout, or off `main` |
+| publishes nothing | nothing that writes to GitHub is on the allowlist; `TRI_ALLOW_UNATTENDED_POST` unset; read-only `GH_TOKEN` |
+| closes nothing | raw `bd` writes are denied; the only write verb is `scripts/solo-bd`, which is append-only |
+| cannot delegate an action | `solo-bd` rejects `merge-when-green`, `close-when-quiet`, `triaged`, `review-needed` and friends, so it cannot ask another lane to act for it |
+| merges nothing | no merge path exists in the allowlist, and the token cannot merge |
+| never commits | no git write verb is allowed; the **wrapper** commits exactly one file, through a scratch index, via `commit-tree` + `update-ref` with the expected old SHA |
+| cannot rewrite its own rails | `Edit` is allowed only under `reports/`, and interpreters are denied |
+| expires | refuses to start without `$STATE/until`, past it, or when less than an hour of window remains |
+| bounded | run cap, per-run stub cap, `timeout 45m --kill-after 2m`, `--max-budget-usd`, `flock` |
+| fails closed | dirty tree, wrong branch, moved HEAD, missing report, or zero progress all **park** the lane rather than commit |
 
-Deny rules were verified empirically to override `--permission-mode
-bypassPermissions` and to hold against `a && b` chaining, `bash -c '…'`
-wrapping, and Task-tool subagents — `scripts/test-solo-sweep --live` re-runs
-those probes. **Re-run them after any Claude Code upgrade**; the profile is
-only as good as that precedence.
+`scripts/test-solo-sweep --live` re-runs every bypass in the table above as a
+regression test, reading the harness's own tool-result verdicts rather than the
+model's prose. **Re-run it after any Claude Code upgrade** — the boundary is a
+property of the harness, not of this repo.
 
-Deny rules are the last line of defence, not the first. The strongest rail is
-credential scope: put a **read-only** fine-grained PAT at
+The permission profile is still not the last word. The rail that holds even if
+a future release changes permission semantics is credential scope: a
+**read-only** fine-grained PAT at
 `${XDG_STATE_HOME:-~/.local/state}/mybd/solo-sweep/gh-token-readonly` (mode
-0600) and the lane exports it as `GH_TOKEN`, so a publishing call fails at the
-API even if a deny rule is ever missed. Without it runs inherit the owner's
-write-capable `gh` auth; the installer warns, and each run logs which mode it
-used.
+0600), exported as `GH_TOKEN`. It is **mandatory**: the runner refuses to start
+without it, and the installer refuses to arm a window longer than 3 days
+without it. `SOLO_SWEEP_ALLOW_WRITE_TOKEN=1` overrides the runner check for a
+short supervised trial only.
 
 The timer is `Persistent=false` on purpose — unlike the zero-token lanes, we
 do not want a queue of catch-up **model** runs firing after a suspend.
@@ -470,9 +495,17 @@ Kill switch: `touch ${XDG_STATE_HOME:-~/.local/state}/mybd/solo-sweep/disabled`
 theme, credential mode, and the model's closing summary. Full transcripts land
 in `…/solo-sweep/transcripts/`.
 
-A run that leaves changes outside `reports/` and `.beads/` is logged loudly and
-**blocks the next run** via the dirty-tree gate, so one misbehaving run cannot
-compound across the week.
+A run that times out, exits non-zero, writes outside its one report path, or
+proposes nothing **parks the lane**: it commits nothing and writes the reason
+into the kill-switch file, so the failure stops the week rather than repeating
+28 times. Re-arm with `install-solo-sweep --days N` after reading the
+transcript.
+
+Not addressed, and worth knowing: the model still runs in the main checkout
+with the owner's filesystem visible, so the boundary is Claude Code's
+permission layer rather than an OS sandbox. Both reviewers recommended a
+disposable restricted checkout as the real fix; that is
+[mybd-hs98a](../reports/) follow-up work, not shipped here.
 
 ## tri-resume (cross-machine)
 

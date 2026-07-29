@@ -549,10 +549,17 @@ fires every 6h and runs one theme sweep over the `tri:claim` stub backlog per
 the procedure in `reports/2026-07-26-triclaim-drain-strategy.md`.
 
 It **proposes** dispositions and publishes nothing: no upstream posts or
-labels, no closes (upstream or bd), no merges, no commits — the wrapper
-commits `reports/` and `.beads/` after the agent exits. Enforcement is a
-permission deny profile (`.claude/solo-sweep-settings.json`) plus, when
-present, a read-only `GH_TOKEN`; it is not left to the model's discretion.
+labels, no closes (upstream or bd), no merges, no commits — the wrapper commits
+exactly one report file after the agent exits. Enforcement is a permission
+**allowlist** (`.claude/solo-sweep-settings.json`, loaded with
+`--permission-mode default` so unmatched commands are denied), a mandatory
+read-only `GH_TOKEN`, and `scripts/solo-bd` as the lane's only write verb. A
+denylist was tried first and broken by two independent reviewers; see
+`scripts/README.md` "Why it is an allowlist" before loosening any of it.
+
+`solo-bd` also refuses to apply `merge-when-green`, `close-when-quiet` and
+similar labels. That is deliberate: those make *other* lanes act, so being able
+to set one is equivalent to being able to merge.
 
 If you are a session picking up after a run: the batch is
 `bd list -l solo-sweep:proposed`. Treat those notes as **evidence with a

@@ -3,14 +3,21 @@
 #
 # pr-babysit, verify-babysit and tri-daily are zero-token: they only act on
 # facts GitHub or the test suite already decided.  This lane runs a model
-# against the tri:claim stub backlog while the owner is away, and so every
-# rail below exists because nobody is watching a run of it.
+# against the tri:claim stub backlog while the owner is away, so every rail
+# below exists because nobody is watching a run of it.
 #
-# Invariants (each is enforced here, not merely requested of the model):
-#   - it publishes nothing upstream and closes nothing, anywhere
-#   - the AGENT never commits; this wrapper commits, and only reports/ + bd state
-#   - it refuses to start on a dirty tree, so one bad run cannot compound
-#   - it stops at a wall-clock deadline and at a total-run cap, unconditionally
+# Threat model (from a two-vendor adversarial review of the first draft, which
+# used a permission DENYLIST and was broken by both reviewers in minutes):
+#   - the model's Bash surface is an ALLOWLIST; unmatched commands are denied
+#     because headless has nobody to approve them
+#   - its only write verb is scripts/solo-bd, which validates
+#   - it may not apply labels that make ANOTHER lane act (pr-babysit merges
+#     merge-when-green PRs; the model must not be able to queue one)
+#   - a read-only GH token is mandatory, so publication fails at the API even
+#     if every permission rail is wrong
+#   - the wrapper commits from a temporary index containing exactly the files
+#     this run produced, never `git add` of a directory
+#   - a failed/timed-out run commits NOTHING and parks the lane
 #
 # Kill switch:  touch ~/.local/state/mybd/solo-sweep/disabled
 set -uo pipefail
@@ -19,6 +26,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 common_dir="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || exit 1
 [[ "$common_dir" = /* ]] || common_dir="$ROOT/$common_dir"
 ROOT="$(cd "$(dirname "$common_dir")" && pwd)"   # always the main checkout, never a worktree
+cd "$ROOT" || exit 1                             # before anything reads bd or the repo
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mybd/solo-sweep"
 mkdir -p "$STATE_DIR"
@@ -34,6 +42,7 @@ mkdir -p "$TRANSCRIPT_DIR"
 MAX_RUNS="${SOLO_SWEEP_MAX_RUNS:-40}"
 MAX_STUBS="${SOLO_SWEEP_MAX_STUBS:-12}"
 RUN_TIMEOUT="${SOLO_SWEEP_TIMEOUT:-45m}"
+MAX_USD="${SOLO_SWEEP_MAX_USD:-8}"
 MODEL="${SOLO_SWEEP_MODEL:-fable}"
 EFFORT="${SOLO_SWEEP_EFFORT:-high}"
 DRY_RUN=0
@@ -49,12 +58,21 @@ THEME_ORDER=(data-integrity concurrency migration-schema import-export
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"; }
 die() { log "ABORT: $*"; exit 1; }
 
+# Park the lane durably.  Used for any condition where continuing could make
+# things worse; a log line nobody reads for seven days is not a signal, so this
+# also stops the timer rather than retrying into the same wall.
+park() {
+  log "PARKED: $*"
+  printf 'parked %s: %s\n' "$(date -u +%FT%TZ)" "$*" >"$DISABLED"
+  exit 1
+}
+
 exec 9>"$LOCK"
 flock -n 9 || { log "skip: previous run still in flight"; exit 0; }
 
 # --- rails -------------------------------------------------------------------
 
-[[ -e "$DISABLED" ]] && { log "skip: kill switch present ($DISABLED)"; exit 0; }
+[[ -e "$DISABLED" ]] && { log "skip: kill switch present ($DISABLED: $(head -c 200 "$DISABLED" 2>/dev/null))"; exit 0; }
 
 now=$(date +%s)
 if [[ -r "$DEADLINE_FILE" ]]; then
@@ -62,6 +80,12 @@ if [[ -r "$DEADLINE_FILE" ]]; then
   [[ -n "$deadline" ]] || die "deadline file $DEADLINE_FILE is unreadable — refusing to run"
   if (( now >= deadline )); then
     log "skip: lane expired at $(date -u -d "@$deadline" +%FT%TZ) — re-arm with scripts/install-solo-sweep --days N"
+    exit 0
+  fi
+  # A run started just under the wire would keep working long past the
+  # deadline, so require the whole run to fit inside the window.
+  if (( now + 3600 >= deadline )); then
+    log "skip: less than an hour of window left; not starting a run that would outlive it"
     exit 0
   fi
 else
@@ -74,29 +98,59 @@ runs="${runs:-0}"
 (( runs >= MAX_RUNS )) && { log "skip: run cap reached ($runs/$MAX_RUNS)"; exit 0; }
 
 command -v claude >/dev/null 2>&1 || die "claude CLI not on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 SETTINGS="$ROOT/.claude/solo-sweep-settings.json"
 PROMPT_TEMPLATE="$ROOT/scripts/solo-sweep-prompt.md"
+FACADE="$ROOT/scripts/solo-bd"
 [[ -r "$SETTINGS" ]] || die "missing permission profile $SETTINGS"
 [[ -r "$PROMPT_TEMPLATE" ]] || die "missing prompt template $PROMPT_TEMPLATE"
+[[ -x "$FACADE" ]] || die "missing bd facade $FACADE"
+jq -e '.permissions.allow | length > 0' "$SETTINGS" >/dev/null 2>&1 \
+  || die "permission profile has no allowlist — refusing to run on a denylist"
 
-# A dirty tree means the previous run (or a human session) left something
-# behind.  Fail closed: dirt from run N must block run N+1 rather than be
-# swept into run N+1's commit.
-dirty="$(git -C "$ROOT" status --porcelain --untracked-files=normal 2>/dev/null \
-         | grep -v '^?? \.worktrees/' )"
+# The read-only token is the only rail that does not depend on getting a
+# permission pattern right, so it is mandatory rather than advisory.
+if [[ ! -r "$TOKEN_FILE" ]]; then
+  if [[ "${SOLO_SWEEP_ALLOW_WRITE_TOKEN:-0}" == "1" ]]; then
+    log "WARNING: running with inherited WRITE-CAPABLE gh auth (SOLO_SWEEP_ALLOW_WRITE_TOKEN=1)"
+    gh_mode="inherited(WRITE-CAPABLE, explicitly allowed)"
+  else
+    die "no read-only token at $TOKEN_FILE — refusing to run with write-capable gh auth.
+     Mint a read-only fine-grained PAT, or set SOLO_SWEEP_ALLOW_WRITE_TOKEN=1 to override."
+  fi
+else
+  tok="$(tr -d '[:space:]' <"$TOKEN_FILE")"
+  [[ -n "$tok" ]] || die "token file $TOKEN_FILE is empty"
+  export GH_TOKEN="$tok"
+  unset GITHUB_TOKEN
+  gh_mode="read-only token"
+fi
+unset TRI_ALLOW_UNATTENDED_POST   # never satisfy the publication gate
+export MYBD_SOLO_SWEEP=1
+
+# Fail closed on a dirty tree: dirt from run N must block run N+1 rather than
+# be swept into run N+1's commit.
+dirty="$(git status --porcelain --untracked-files=normal 2>/dev/null | grep -v '^?? \.worktrees/')"
 if [[ -n "$dirty" ]]; then
   log "skip: main checkout is dirty, refusing to run. Offending paths:"
   printf '%s\n' "$dirty" | sed 's/^/    /' >>"$LOG"
   exit 0
 fi
 
-branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [[ "$branch" == "main" ]] || die "main checkout is on '$branch', expected main"
+start_head="$(git rev-parse HEAD)"
+git fetch --quiet origin main 2>>"$LOG" || log "note: git fetch failed; proceeding on local state"
+if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null && \
+   [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main 2>/dev/null)" ]]; then
+  log "note: main has local commits not on origin/main; this run will not push them"
+fi
 
 # --- pick the theme ----------------------------------------------------------
 
-open_json="$(bd list --status=open --json 2>/dev/null)" || die "bd list failed"
-[[ -n "$open_json" ]] || die "bd list returned nothing"
+open_json="$(bd list --status=open --limit 0 --json 2>/dev/null)" || die "bd list failed"
+jq -e 'type == "array" and length > 0' <<<"$open_json" >/dev/null 2>&1 \
+  || die "bd list returned no usable array — treating as a fault, not as 'no work left'"
 
 remaining_for() {
   jq -r --arg t "theme:$1" \
@@ -108,36 +162,27 @@ remaining_for() {
           | select(.status=="open")] | length' <<<"$open_json"
 }
 
-THEME=""
+THEME=""; THEME_N=0
 for t in "${THEME_ORDER[@]}"; do
   n="$(remaining_for "$t")"
-  [[ "$n" =~ ^[0-9]+$ ]] || continue
+  [[ "$n" =~ ^[0-9]+$ ]] || die "theme count for '$t' was not a number — bd/jq fault, not an empty queue"
   if (( n > 0 )); then THEME="$t"; THEME_N="$n"; break; fi
 done
 [[ -n "$THEME" ]] || { log "done: no un-swept tri:claim stubs left in any eligible theme"; exit 0; }
 
+# Progress is measured mechanically, not taken on trust.
+proposed_before="$(jq -r '[.[]|select((.labels//[])|index("solo-sweep:proposed"))]|length' <<<"$open_json")"
+
 DATE="$(date -u +%F)"
-prompt="$(sed -e "s/@THEME@/$THEME/g" -e "s/@DATE@/$DATE/g" -e "s/@MAXSTUBS@/$MAX_STUBS/g" \
+REPORT_REL="reports/$DATE-issue-sweep-$THEME-run$((runs + 1)).md"
+prompt="$(sed -e "s/@THEME@/$THEME/g" -e "s/@DATE@/$DATE/g" \
+              -e "s/@MAXSTUBS@/$MAX_STUBS/g" -e "s|@REPORT@|$REPORT_REL|g" \
           "$PROMPT_TEMPLATE")"
 
-# --- credentials -------------------------------------------------------------
-
-gh_mode="inherited(WRITE-CAPABLE)"
-if [[ -r "$TOKEN_FILE" ]]; then
-  tok="$(tr -d '[:space:]' <"$TOKEN_FILE")"
-  if [[ -n "$tok" ]]; then
-    export GH_TOKEN="$tok"
-    unset GITHUB_TOKEN
-    gh_mode="read-only token"
-  fi
-fi
-# Never let the unattended lane satisfy the publication gate.
-unset TRI_ALLOW_UNATTENDED_POST
-export MYBD_SOLO_SWEEP=1
-
 if (( DRY_RUN )); then
-  echo "theme=$THEME remaining=$THEME_N runs=$runs/$MAX_RUNS gh=$gh_mode model=$MODEL"
-  echo "deadline=$(date -u -d "@$deadline" +%FT%TZ) max_stubs=$MAX_STUBS timeout=$RUN_TIMEOUT"
+  echo "theme=$THEME remaining=$THEME_N runs=$runs/$MAX_RUNS gh=$gh_mode model=$MODEL effort=$EFFORT"
+  echo "deadline=$(date -u -d "@$deadline" +%FT%TZ) max_stubs=$MAX_STUBS timeout=$RUN_TIMEOUT budget=\$$MAX_USD"
+  echo "report=$REPORT_REL proposed_before=$proposed_before"
   echo "--- prompt would be ---"; printf '%s\n' "$prompt"
   exit 0
 fi
@@ -145,71 +190,123 @@ fi
 # --- run ---------------------------------------------------------------------
 
 runs=$((runs + 1))
-printf '%s\n' "$runs" >"$RUNS_FILE"
+tmp_runs="$(mktemp "$STATE_DIR/.runs.XXXXXX")"
+printf '%s\n' "$runs" >"$tmp_runs" && mv -f "$tmp_runs" "$RUNS_FILE"   # atomic
 transcript="$TRANSCRIPT_DIR/$DATE-$THEME-run$runs.log"
-log "RUN $runs/$MAX_RUNS theme=$THEME remaining=$THEME_N gh=$gh_mode model=$MODEL"
+log "RUN $runs/$MAX_RUNS theme=$THEME remaining=$THEME_N gh=$gh_mode model=$MODEL budget=\$$MAX_USD"
 
 start=$(date +%s)
-timeout --signal=INT "$RUN_TIMEOUT" \
+timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
   claude -p "$prompt" \
     --settings "$SETTINGS" \
-    --permission-mode bypassPermissions \
+    --permission-mode default \
     --model "$MODEL" \
     --effort "$EFFORT" \
+    --max-budget-usd "$MAX_USD" \
     >"$transcript" 2>&1
 rc=$?
 elapsed=$(( $(date +%s) - start ))
-
-if (( rc == 124 )); then
-  log "run $runs: TIMEOUT after $RUN_TIMEOUT (theme=$THEME) — committing whatever landed"
-elif (( rc != 0 )); then
-  log "run $runs: claude exited rc=$rc after ${elapsed}s (theme=$THEME) — committing whatever landed"
-else
-  log "run $runs: completed in ${elapsed}s (theme=$THEME)"
-fi
-# The model's closing summary is the part the owner is guaranteed to read.
 tail -n 25 "$transcript" | sed 's/^/    | /' >>"$LOG"
 
-# --- commit what the agent produced -----------------------------------------
-# Only reports/ and bd tracker state.  Anything the agent touched outside those
-# paths is left in place and reported, and will block the next run.
+# A partial run is not committed.  A timeout can land after solo-bd has
+# labelled stubs but before the report exists, which would silently retire
+# those stubs from the queue with no written record of why.
+if (( rc == 124 || rc == 137 )); then
+  park "run $runs TIMED OUT after $RUN_TIMEOUT (theme=$THEME); nothing committed. \
+Inspect $transcript, then re-arm with scripts/install-solo-sweep --days N."
+elif (( rc != 0 )); then
+  park "run $runs exited rc=$rc after ${elapsed}s (theme=$THEME); nothing committed. \
+Inspect $transcript, then re-arm with scripts/install-solo-sweep --days N."
+fi
+log "run $runs: model completed in ${elapsed}s (theme=$THEME)"
 
-cd "$ROOT" || die "cannot cd to $ROOT"
-git add -- reports/ .beads/ 2>/dev/null
-if git diff --cached --quiet; then
-  log "run $runs: no reports/bd changes to commit"
+# --- validate what the agent produced ----------------------------------------
+
+[[ -f "$ROOT/$REPORT_REL" ]] || park "run $runs produced no report at $REPORT_REL; nothing committed"
+
+# Re-assert the preconditions we checked 45 minutes ago.  Another actor (the
+# returning owner, tri-daily, a parallel session) may have moved the checkout.
+branch_now="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+[[ "$branch_now" == "main" ]] || park "checkout moved to '$branch_now' during the run; nothing committed"
+[[ "$(git rev-parse HEAD)" == "$start_head" ]] || park "HEAD moved during the run; nothing committed"
+
+# The report is the only file this run may add.  Anything else it touched is
+# reported and left alone — it will block the next run via the dirty gate.
+changed="$(git status --porcelain --untracked-files=normal | grep -v '^?? \.worktrees/')"
+unexpected="$(grep -v -F -- "$REPORT_REL" <<<"$changed" | sed '/^$/d')"
+if [[ -n "$unexpected" ]]; then
+  log "run $runs: WARNING — changes outside $REPORT_REL:"
+  printf '%s\n' "$unexpected" | sed 's/^/    /' >>"$LOG"
+  park "run $runs touched files it may not commit; nothing committed, tree left for inspection"
+fi
+
+# Did it actually do the work?  A run that labelled nothing would otherwise let
+# the next fire re-sweep the same theme and the same stubs, forever.
+after_json="$(bd list --status=open --limit 0 --json 2>/dev/null)"
+proposed_after="$(jq -r '[.[]|select((.labels//[])|index("solo-sweep:proposed"))]|length' <<<"$after_json" 2>/dev/null)"
+if [[ "$proposed_after" =~ ^[0-9]+$ ]]; then
+  delta=$(( proposed_after - proposed_before ))
+  log "run $runs: dispositioned $delta stub(s) (proposed total $proposed_before -> $proposed_after)"
+  (( delta > 0 )) || park "run $runs proposed nothing; the next run would repeat it verbatim"
 else
-  # Model and effort are known exactly here — the wrapper chose them — so they
-  # are supplied rather than sniffed from a session env systemd does not have.
-  sig="$(AGENT_MODEL="$MODEL" AGENT_REASONING="$EFFORT" \
-         scripts/agent-sig.sh claude-code-solo-sweep --trailer 2>/dev/null)"
-  [[ -n "$sig" ]] || sig="Agent-Signature: claude-code-unknown-model-unknown-reasoning on behalf of $(git config user.name)"
-  msg="report: solo-sweep run $runs — issue sweep theme:$THEME"
-  if MYBD_ALLOW_ROOT_COMMIT=1 git -c core.hooksPath=.githooks commit -q \
-       -m "$msg" -m "Unattended solo-sweep lane (scripts/solo-sweep). Dispositions are PROPOSED only; nothing was published, closed, or merged." -m "$sig"; then
-    log "run $runs: committed — $msg"
-  else
-    log "run $runs: COMMIT FAILED (leaving changes staged for the owner)"
-  fi
+  log "run $runs: WARNING — could not read the proposed count after the run"
 fi
 
-leftover="$(git status --porcelain --untracked-files=normal | grep -v '^?? \.worktrees/')"
-if [[ -n "$leftover" ]]; then
-  log "run $runs: WARNING — agent left changes outside reports/ and .beads/; next run will refuse to start:"
-  printf '%s\n' "$leftover" | sed 's/^/    /' >>"$LOG"
+# --- commit exactly one file, through a temporary index ----------------------
+# `git add -- reports/` would sweep in anything another actor wrote during the
+# 45-minute window, and a bare `git commit` commits the whole index rather than
+# the paths just added.  A scratch index makes the commit contain exactly this.
+
+sig="$(AGENT_MODEL="$MODEL" AGENT_REASONING="$EFFORT" \
+       scripts/agent-sig.sh claude-code-solo-sweep --trailer 2>/dev/null)"
+[[ -n "$sig" ]] || sig="Agent-Signature: claude-code-solo-sweep-$MODEL-$EFFORT on behalf of $(git config user.name)"
+
+tmp_index="$(mktemp "$STATE_DIR/.index.XXXXXX")"
+rm -f "$tmp_index"
+if GIT_INDEX_FILE="$tmp_index" git read-tree HEAD 2>>"$LOG" \
+   && GIT_INDEX_FILE="$tmp_index" git add -- "$REPORT_REL" 2>>"$LOG"; then
+  tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree 2>>"$LOG")"
+  msg="report: solo-sweep run $runs — issue sweep theme:$THEME
+
+Unattended solo-sweep lane (scripts/solo-sweep).  Dispositions are PROPOSED
+only: nothing was published, closed, or merged.  Review with
+bd list -l solo-sweep:proposed
+
+$sig"
+  if [[ -n "$tree" ]] && commit="$(git commit-tree "$tree" -p HEAD -m "$msg" 2>>"$LOG")"; then
+    if git update-ref -m "solo-sweep run $runs" HEAD "$commit" "$start_head" 2>>"$LOG"; then
+      log "run $runs: committed $commit ($REPORT_REL)"
+    else
+      log "run $runs: update-ref refused (HEAD moved); commit $commit is unreferenced"
+    fi
+  else
+    log "run $runs: commit-tree failed; nothing committed"
+  fi
+else
+  log "run $runs: could not stage $REPORT_REL; nothing committed"
 fi
+rm -f "$tmp_index"
 
 # --- sync --------------------------------------------------------------------
+# bd state syncs through Dolt, not git; the report syncs through git.  Push the
+# exact ref, and only if HEAD is what this run made it.
 
-if git pull --rebase --quiet 2>>"$LOG"; then
-  bd dolt push >/dev/null 2>>"$LOG" || log "run $runs: bd dolt push failed"
-  if git push --quiet 2>>"$LOG"; then
-    log "run $runs: pushed"
+if [[ "$(git rev-parse HEAD)" != "$start_head" ]]; then
+  if ! bd dolt push >/dev/null 2>>"$LOG"; then
+    log "run $runs: bd dolt push FAILED — bead notes are local only"
+  fi
+  remote_url="$(git config --get remote.origin.url 2>/dev/null)"
+  if [[ "$remote_url" == *maphew/mybd* ]]; then
+    if git push --quiet origin HEAD:refs/heads/main 2>>"$LOG"; then
+      log "run $runs: pushed to origin/main"
+    else
+      log "run $runs: git push FAILED — work is committed locally only (no rebase attempted)"
+    fi
   else
-    log "run $runs: git push FAILED — work is committed locally only"
+    log "run $runs: refusing to push, unexpected origin '$remote_url'"
   fi
 else
-  log "run $runs: git pull --rebase failed — not pushing"
+  log "run $runs: nothing committed, nothing pushed"
 fi
 
 log "run $runs: end"
