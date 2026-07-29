@@ -12,12 +12,14 @@ set -euo pipefail
 DAYS=""
 RESET_RUNS=0
 DISARM=0
+ALLOW_WRITE=0
 MAX_RUNS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --days) DAYS="${2:?--days needs a number}"; shift 2;;
     --max-runs) MAX_RUNS="${2:?--max-runs needs a number}"; shift 2;;
     --reset-runs) RESET_RUNS=1; shift;;
+    --allow-write-token) ALLOW_WRITE=1; shift;;
     --disarm) DISARM=1; shift;;
     -h|--help) sed -n '2,12p' "$0"; exit 0;;
     *) echo "unknown argument: $1" >&2; exit 2;;
@@ -91,6 +93,12 @@ service_tmp="$(mktemp "$UNIT_DIR/.solo-sweep.XXXXXX.service")"
 timer_tmp="$(mktemp "$UNIT_DIR/solo-sweep.timer.XXXXXX")"
 trap 'rm -f "$service_tmp" "$timer_tmp"' EXIT
 sed "s|@ROOT@|$root_escaped|g" "$ROOT/scripts/systemd/solo-sweep.service" >"$service_tmp"
+if (( ALLOW_WRITE )); then
+  if [[ "$DAYS" -gt "$TRIAL_MAX_DAYS" ]]; then
+    echo "--allow-write-token is for supervised trials only (max $TRIAL_MAX_DAYS days)" >&2; exit 2
+  fi
+  sed -i "/^\[Service\]/a Environment=SOLO_SWEEP_ALLOW_WRITE_TOKEN=1" "$service_tmp"
+fi
 if [[ -n "$MAX_RUNS" ]]; then
   [[ "$MAX_RUNS" =~ ^[0-9]+$ ]] || { echo "--max-runs must be numeric" >&2; exit 2; }
   sed -i "/^\[Service\]/a Environment=SOLO_SWEEP_MAX_RUNS=$MAX_RUNS" "$service_tmp"
