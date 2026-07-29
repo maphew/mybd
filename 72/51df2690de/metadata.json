@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "7251df2690de",
+  "strategy": "manual-commit",
+  "branch": "feat/bisect-lane",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "scripts/README.md",
+    "scripts/bisect-enqueue",
+    "scripts/bisect-next",
+    "scripts/install-verify-babysit",
+    "scripts/pr-babysit",
+    "scripts/systemd/verify-babysit.service",
+    "scripts/test-bisect-lane"
+  ],
+  "sessions": [
+    {
+      "metadata": "/72/51df2690de/0/metadata.json",
+      "transcript": "/72/51df2690de/0/full.jsonl",
+      "compact_transcript": "/72/51df2690de/0/transcript.jsonl",
+      "content_hash": "/72/51df2690de/0/content_hash.txt",
+      "prompt": "/72/51df2690de/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 49948,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 253184,
+    "output_tokens": 3053,
+    "api_call_count": 8
+  }
+}
