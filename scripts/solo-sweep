@@ -414,7 +414,17 @@ fi
 # bd state syncs through Dolt; the report syncs through git.
 
 if [[ "$(git rev-parse HEAD)" != "$start_head" ]]; then
-  bd dolt push >/dev/null 2>>"$LOG" || log "run $runs: bd dolt push FAILED — bead notes are local only"
+  # Parallel sessions push bead state too, so a non-fast-forward rejection is
+  # routine rather than exceptional (hit by hand 2026-07-29). Pull and retry
+  # once before declaring the notes stranded.
+  if ! bd dolt push >/dev/null 2>>"$LOG"; then
+    log "run $runs: bd dolt push rejected; pulling and retrying once"
+    if bd dolt pull >/dev/null 2>>"$LOG" && bd dolt push >/dev/null 2>>"$LOG"; then
+      log "run $runs: bd dolt push succeeded after pull"
+    else
+      log "run $runs: bd dolt push FAILED — bead notes are local only"
+    fi
+  fi
   if push_head; then
     log "run $runs: pushed to origin/main"
   else
