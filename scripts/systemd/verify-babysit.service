@@ -2,6 +2,8 @@
 Description=Verify-queue consumer (zero-token babysitter for queued local verification jobs)
 
 [Service]
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=GIT_ASKPASS=/bin/true
 Type=oneshot
 Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 # Suite commands may carry their own long timeouts (e.g. go test -timeout 90m);

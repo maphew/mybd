@@ -2,6 +2,8 @@
 Description=Unattended tri:claim issue-sweep lane (model-driven; proposes dispositions, publishes nothing)
 
 [Service]
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=GIT_ASKPASS=/bin/true
 Type=oneshot
 Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=@ROOT@

@@ -2,6 +2,8 @@
 Description=Upstream issue-intake babysitter (tri-pull + tri-sync + tri-drift, zero model tokens)
 
 [Service]
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=GIT_ASKPASS=/bin/true
 Type=oneshot
 Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 # bd resolves its database from the cwd; gh reads its auth from the user config.
