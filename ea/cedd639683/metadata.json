@@ -3,7 +3,7 @@
   "checkpoint_id": "eacedd639683",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "scripts/solo-sweep"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/ea/cedd639683/1/transcript.jsonl",
       "content_hash": "/ea/cedd639683/1/content_hash.txt",
       "prompt": "/ea/cedd639683/1/prompt.txt"
+    },
+    {
+      "metadata": "/ea/cedd639683/2/metadata.json",
+      "transcript": "/ea/cedd639683/2/full.jsonl",
+      "compact_transcript": "/ea/cedd639683/2/transcript.jsonl",
+      "content_hash": "/ea/cedd639683/2/content_hash.txt",
+      "prompt": "/ea/cedd639683/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 4,
-    "cache_creation_tokens": 55212,
-    "cache_read_tokens": 53152,
-    "output_tokens": 8,
-    "api_call_count": 2
+    "input_tokens": 6,
+    "cache_creation_tokens": 79832,
+    "cache_read_tokens": 82620,
+    "output_tokens": 12,
+    "api_call_count": 3
   }
 }
