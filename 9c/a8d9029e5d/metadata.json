@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "9ca8d9029e5d",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "scripts/solo-sweep",
+    "scripts/solo-sweep-prompt.md",
+    "scripts/test-solo-sweep"
+  ],
+  "sessions": [
+    {
+      "metadata": "/9c/a8d9029e5d/0/metadata.json",
+      "transcript": "/9c/a8d9029e5d/0/full.jsonl",
+      "compact_transcript": "/9c/a8d9029e5d/0/transcript.jsonl",
+      "content_hash": "/9c/a8d9029e5d/0/content_hash.txt",
+      "prompt": "/9c/a8d9029e5d/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 4,
+    "cache_creation_tokens": 24895,
+    "cache_read_tokens": 83857,
+    "output_tokens": 71,
+    "api_call_count": 2
+  }
+}
