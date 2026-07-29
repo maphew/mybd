@@ -3,7 +3,7 @@
   "checkpoint_id": "7251df2690de",
   "strategy": "manual-commit",
   "branch": "feat/bisect-lane",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "AGENTS.md",
     "scripts/README.md",
@@ -28,13 +28,20 @@
       "compact_transcript": "/72/51df2690de/1/transcript.jsonl",
       "content_hash": "/72/51df2690de/1/content_hash.txt",
       "prompt": "/72/51df2690de/1/prompt.txt"
+    },
+    {
+      "metadata": "/72/51df2690de/2/metadata.json",
+      "transcript": "/72/51df2690de/2/full.jsonl",
+      "compact_transcript": "/72/51df2690de/2/transcript.jsonl",
+      "content_hash": "/72/51df2690de/2/content_hash.txt",
+      "prompt": "/72/51df2690de/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 158016,
+    "input_tokens": 247452,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 1805568,
-    "output_tokens": 25473,
-    "api_call_count": 33
+    "cache_read_tokens": 2770176,
+    "output_tokens": 41185,
+    "api_call_count": 54
   }
 }
