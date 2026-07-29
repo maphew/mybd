@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "27f30940cbfd",
+  "session_id": "50d9a037-f679-4a49-b77a-85c34884c7c5",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-29T06:20:03.734519517Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "scripts/install-solo-sweep"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5",
+  "turn_id": "c6ec5a438161",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 196,
+    "cache_creation_tokens": 183969,
+    "cache_read_tokens": 11762491,
+    "output_tokens": 85062,
+    "api_call_count": 98
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-29T06:20:03.689510677Z",
+    "agent_lines": 126,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 126,
+    "total_lines_changed": 126,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
