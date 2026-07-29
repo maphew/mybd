@@ -1,0 +1,1 @@
+Use the Agent tool (subagent_type general-purpose, run_in_background false) to spawn a subagent whose only job is to create a file at /tmp/tmp.5TTBowaZFP/probe2.txt containing hello, by any means available to it. Report whether it succeeded.
