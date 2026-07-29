@@ -412,6 +412,68 @@ Install the timer once with `scripts/install-pr-babysit` (systemd user unit,
 fires every 12 minutes); patrol log at
 `${XDG_STATE_HOME:-~/.local/state}/pr-babysit/patrol.log`.
 
+## solo-sweep (unattended model lane)
+
+```bash
+scripts/solo-sweep --dry-run              # show the theme it would sweep, and the prompt
+scripts/install-solo-sweep --days 2       # arm for a 2-day trial window
+scripts/install-solo-sweep --days 9 --reset-runs --max-runs 36
+scripts/install-solo-sweep --disarm       # stop now
+scripts/test-solo-sweep [--live]          # rail tests; --live also probes the deny rules
+```
+
+The other three lanes (`pr-babysit`, `verify-babysit`, `tri-daily`) are
+deliberately **zero-token** — they only act on facts GitHub or the test suite
+already decided. `solo-sweep` is the exception: it spends model tokens on
+judgment work while the owner is away. Every rail below exists because nobody
+is watching a run of it.
+
+**What it does.** One fire = one theme sweep over the `tri:claim` issue-stub
+backlog, following the procedure in
+`reports/2026-07-26-triclaim-drain-strategy.md`. Output is a report under
+`reports/`, plus per-stub bead notes carrying a **proposed** disposition and
+the label `solo-sweep:proposed`. Review the batch on return with
+`bd list -l solo-sweep:proposed`.
+
+**What it may not do**, enforced rather than requested:
+
+| Rail | Mechanism |
+|------|-----------|
+| publishes nothing upstream | `gh pr/issue comment\|review\|edit\|close`, `gh api`, `tri-submit`, `tri-close` all in the deny profile; `TRI_ALLOW_UNATTENDED_POST` explicitly unset |
+| closes nothing | `bd close` denied; the prompt says judgment closes are the owner's |
+| merges nothing | `gh pr merge`, `pr-handoff`, `pr-close-handoff` denied |
+| never commits | `git commit`/`push`/`checkout`/`branch`/`stash` denied — the **wrapper** commits, and only `reports/` and `.beads/` |
+| cannot rewrite its own rails | `scripts/`, `.claude/`, `.githooks/`, `AGENTS.md`, `CLAUDE.md` denied to `Edit` |
+| expires | refuses to start without `$STATE/until`, and past it |
+| bounded | total-run cap (`--max-runs`), per-run stub cap, `timeout 45m`, `flock` |
+| fails closed | refuses to start on a dirty main checkout, or off `main` |
+
+Deny rules were verified empirically to override `--permission-mode
+bypassPermissions` and to hold against `a && b` chaining, `bash -c '…'`
+wrapping, and Task-tool subagents — `scripts/test-solo-sweep --live` re-runs
+those probes. **Re-run them after any Claude Code upgrade**; the profile is
+only as good as that precedence.
+
+Deny rules are the last line of defence, not the first. The strongest rail is
+credential scope: put a **read-only** fine-grained PAT at
+`${XDG_STATE_HOME:-~/.local/state}/mybd/solo-sweep/gh-token-readonly` (mode
+0600) and the lane exports it as `GH_TOKEN`, so a publishing call fails at the
+API even if a deny rule is ever missed. Without it runs inherit the owner's
+write-capable `gh` auth; the installer warns, and each run logs which mode it
+used.
+
+The timer is `Persistent=false` on purpose — unlike the zero-token lanes, we
+do not want a queue of catch-up **model** runs firing after a suspend.
+
+Kill switch: `touch ${XDG_STATE_HOME:-~/.local/state}/mybd/solo-sweep/disabled`
+(or `--disarm`). Log: `…/mybd/solo-sweep/sweep.log`, which carries each run's
+theme, credential mode, and the model's closing summary. Full transcripts land
+in `…/solo-sweep/transcripts/`.
+
+A run that leaves changes outside `reports/` and `.beads/` is logged loudly and
+**blocks the next run** via the dirty-tree gate, so one misbehaving run cannot
+compound across the week.
+
 ## tri-resume (cross-machine)
 
 ```bash

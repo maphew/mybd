@@ -1,0 +1,10 @@
+[Unit]
+Description=Run solo-sweep every 6 hours
+
+[Timer]
+OnCalendar=02,08,14,20:23
+RandomizedDelaySec=300
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -541,6 +541,26 @@ follow-up activity re-queues it automatically. The lane never touches claimed
 beads or beads in the merge/close lanes and never posts upstream. Details and
 knobs: `scripts/README.md` "pr-babysit / pr-handoff".
 
+### Unattended model lane (solo-sweep)
+
+The three lanes above are zero-token. `scripts/solo-sweep` is the one that
+spends model tokens: armed for a bounded window while the owner is away, it
+fires every 6h and runs one theme sweep over the `tri:claim` stub backlog per
+the procedure in `reports/2026-07-26-triclaim-drain-strategy.md`.
+
+It **proposes** dispositions and publishes nothing: no upstream posts or
+labels, no closes (upstream or bd), no merges, no commits — the wrapper
+commits `reports/` and `.beads/` after the agent exits. Enforcement is a
+permission deny profile (`.claude/solo-sweep-settings.json`) plus, when
+present, a read-only `GH_TOKEN`; it is not left to the model's discretion.
+
+If you are a session picking up after a run: the batch is
+`bd list -l solo-sweep:proposed`. Treat those notes as **evidence with a
+suggested verdict, not a decision** — the strategy report's 30% false-positive
+rate on "fixed upstream" recon claims is exactly why the lane may not close
+anything by itself. Log: `~/.local/state/mybd/solo-sweep/sweep.log`. Kill
+switch and full rail table: `scripts/README.md` "solo-sweep".
+
 ## Quick Reference
 
 ```bash
