@@ -1,0 +1,121 @@
+<task-notification>
+<task-id>aa7a60eac7f82757a</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/aa7a60eac7f82757a.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5159 team-server" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Context checked
+
+- PR 5159 metadata + full diff fetched via `gh` (no checkout); source read at `upstream/main` (423afdcb2) via `git show`.
+- Existing review: `coffeegoddd` (MEMBER) **APPROVED** with comments on the escape hatch and the unrelated go.mod churn.
+- CI: one FAILURE — `Test (Proxied Dolt Cmd 14/15)` → `TestProxiedServerComment/multiple_comments_ordered`: `comment_proxied_integration_test.go:122: unexpected ordering: "three", "two", "one"`. Unrelated to this change (comment timestamp-tie ordering); looks like a flake, but it should be rerun before merge, not waved through.
+
+## What the change gets right
+
+I checked the three gates you named against the actual call graph:
+
+- **Migrate gate.** `schema.MigrateUpWithLock` is reachable on the proxied path from exactly one place, `internal/storage/uow/dolt_sql_provider.go:126`. The new team-server branch short-circuits *before* it and before any `CREATE DATABASE`, and returns `backoff.Permanent` for non-serialization errors, so it does not spin. This is a strict tightening, not a bypass. The integration test asserts `schema_migrations` is byte-identical after a team-server open.
+- **Forward-drift guard.** `checkTeamServerSchema` delegates `current &gt; latest` to `schema.CheckForwardDrift` (`internal/storage/uow/team_server_schema.go:29`), the same function `dolt/store.go:1598` uses. Not bypassed.
+- **Remote-migrate gate.** Never ran on the proxied path in the first place (`CheckRemoteMigrateGate*` callers are only `dolt/store.go:2212` and `embeddeddolt/store.go:345`). Team-server mode removes migration entirely from that path, so it cannot regress it.
+- **Fails closed on a bad target.** `openDB` pings before `initSchema`, so an unreachable server errors. Missing database → `UseDatabase` fails → "bts init". Existing-but-empty database → `CurrentVersion` returns 0 via `IsTableNotExist` → "bts init". Both are covered by the integration test. I could not construct a silent-success path.
+- Reuse of `resolveInitIssuePrefix`/`resolveInitProjectID` with `gateway=true` is the right call — those gateway branches already hard-error on an absent server value and distinguish read errors from unprovisioned, which is why the "transient, not unprovisioned" tests pass.
+
+Line numbers below are post-patch and approximate where the diff hunk doesn't pin them exactly.
+
+## Findings
+
+### 1. `major` — init still writes clone-local tracking state and creates a Dolt remote **in the bts-owned shared database**
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~182-201 (unchanged `bootstrapParams`) → `/var/home/matt/dev/mybd/bd-main/internal/storage/domain/bootstrap.go:62-100`.
+
+`SkipIdentity` suppresses only `issue_prefix` and `_project_id`. Still written to the shared `metadata` table on every teammate's init: `repo_id`, `clone_id`, `last_import_time` — and if a git origin resolves, `BootstrapProject` calls `remoteUseCase.CreateRemote(ctx, "origin", remoteURL)`, adding a Dolt remote pointing at *that teammate's* git origin to the operator's database.
+
+The PR body's stated goal is "a second teammate's init can't clobber the project identity", but the analogous already-solved case is right there in the tree, `cmd/bd/init.go:1313-1318`:
+
+```
+// Tracking metadata (bd_version, repo_id, clone_id) is clone-local state.
+// In gateway mode it must not be written into the shared, server-owned
+// database: repo_id/clone_id are per-clone fingerprints and a last-init-wins
+// overwrite feeds false cross-project mismatch diagnostics...
+```
+
+`doctor` and cross-project verification read `repo_id`/`clone_id` back, so this reproduces exactly the false-mismatch diagnostics that comment describes, plus an unwanted remote on shared server state.
+
+Fix: extend `SkipIdentity` into the same predicate the gateway path uses — i.e. in team-server mode also skip `RepoID`/`CloneID`/`LastImportTime` and the remote creation, mirroring `shouldWriteInitStateToDB(cmd/bd/init.go:1191-ish)`. Cheapest shape: add `SkipInitState bool` next to `SkipIdentity`, or rename the single flag to reflect "server owns this database".
+
+### 2. `major` (pre-existing gap, materially widened here) — no runtime project-identity verification on the proxied path
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/main.go:1348-1358` short-circuits proxied mode (`return nil`) **before** the `validateWorkspaceIdentity` call at `cmd/bd/main.go:1466-1470`, and proxied mode never constructs a `DoltStore`, so `verifyProjectIdentity` / `verifyGlobalProjectIdentity` (`internal/storage/dolt/store.go:1611-1621`, `1687`, `1724`) are unreachable. I verified this is true on `upstream/main` today, so **this PR does not remove a gate**.
+
+But it changes the exposure. Until now, proxied-server meant a per-workspace database bd itself created; the "server is serving a DIFFERENT project's database" scenario the gate was written for barely applied. `--team-server` deliberately points bd at a long-lived, shared, operator-managed database, selectable per-invocation by `--database`. Init *adopts* the identity (it cannot detect a wrong target — there is no way to assert an expected one), and nothing re-checks afterward. Gateway mode, the closest analogue, gets `verifyProjectIdentity` on every non-`CreateIfMissing` open because it goes through `DoltStore`.
+
+Suggested fix: after `checkTeamServerSchema` passes, compare `configfile.Load(beadsDir).ProjectID` against the DB's `_project_id` and refuse on mismatch. The reader is already written — `adoptTeamServerIdentity`'s `teamServerIdentityReader` — so this is a small addition, not new machinery. I'd accept "file a follow-up bead and merge" here; I would not accept "no runtime identity check, ever, on a shared team database".
+
+### 3. `should-fix` — `BD_IGNORE_SCHEMA_SKEW` downgrades a *behind*-schema refusal on a fully **writable** connection
+
+`/var/home/matt/dev/mybd/bd-main/internal/storage/uow/team_server_schema.go:32-38`.
+
+The precedent this mirrors, `schema.CheckBehindDrift` (`internal/storage/schema/schema.go:186-209`), is explicitly documented "Used by read-only opens, which skip MigrateUp by design"; its escape hatch downgrades a *read* risk. Here the same env var lets a newer `bd` proceed to **write** against an older bts schema — INSERTs/UPDATEs naming columns the database does not have. That's a different risk class than "some queries may fail".
+
+Also note `--ignore-schema-skew` sets `BD_IGNORE_SCHEMA_SKEW` (`cmd/bd/main.go:690`, `922`), so a user who set the flag for an unrelated read now silently gets write permission against a stale schema.
+
+Suggested fix: in team-server mode, honor the escape hatch only for read-only commands, or not at all for the behind case (forward-drift/ahead is the case where the hatch genuinely helps a stale binary read). This appears to overlap coffeegoddd's review comment "One comment, re the escape hatch" — worth reading that thread before duplicating it.
+
+### 4. `minor` — team-server-ness is keyed to the workspace, not to the database
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/uow_factory.go:22-30`: `teamServer` comes from `persisted.IsTeamServerManaged()`, while `database` can be replaced wholesale by `databaseOverride` (`--database` / `--db`, `cmd/bd/main.go:1360-1375`).
+
+Both directions cross the boundary: `bd --database other_db` in a team-server workspace applies bts semantics to an unrelated DB (fail-closed — it refuses to create it — so this direction is benign), and a *non*-team-server proxied workspace pointed at the bts database with `--database` will happily run `MigrateUpWithLock` against the operator's schema. The second is the dangerous one and is not new, but `--team-server` is what makes "there is an operator-owned DB on this server" true.
+
+Suggested fix: refuse `--database`/`--db` overrides that differ from the persisted `dolt_database` when `IsTeamServerManaged()`, since init already requires the name be pinned. The reverse direction is out of scope for this PR but worth a bead.
+
+### 5. `minor` — `IsTeamServerManaged()` fails *open* outside proxied mode
+
+`/var/home/matt/dev/mybd/bd-main/internal/configfile/configfile.go:345-350`. `dolt_team_server: true` combined with any other `dolt_mode` silently evaluates to `false`, and "false" here means "resume migrating the operator's database". Silently-inert is the wrong default for a safety bit. The init-time guard (`cmd/bd/init.go:332-334`) means you can only reach this by hand-editing metadata.json or by a later re-init that rewrites `dolt_mode` — low likelihood, but the failure is a schema write to a shared DB.
+
+Suggested fix: make `dolt_team_server: true` with a non-proxied `dolt_mode` a hard config error at load rather than an inert field. The PR even has a test asserting the silent-false behavior (`cmd/bd/init_proxied_server_test.go`, `TestIsTeamServerManaged_RequiresProxiedServerMode`), so this is a deliberate choice worth challenging rather than an oversight.
+
+### 6. `minor` — the identity adoption is non-atomic, and the riskiest new block is untested
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~214-227 (the `configfile.Load` → set `ProjectID` → `Save` block).
+
+metadata.json is written with a locally-minted project id *before* any connection exists; the adopted id is patched in afterward. If the reload or `Save` fails, init aborts having already mutated the shared DB (finding 1) and leaving metadata.json holding a project id that does not match the database. Because nothing verifies identity at runtime (finding 2), that state is silent rather than loud.
+
+This block has no test — every other piece of the change is covered. Test coverage is otherwise good (7 `adoptTeamServerIdentity` cases, 7 `checkTeamServerSchema` cases including both escape-hatch branches, 3 bootstrap `SkipIdentity` cases, 4 `resolveDoltDatabaseName` cases, 4 integration scenarios). What's missing besides this block: the `--team-server` requires `--proxied-server` rejection, the `DBNameDerived` "requires --database" guard (the *predicate* is tested, the guard that consumes it is not), and the ahead/forward-drift case at integration level.
+
+### 7. `nit` — `adoptTeamServerIdentity` calls two resolvers purely for their error side effect
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~279 and ~294: `resolveInitIssuePrefix(...)` result is discarded and raw `dbPrefix` is returned instead. This is *correct* today — the gateway branch of `resolveInitIssuePrefix` returns `("", false, nil)` whenever `existing != ""`, so there is no value to use — but it's fragile: `resolveInitIssuePrefix`'s non-gateway branch applies `strings.ReplaceAll(prefix, ".", "_")` sanitization, and if the gateway branch ever starts returning a sanitized value, team-server silently keeps the raw one. A one-line comment stating "called as a validator; the gateway branch returns no value" would lock the assumption in.
+
+### 8. `nit` — unrelated dependency churn
+
+`examples/bd-example-extension-go/go.mod|go.sum` and `examples/library-usage/go.mod|go.sum`: go-isatty 0.0.20→0.0.22, x/sys 0.41/0.46→0.47, x/sync 0.21→0.22, x/term 0.44→0.45. Nothing in this change touches those modules. Already flagged by coffeegoddd; should be reverted so the diff is reviewable as one thing.
+
+### 9. `nit` / maintainer question — the error messages instruct users to run a tool that does not exist in this repo
+
+`git grep -i "beads-team-server\|bts init\|bts migrate"` against `upstream/main` returns nothing. This PR adds user-facing error strings telling operators to run `bts init` / `bts migrate` (`internal/storage/uow/team_server_schema.go:23,26,36`, `internal/storage/uow/dolt_sql_provider.go` ~107, `cmd/bd/init_proxied_server.go` ~283,~297) and a flag help string naming `beads-team-server (bts)`, with no doc anywhere explaining what bts is or where to get it. Flag is `[EXPERIMENTAL]`, which mitigates this, and the approving reviewer is a DoltHub member so bts is presumably a known adjacent product — but a user who hits "ask your operator to run 'bts init'" has no way to find out what that means. Worth at least one doc line or a URL in the flag help.
+
+## Simpler-alternative / delete-more-than-it-adds check
+
+The change is already lean where it counts (the migrate bypass is one guarded branch, and it reuses the gateway resolvers rather than reimplementing them). The one consolidation worth raising: `--team-server` and the existing `Gateway` flag (`internal/storage/dolt/gateway_credential.go:30-62`) encode the *same policy* — "the server owns schema and identity; bd is a passive client" — via two independent mechanisms on two different code paths, and they now diverge (gateway suppresses init-state writes, team-server doesn't — finding 1). They cannot be trivially merged (gateway is credential-derived and DoltStore-only; team-server is metadata-persisted and UOW-only), but the *policy predicates* in `cmd/bd/init.go:151-195` (`shouldConsultInitProjectID` / `shouldWriteProjectIDLocally` / `shouldWriteInitStateToDB`) should be shared rather than partially reused. Doing that would both fix finding 1 and remove the divergence risk for the next server mode.
+
+## Verdict
+
+**APPROVE-WITH-COMMENTS**, contingent on finding 1.
+
+The core safety claim holds: this does not add a Dolt-server connect path that bypasses the migrate gate or the forward-drift guard — it removes migration from the path entirely, and it fails closed on unreachable, missing, empty, behind, and ahead databases, with tests for each. Findings 3-9 are follow-up material.
+
+Finding 1 is the one I'd want addressed before merge (or as an immediate follow-up with a bead), because it is a partial implementation of the PR's own stated goal, the correct behavior is already written down 800 lines away in the same file for the gateway case, and the fix is small. Finding 2 is the larger structural gap; it predates this PR and I would not block on it, but it should not merge without a tracked follow-up, given that this PR is what makes shared-team databases a supported proxied-mode target.</result>
+<usage><subagent_tokens>129921</subagent_tokens><tool_uses>47</tool_uses><duration_ms>470586</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bu6gdnb6b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/bu6gdnb6b.output</output-file>
+<status>completed</status>
+<summary>Background command "Run proxied comment test with gate enabled, 4x" completed (exit code 0)</summary>
+</task-notification>
