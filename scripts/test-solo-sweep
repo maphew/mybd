@@ -145,6 +145,10 @@ grep -q 'GH_CONFIG_DIR' "$SWEEP" \
   || bad "model gets an empty gh config dir"
 
 # Quota exhaustion must not permanently park the lane (observed 2026-07-29).
+PROMPT="$ROOT/scripts/solo-sweep-prompt.md"
+grep -q '120 lines maximum' "$PROMPT" \
+  && ok "prompt caps report length" || bad "prompt caps report length"
+
 grep -q 'bd dolt pull' "$SWEEP" \
   && ok "bd dolt push retries after a pull (parallel sessions push too)" \
   || bad "bd dolt push retries after a pull"

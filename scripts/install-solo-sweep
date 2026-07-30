@@ -6,6 +6,7 @@
 #
 #   scripts/install-solo-sweep --days 2              # trial window
 #   scripts/install-solo-sweep --days 9 --reset-runs # while away
+#   scripts/install-solo-sweep --days 6 --model opus --fallback-model sonnet
 #   scripts/install-solo-sweep --disarm              # stop now, keep units
 set -euo pipefail
 
@@ -14,10 +15,14 @@ RESET_RUNS=0
 DISARM=0
 ALLOW_WRITE=0
 MAX_RUNS=""
+MODEL=""
+FALLBACK=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --days) DAYS="${2:?--days needs a number}"; shift 2;;
     --max-runs) MAX_RUNS="${2:?--max-runs needs a number}"; shift 2;;
+    --model) MODEL="${2:?--model needs a value}"; shift 2;;
+    --fallback-model) FALLBACK="${2:?--fallback-model needs a value}"; shift 2;;
     --reset-runs) RESET_RUNS=1; shift;;
     --allow-write-token) ALLOW_WRITE=1; shift;;
     --disarm) DISARM=1; shift;;
@@ -98,6 +103,14 @@ if (( ALLOW_WRITE )); then
     echo "--allow-write-token is for supervised trials only (max $TRIAL_MAX_DAYS days)" >&2; exit 2
   fi
   sed -i "/^\[Service\]/a Environment=SOLO_SWEEP_ALLOW_WRITE_TOKEN=1" "$service_tmp"
+fi
+if [[ -n "$MODEL" ]]; then
+  [[ "$MODEL" =~ ^[a-z0-9._-]+$ ]] || { echo "--model looks wrong: $MODEL" >&2; exit 2; }
+  sed -i "/^\[Service\]/a Environment=SOLO_SWEEP_MODEL=$MODEL" "$service_tmp"
+fi
+if [[ -n "$FALLBACK" ]]; then
+  [[ "$FALLBACK" =~ ^[a-z0-9._-]+$ ]] || { echo "--fallback-model looks wrong: $FALLBACK" >&2; exit 2; }
+  sed -i "/^\[Service\]/a Environment=SOLO_SWEEP_FALLBACK_MODEL=$FALLBACK" "$service_tmp"
 fi
 if [[ -n "$MAX_RUNS" ]]; then
   [[ "$MAX_RUNS" =~ ^[0-9]+$ ]] || { echo "--max-runs must be numeric" >&2; exit 2; }

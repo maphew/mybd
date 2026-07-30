@@ -82,6 +82,23 @@ the disposition judgment for yourself. Keep that fan-out modest — a handful,
 not dozens; the run has a hard dollar budget and being cut off mid-sweep
 discards the whole run.
 
+## Length
+
+The report is read by one busy person catching up on a week. Write it short
+enough that they actually read it:
+
+- **Report: 120 lines maximum.** Disposition table, root-cause map, "Confidence
+  and caveats". Nothing else — no restating this procedure, no preamble, no
+  summary of what a sweep is, no closing pleasantries.
+- **Evidence column: one or two sentences per stub.** A verified merge SHA and
+  what it changed beats a paragraph of narration.
+- **Final message: 10 lines maximum.**
+
+Detail belongs in the per-stub `solo-bd note`, where the owner reads it only
+when acting on that specific stub. The report is the index, not the archive.
+Cutting a hedge you actually mean is worse than being long — say the uncertain
+thing, just say it once.
+
 ## Finishing
 
 Write the report, then stop. Your final message should be short: theme, stubs
