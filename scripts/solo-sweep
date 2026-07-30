@@ -49,7 +49,11 @@ MODEL="${SOLO_SWEEP_MODEL:-fable}"
 # a fallback rather than losing the fire. Empty = no fallback (costs nothing
 # without the owner's say-so).
 FALLBACK_MODEL="${SOLO_SWEEP_FALLBACK_MODEL:-}"
-MAX_TRANSIENT="${SOLO_SWEEP_MAX_TRANSIENT:-6}"
+# Consecutive transient failures tolerated before parking. The timer fires 4x
+# a day, and a model credit pool can be out for days (owner, 2026-07-29: Fable
+# resets on a 2-day cycle), so a budget of 6 would park the lane roughly a day
+# and a half into an outage it was supposed to ride out. 20 is five days.
+MAX_TRANSIENT="${SOLO_SWEEP_MAX_TRANSIENT:-20}"
 EFFORT="${SOLO_SWEEP_EFFORT:-high}"
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1

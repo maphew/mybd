@@ -157,6 +157,12 @@ grep -q 'out of usage credits' "$SWEEP" \
   || bad "credit exhaustion is treated as transient"
 grep -q 'MAX_TRANSIENT' "$SWEEP" \
   && ok "transient retries are bounded" || bad "transient retries are bounded"
+# The budget must outlast a multi-day model-credit outage: 4 fires/day, and
+# the Fable pool resets on a 2-day cycle.
+mt="$(sed -n 's/^MAX_TRANSIENT="\${SOLO_SWEEP_MAX_TRANSIENT:-\([0-9]*\)}"/\1/p' "$SWEEP")"
+[[ -n "$mt" ]] && (( mt >= 12 )) \
+  && ok "transient budget ($mt fires, ~$((mt/4)) days) outlasts a 2-day quota outage" \
+  || bad "transient budget too small for a 2-day quota outage (got '${mt:-unset}')"
 grep -q 'runs - 1' "$SWEEP" \
   && ok "a transient failure does not burn a run from the cap" \
   || bad "a transient failure does not burn a run from the cap"
