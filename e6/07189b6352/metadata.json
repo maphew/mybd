@@ -3,7 +3,7 @@
   "checkpoint_id": "e607189b6352",
   "strategy": "manual-commit",
   "branch": "feat/maintainer-edit-policy",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "PR_MAINTAINER_GUIDELINES.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/e6/07189b6352/1/transcript.jsonl",
       "content_hash": "/e6/07189b6352/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/e6/07189b6352/2/metadata.json",
+      "transcript": "/e6/07189b6352/2/full.jsonl",
+      "compact_transcript": "/e6/07189b6352/2/transcript.jsonl",
+      "content_hash": "/e6/07189b6352/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 10,
-    "cache_creation_tokens": 3786,
-    "cache_read_tokens": 1589539,
-    "output_tokens": 2633,
-    "api_call_count": 5
+    "input_tokens": 30,
+    "cache_creation_tokens": 31546,
+    "cache_read_tokens": 2432395,
+    "output_tokens": 7286,
+    "api_call_count": 15
   }
 }
