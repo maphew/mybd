@@ -1,0 +1,6 @@
+fish: Expected a string, but found a redirection
+install -m600 /dev/stdin ~/.local/state/mybd/solo-sweep/gh-token-readonly <<<'github_pat
+
+---
+
+done. the fable quota will reset in 2 days, so where ok there
