@@ -281,7 +281,28 @@ if [[ -n "${MODEL_GH_TOKEN:-}" ]]; then
   MODEL_GH_CONFIG="$(mktemp -d "$STATE_DIR/.ghcfg.XXXXXX")"
 fi
 
+# Hide credentials from the MODEL without hiding them from this wrapper.
+#
+# The unit cannot do this with InaccessiblePaths: origin resolves to
+# git@github.com via an insteadOf rewrite, and the bd Dolt remote is
+# git+ssh, so the wrapper's own push and `bd dolt push` both need ~/.ssh.
+# Making it unreadable unit-wide broke publishing outright (observed
+# 2026-07-30: "git fetch failed; proceeding on local state").
+#
+# Filesystem exclusion is also the only rail that actually holds here: the
+# model's allowlist includes head/tail/rg, any of which would happily print a
+# private key, so denying read *verbs* is not a boundary.
+SANDBOX_CMD=()
+if command -v bwrap >/dev/null 2>&1; then
+  SANDBOX_CMD=(bwrap --dev-bind / /
+    --tmpfs "$HOME/.ssh" --tmpfs "$HOME/.gnupg" --tmpfs "$HOME/.codex"
+    --tmpfs "$HOME/.aws" --tmpfs "$HOME/.docker" --tmpfs "$HOME/.kube" --)
+else
+  log "WARNING: bwrap not found — the model will run WITHOUT credential isolation"
+fi
+
 timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
+  "${SANDBOX_CMD[@]}" \
   env ${MODEL_GH_TOKEN:+GH_TOKEN="$MODEL_GH_TOKEN"} \
       ${MODEL_GH_CONFIG:+GH_CONFIG_DIR="$MODEL_GH_CONFIG"} GITHUB_TOKEN= \
   claude -p "$prompt" \
@@ -316,6 +337,7 @@ elif (( rc != 0 )); then
       log "run $runs: $MODEL unavailable (transient); retrying on $FALLBACK_MODEL"
       start=$(date +%s)
       timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \
+        "${SANDBOX_CMD[@]}" \
         env ${MODEL_GH_TOKEN:+GH_TOKEN="$MODEL_GH_TOKEN"} \
             ${MODEL_GH_CONFIG:+GH_CONFIG_DIR="$MODEL_GH_CONFIG"} GITHUB_TOKEN= \
         claude -p "$prompt" --settings "$SETTINGS" --permission-mode default \
