@@ -1,0 +1,10 @@
+in recent GH PRs in reading the back and forth between agents (vishnujayvel for example) I've started seeing exchanges like "you do something-something as maintainer edit" from the PR originator. This strikes me as a possible token burner (you use your tokens, not mine). It's not necessarily a ploy, it might be in response to us offering to do as maintainer edit. We shouldn't volunteer that. Either we do the maintainer edit on the spot or they do. Talking about who does it is wasteful for both of us.  --- does this make sense? am i reading the situation right?  we do want to keep our stance of being helpful, and smoothing the road, but only to a point and being smart about it
+
+---
+
+"vishnujayvel wave 2 replies: 12 of 12 accepted our findings and itemized specific changes they wanted pushed maintainer-side."
+why did they ask for changes instead of just showing by doing?
+
+---
+
+now this sounds much better to me. Let's try it out
