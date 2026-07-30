@@ -3,7 +3,7 @@
   "checkpoint_id": "517e3d9b415f",
   "strategy": "manual-commit",
   "branch": "report/2026-07-29-final",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-29-upstream-batch-and-rqqa2-design.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/51/7e3d9b415f/1/transcript.jsonl",
       "content_hash": "/51/7e3d9b415f/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/51/7e3d9b415f/2/metadata.json",
+      "transcript": "/51/7e3d9b415f/2/full.jsonl",
+      "compact_transcript": "/51/7e3d9b415f/2/transcript.jsonl",
+      "content_hash": "/51/7e3d9b415f/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 24,
-    "cache_creation_tokens": 11630,
-    "cache_read_tokens": 3694200,
-    "output_tokens": 8376,
-    "api_call_count": 12
+    "input_tokens": 44,
+    "cache_creation_tokens": 74278,
+    "cache_read_tokens": 4214621,
+    "output_tokens": 17252,
+    "api_call_count": 22
   }
 }
