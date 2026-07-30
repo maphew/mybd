@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "517e3d9b415f",
+  "strategy": "manual-commit",
+  "branch": "report/2026-07-29-final",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-29-upstream-batch-and-rqqa2-design.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/51/7e3d9b415f/0/metadata.json",
+      "transcript": "/51/7e3d9b415f/0/full.jsonl",
+      "compact_transcript": "/51/7e3d9b415f/0/transcript.jsonl",
+      "content_hash": "/51/7e3d9b415f/0/content_hash.txt",
+      "prompt": "/51/7e3d9b415f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 8070,
+    "cache_read_tokens": 2186356,
+    "output_tokens": 6756,
+    "api_call_count": 7
+  }
+}
