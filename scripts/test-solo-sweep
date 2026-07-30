@@ -146,6 +146,13 @@ grep -q 'GH_CONFIG_DIR' "$SWEEP" \
 
 # Quota exhaustion must not permanently park the lane (observed 2026-07-29).
 PROMPT="$ROOT/scripts/solo-sweep-prompt.md"
+# A sibling session committing mid-run must not discard the lane's work.
+grep -q 'park "HEAD moved' "$SWEEP" \
+  && bad "must not park when a concurrent session moves HEAD" \
+  || ok "concurrent HEAD movement is tolerated, not parked on"
+grep -q 'committing on top' "$SWEEP" \
+  && ok "commits on top of a moved HEAD" || bad "commits on top of a moved HEAD"
+
 grep -q '120 lines maximum' "$PROMPT" \
   && ok "prompt caps report length" || bad "prompt caps report length"
 

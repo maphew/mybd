@@ -388,16 +388,27 @@ log "run $runs: model completed in ${elapsed}s (theme=$THEME)"
 # returning owner, tri-daily, a parallel session) may have moved the checkout.
 branch_now="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [[ "$branch_now" == "main" ]] || park "checkout moved to '$branch_now' during the run; nothing committed"
-[[ "$(git rev-parse HEAD)" == "$start_head" ]] || park "HEAD moved during the run; nothing committed"
+
+# HEAD moving is NORMAL here — parallel sessions commit to the same checkout
+# ("assume you are not working alone"). On 2026-07-30 a sibling session landed
+# two commits mid-run and this check threw away 631s of good Opus work that was
+# sitting complete on disk. commit_one_file parents on whatever HEAD is at
+# commit time and passes that SHA to update-ref, so a concurrent commit is safe
+# by construction; there is nothing to protect against here beyond noting it.
+head_now="$(git rev-parse HEAD)"
+if [[ "$head_now" != "$start_head" ]]; then
+  log "run $runs: note — HEAD moved during the run (${start_head:0:9} -> ${head_now:0:9}); committing on top"
+fi
 
 # The report is the only file this run may add.  Anything else it touched is
 # reported and left alone — it will block the next run via the dirty gate.
 changed="$(git status --porcelain --untracked-files=normal | grep -v '^?? \.worktrees/')"
 unexpected="$(grep -v -F -- "$REPORT_REL" <<<"$changed" | sed '/^$/d')"
 if [[ -n "$unexpected" ]]; then
-  log "run $runs: WARNING — changes outside $REPORT_REL:"
+  # Not a park: only $REPORT_REL is ever staged, so foreign changes cannot ride
+  # along. They are logged, left alone, and will trip the next run's dirty gate.
+  log "run $runs: WARNING — changes outside $REPORT_REL (not committed, left in place):"
   printf '%s\n' "$unexpected" | sed 's/^/    /' >>"$LOG"
-  park "run $runs touched files it may not commit; nothing committed, tree left for inspection"
 fi
 
 # Did it actually do the work?  A run that labelled nothing would otherwise let
@@ -447,7 +458,7 @@ fi
 # --- sync --------------------------------------------------------------------
 # bd state syncs through Dolt; the report syncs through git.
 
-if [[ "$(git rev-parse HEAD)" != "$start_head" ]]; then
+if [[ -n "$COMMIT_SHA" ]]; then
   # Parallel sessions push bead state too, so a non-fast-forward rejection is
   # routine rather than exceptional (hit by hand 2026-07-29). Pull and retry
   # once before declaring the notes stranded.
