@@ -1,0 +1,49 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "51b7a2565026",
+  "session_id": "019fb1c5-a940-7240-80a0-d20e8595c51c",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-30T08:38:03.09641853Z",
+  "branch": "docs/maintainer-edit-transition-scope",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "PR_MAINTAINER_GUIDELINES.md"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "1169af1c03fa",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 36317,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 160256,
+    "output_tokens": 1480,
+    "api_call_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-30T08:38:03.082733756Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 9,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 9,
+    "total_lines_changed": 9,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 52,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        ".kilo/setup-script": 43
+      }
+    }
+  ]
+}
