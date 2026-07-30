@@ -224,6 +224,21 @@ fi
 
 # --- pick the theme ----------------------------------------------------------
 
+# Refresh the beads source refs before the sweep. Run 3 discovered that
+# bd-main's local main was 28 commits behind upstream, so every code
+# observation it made was three days stale — and it said so, but a sweep that
+# has to caveat its own evidence is a sweep half wasted. Fetch only: bd-main is
+# somebody's working clone and may be dirty, so nothing here touches the
+# working tree. The prompt directs code reads at upstream/main instead.
+if [[ -d "$ROOT/bd-main/.git" ]]; then
+  if git -C "$ROOT/bd-main" fetch --quiet --all --prune 2>>"$LOG"; then
+    behind="$(git -C "$ROOT/bd-main" rev-list --count main..upstream/main 2>/dev/null || echo '?')"
+    log "beads source refs refreshed (working tree main is $behind commits behind upstream/main; reads use upstream/main)"
+  else
+    log "WARNING: could not fetch beads source refs — code reads may be stale"
+  fi
+fi
+
 open_json="$(bd list --status=open --limit 0 --json 2>/dev/null)" || die "bd list failed"
 jq -e 'type == "array" and length > 0' <<<"$open_json" >/dev/null 2>&1 \
   || die "bd list returned no usable array — treating as a fault, not as 'no work left'"

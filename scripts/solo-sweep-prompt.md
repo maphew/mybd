@@ -31,7 +31,18 @@ Read-only recon beyond plain file reading goes through `scripts/solo-recon`:
 Use `api repos/gastownhall/beads/issues/<n>/timeline` for the strategy
 report's step-1 timeline enumeration — full-text `gh search` alone misses
 commit-message-only and unlinked fixes, which is exactly how a stale stub
-survives a sweep. `log beads …` reaches the beads source in `bd-main/`.
+survives a sweep.
+
+**Read beads source at `upstream/main`, not from the working tree.**
+`bd-main/` is somebody's working clone: it drifts behind upstream and carries
+uncommitted changes, and run 3 made a full sweep's worth of code observations
+against a tree three days stale. The refs are freshly fetched for you, so:
+
+    scripts/solo-recon show beads upstream/main:internal/path/file.go
+    scripts/solo-recon log beads upstream/main -20 -- internal/path/
+
+"Not present on main" is only a claim you can make about `upstream/main`. If
+you do read the working tree for something, say so in the caveats.
 
 Your only write verb is `scripts/solo-bd`:
 

@@ -153,6 +153,13 @@ grep -q 'park "HEAD moved' "$SWEEP" \
 grep -q 'committing on top' "$SWEEP" \
   && ok "commits on top of a moved HEAD" || bad "commits on top of a moved HEAD"
 
+grep -q 'fetch --quiet --all --prune' "$SWEEP" \
+  && ok "refreshes beads source refs before sweeping" \
+  || bad "refreshes beads source refs before sweeping"
+grep -q 'upstream/main:internal' "$PROMPT" \
+  && ok "prompt directs code reads at upstream/main, not the working tree" \
+  || bad "prompt directs code reads at upstream/main"
+
 grep -q '120 lines maximum' "$PROMPT" \
   && ok "prompt caps report length" || bad "prompt caps report length"
 
