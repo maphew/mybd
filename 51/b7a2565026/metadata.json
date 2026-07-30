@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "51b7a2565026",
+  "strategy": "manual-commit",
+  "branch": "docs/maintainer-edit-transition-scope",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "PR_MAINTAINER_GUIDELINES.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/51/b7a2565026/0/metadata.json",
+      "transcript": "/51/b7a2565026/0/full.jsonl",
+      "compact_transcript": "/51/b7a2565026/0/transcript.jsonl",
+      "content_hash": "/51/b7a2565026/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 234760,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 5562112,
+    "output_tokens": 18199,
+    "api_call_count": 43
+  }
+}
