@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>babeot4nl</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/03353724-8668-472c-a128-448f9652b221/tasks/babeot4nl.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the run to finish in background" completed (exit code 0)</summary>
+</task-notification>
