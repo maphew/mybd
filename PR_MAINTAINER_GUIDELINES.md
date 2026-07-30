@@ -57,10 +57,32 @@ refusal is what makes someone try again. Concretely:
   became the default opening 19 times in six weeks, 7 of which we fixed
   ourselves anyway. A `COMMENT` review carries identical findings without
   stamping a red ✗ on someone's first contribution.
-- **Ask before finishing their PR for them.** Absorbing is correct policy, but
-  "the fixes are applied as maintainer commits" as the contributor's *next news*
-  removes the thing they came for. Offer first: *"Want to take these, or shall
-  I push them?"*
+- **Decide the maintainer edit; do not negotiate it.** Absorbing is correct
+  policy, but "the fixes are applied as maintainer commits" as the contributor's
+  *next news* removes the thing they came for. The first fix for that was to ask
+  first — *"Want to take these, or shall I push them?"* — and it backfired. Across
+  the vishnujayvel wave (2026-07-29) every review closed with that question in
+  some phrasing (gastownhall/beads#5120, #5124, #5125, #5127, #5130 sampled
+  verbatim), and 12 of 12 replies answered "you push them" — batch mybd-php3l. The
+  question engineers its own answer: by the time it appears the review has already
+  pinned every change to a `file:line`, so only typing is left; "with your
+  authorship preserved" removes the one reason to insist on doing it yourself; and
+  declining means respinning a branch 131 commits behind main in order to turn
+  down free help. Nobody declines that. Owner read (maphew, 2026-07-30):
+  discussing *who* performs the edit is pure overhead for both sides — either we
+  do it on the spot or they do, and we do not volunteer the negotiation.
+  - **The threshold is ours, and unstated.** Absorb *typing* — changes the review
+    already specified exactly. Leave *thinking* to them: if applying it means
+    re-deriving the design or making a judgment call, it is their change, stated
+    as a plain request with no mention of maintainer edits at all. Silence on the
+    topic is what keeps it from being negotiable.
+  - **Act, then leave an undo, in the same sentence.** *"Pushed items 1-6 as
+    `<sha>`, authorship preserved — force-push over it if you'd rather do it your
+    way."* Same courtesy as the offer, zero round trips, and the contributor keeps
+    control instead of being steamrolled.
+  - **Spend the round trip on judgment, not scheduling.** Where a genuine open
+    question exists, ask that one and only that one (#5125 item 7 is the
+    model: six mechanical items pushed, one design question put to the author).
 - **Do not post the disposition and close in the same second.** All five sampled
   2026 declines closed 0–1s after the comment; none of 17 contributors replied
   to any of them, even though every message thanked them, preserved attribution
