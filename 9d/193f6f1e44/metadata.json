@@ -3,7 +3,7 @@
   "checkpoint_id": "9d193f6f1e44",
   "strategy": "manual-commit",
   "branch": "report/2026-07-29-p0-triage",
-  "checkpoints_count": 2,
+  "checkpoints_count": 4,
   "files_touched": [
     "reports/2026-07-29-p0-triage-and-5143-rebase.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/9d/193f6f1e44/1/transcript.jsonl",
       "content_hash": "/9d/193f6f1e44/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/9d/193f6f1e44/2/metadata.json",
+      "transcript": "/9d/193f6f1e44/2/full.jsonl",
+      "compact_transcript": "/9d/193f6f1e44/2/transcript.jsonl",
+      "content_hash": "/9d/193f6f1e44/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 20,
-    "cache_creation_tokens": 34304,
-    "cache_read_tokens": 1141370,
-    "output_tokens": 7823,
-    "api_call_count": 10
+    "input_tokens": 22,
+    "cache_creation_tokens": 35510,
+    "cache_read_tokens": 1434473,
+    "output_tokens": 8131,
+    "api_call_count": 11
   }
 }

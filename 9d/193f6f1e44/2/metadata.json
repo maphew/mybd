@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "9d193f6f1e44",
+  "session_id": "50d9a037-f679-4a49-b77a-85c34884c7c5",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-30T04:16:15.929918977Z",
+  "branch": "report/2026-07-29-p0-triage",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "reports/2026-07-29-p0-triage-and-5143-rebase.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5",
+  "turn_id": "47b5e7e9c096",
+  "checkpoint_transcript_start": 1074,
+  "transcript_lines_at_start": 1074,
+  "compact_transcript_start": 225,
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 1206,
+    "cache_read_tokens": 293103,
+    "output_tokens": 308,
+    "api_call_count": 1
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-30T04:16:15.849958904Z",
+    "agent_lines": 188,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 188,
+    "total_lines_changed": 188,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
