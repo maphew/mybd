@@ -3,14 +3,23 @@
   "checkpoint_id": "e607189b6352",
   "strategy": "manual-commit",
   "branch": "feat/maintainer-edit-policy",
-  "checkpoints_count": 1,
-  "files_touched": null,
+  "checkpoints_count": 2,
+  "files_touched": [
+    "PR_MAINTAINER_GUIDELINES.md"
+  ],
   "sessions": [
     {
       "metadata": "/e6/07189b6352/0/metadata.json",
       "transcript": "/e6/07189b6352/0/full.jsonl",
       "compact_transcript": "/e6/07189b6352/0/transcript.jsonl",
       "content_hash": "/e6/07189b6352/0/content_hash.txt",
+      "prompt": ""
+    },
+    {
+      "metadata": "/e6/07189b6352/1/metadata.json",
+      "transcript": "/e6/07189b6352/1/full.jsonl",
+      "compact_transcript": "/e6/07189b6352/1/transcript.jsonl",
+      "content_hash": "/e6/07189b6352/1/content_hash.txt",
       "prompt": ""
     }
   ],
