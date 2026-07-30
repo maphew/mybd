@@ -252,3 +252,47 @@ One thing worth saying to the author explicitly: the migration-hygiene Check D a
 Review worktree was created under `/var/home/matt/dev/mybd/.worktrees/beads/` and removed; the local `pr4697-rr` branch was deleted. No files were modified, nothing was posted, no `bd` writes.</result>
 <usage><subagent_tokens>155874</subagent_tokens><tool_uses>55</tool_uses><duration_ms>1126688</duration_ms></usage>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>a9033ec44188935d6</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/a9033ec44188935d6.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix self-defeating port file write" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Working tree is clean, commit is on top of the previous two without rewriting them. Not pushing per scope.
+
+## Summary
+
+Fixed the sequencing hole: `EnsureRunningDetailed` writes the port file with the new server's port *inside* `EnsureRunningDetailed`, before either fail-closed check in `newServerMode` runs. Left in place, that write let a second, identical invocation resolve `PortSourcePortFile` (non-authoritative) instead of the authoritative source that just failed, silently adopting the rejected server — disarming the guard after exactly one call.
+
+**Changes:**
+- `/var/home/matt/dev/mybd/.worktrees/beads/port-provenance/internal/doltserver/doltserver.go`: added `PortFileSnapshot`, `SnapshotPortFile`, `RestorePortFile` (write-temp-then-rename, matching `writePortFile`'s existing pattern and 0600 mode).
+- `/var/home/matt/dev/mybd/.worktrees/beads/port-provenance/internal/storage/dolt/store.go`: `newServerMode` now snapshots the port file before calling `ensureRunningDetailed`; both fail-closed branches (shared-server and authoritative-source) call a new `undoRejectedAutoStart` helper that restores the snapshot and, when `startedByUs` is true, stops the server we spawned but declined to use (`stopRejectedAutoStartedServer`, a new stubbable var) — refcount-tracked test-mode servers still go through the existing `autoStartRelease`. Adopted pre-existing servers (`startedByUs == false`) are left running. All cleanup is best-effort, reported on stderr, never masking the original fail-closed error.
+- `/var/home/matt/dev/mybd/.worktrees/beads/port-provenance/internal/storage/dolt/port_provenance_test.go`: 8 new tests.
+
+**Test names / results (all PASS):**
+- `TestNewServerMode_AuthoritativeSource_FailClosed_RestoresAbsentPortFile`
+- `TestNewServerMode_AuthoritativeSource_FailClosed_RestoresPriorPortFileBytes`
+- `TestNewServerMode_SharedServer_FailClosed_RestoresPortFile`
+- `TestNewServerMode_AuthoritativeSource_SecondCallStillFailsClosed` — the direct regression test, resolving the port source through the real `doltserver.DefaultConfig`/config.yaml precedence chain (not hand-set), then asserting a second, independently-resolved call still fails closed
+- `TestUndoRejectedAutoStart_StartedByUs_StopsServer`
+- `TestUndoRejectedAutoStart_AdoptedServer_NotStopped`
+- `TestUndoRejectedAutoStart_PortFileSnapshotError_SkipsRestore`
+- All prior GH#4052 tests from the two earlier commits still pass.
+
+**Negative control:** temporarily removed the `RestorePortFile` call in `undoRejectedAutoStart` — the three byte-identical/absent-restore tests genuinely failed (wrong port bytes / port file left behind); the second-call test still passed in that configuration because it uses `startedByUs=true`, and the `Stop()`-triggered `cleanupStateFiles` also happens to delete the port file as a side effect — so it isn't a pure discriminator for the restore path alone, but the three others are. Restored the fix; full targeted suite re-passed.
+
+**Verify commands run:**
+- `go build` — clean
+- `go vet ./internal/storage/dolt/ ./internal/doltserver/` — clean
+- `go test ./internal/doltserver/` — `ok` (1.7s)
+- `go test ./internal/storage/dolt/ -run 'TestNewServerMode|PortSource|PortSharedServer|PortFile'` — `ok`, all pass (4.3s)
+
+**One caveat to flag:** a bare `go test ./internal/storage/dolt/` (no `-run` filter) timed out at the 20-minute limit in this sandbox, stuck in unrelated `t.Parallel()` waits inside `TestDoltStoreStatistics`/`TestEventsSinceClaimedConstant` (generic test-container/pool setup, nothing touching `newServerMode`, `undoRejectedAutoStart`, or the port-file code). This looks like environment resource contention rather than a regression from this diff — the exact filtered command specified in the task's Verify section passed cleanly — but I did not track down the root cause further given scope; flagging it rather than guessing.
+
+Commit: `3e388d2f4` on `fix/port-provenance-fail-closed`, on top of `ccba3b6f9` and `e6a830a0c` (not rewritten). Not pushed, per scope.</result>
+<usage><subagent_tokens>156723</subagent_tokens><tool_uses>74</tool_uses><duration_ms>1972596</duration_ms></usage>
+</task-notification>
