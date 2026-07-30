@@ -3,7 +3,7 @@
   "checkpoint_id": "9943ad27336a",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 9,
+  "checkpoints_count": 10,
   "files_touched": [
     "scripts/solo-sweep",
     "scripts/systemd/solo-sweep.service",
@@ -65,13 +65,20 @@
       "compact_transcript": "/99/43ad27336a/7/transcript.jsonl",
       "content_hash": "/99/43ad27336a/7/content_hash.txt",
       "prompt": "/99/43ad27336a/7/prompt.txt"
+    },
+    {
+      "metadata": "/99/43ad27336a/8/metadata.json",
+      "transcript": "/99/43ad27336a/8/full.jsonl",
+      "compact_transcript": "/99/43ad27336a/8/transcript.jsonl",
+      "content_hash": "/99/43ad27336a/8/content_hash.txt",
+      "prompt": "/99/43ad27336a/8/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 116,
-    "cache_creation_tokens": 522809,
-    "cache_read_tokens": 7539144,
-    "output_tokens": 28876,
-    "api_call_count": 58
+    "input_tokens": 120,
+    "cache_creation_tokens": 547624,
+    "cache_read_tokens": 7622895,
+    "output_tokens": 28953,
+    "api_call_count": 60
   }
 }
