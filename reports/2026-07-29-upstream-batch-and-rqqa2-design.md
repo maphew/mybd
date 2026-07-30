@@ -217,8 +217,14 @@ in the same second display out of order.
 
 ## Handoff
 
-- `mybd-rqqa2` stays claimed; third builder pass in flight. Disclose the
-  git-tracked-port tradeoff in the PR description when it opens.
+- `mybd-rqqa2` — **PR opened: gastownhall/beads#5163** (head `3e388d2f4`, three
+  commits). Preflight clean, `make test` enqueued, merge tail handed to the
+  patrol. The git-tracked-port tradeoff is disclosed in the PR body, with the
+  narrower "env var + shared-server only" alternative offered as a one-line
+  `IsAuthoritative()` change so the maintainer can pick rather than discover.
+  Note the bead's `external_ref` was repointed from `gh-iss-4052` to the PR so
+  `pr-handoff` could arm the lane — the upstream issue link survives in the
+  bead notes and the PR body, but do not lose it.
 - `mybd-1t4fq` — **do not open a PR before #5150's author picks a direction.**
 - `mybd-phpm4` and `mybd-3tch4` both want an owner decision to defer/close now
   that 4697 un-blocked them.
