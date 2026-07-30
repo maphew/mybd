@@ -292,13 +292,21 @@ fi
 # Filesystem exclusion is also the only rail that actually holds here: the
 # model's allowlist includes head/tail/rg, any of which would happily print a
 # private key, so denying read *verbs* is not a boundary.
+# bwrap also makes the repo READ-ONLY except the two paths the lane writes.
+# That gives back, at the kernel level, the "cannot rewrite its own rails"
+# property the permission profile only claims: scripts/, .claude/, .githooks/
+# and AGENTS.md are physically unwritable during the model phase, no matter
+# what the allowlist does or a future harness release changes.
 SANDBOX_CMD=()
 if command -v bwrap >/dev/null 2>&1; then
   SANDBOX_CMD=(bwrap --dev-bind / /
+    --ro-bind "$ROOT" "$ROOT"
+    --bind "$ROOT/reports" "$ROOT/reports"
+    --bind "$ROOT/.beads" "$ROOT/.beads"
     --tmpfs "$HOME/.ssh" --tmpfs "$HOME/.gnupg" --tmpfs "$HOME/.codex"
     --tmpfs "$HOME/.aws" --tmpfs "$HOME/.docker" --tmpfs "$HOME/.kube" --)
 else
-  log "WARNING: bwrap not found — the model will run WITHOUT credential isolation"
+  log "WARNING: bwrap not found — the model runs WITHOUT filesystem isolation"
 fi
 
 timeout --signal=INT --kill-after=2m "$RUN_TIMEOUT" \

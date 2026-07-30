@@ -14,33 +14,24 @@ ExecStart="@ROOT@/scripts/solo-sweep"
 TimeoutStartSec=90min
 
 # --- sandbox -----------------------------------------------------------------
-# The permission allowlist is enforced by Claude Code; these are enforced by the
-# kernel. That distinction is the point: allowlist semantics can change under us
-# in a harness upgrade, and this lane runs unsupervised for a week.
+# Only NAMESPACE-FREE hardening lives here. Anything that makes systemd build a
+# mount namespace — PrivateTmp, ProtectSystem, ProtectClock, ProtectHostname,
+# ProtectKernel*, ProtectControlGroups — makes OpenSSH reject
+# /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf ("Bad owner or permissions";
+# it is a symlink into /usr/lib/systemd). origin resolves to git@github.com via
+# an insteadOf rewrite and the bd Dolt remote is git+ssh, so that error stops
+# the lane publishing anything at all — bisected 2026-07-30, every one of those
+# directives reproduces it, and `bare` does not.
 #
-# Verified by probe 2026-07-29: gh auth, bd, and claude all work under these
-# settings, and reads of ~/.ssh fail with EACCES.
+# The filesystem sandbox therefore lives where the untrusted code actually runs:
+# scripts/solo-sweep executes the `claude` invocation under bwrap, with the repo
+# read-only except reports/ and .beads/, and ~/.ssh, ~/.gnupg, ~/.codex, ~/.aws,
+# ~/.docker, ~/.kube masked by tmpfs. Verified there: writes to scripts/ and
+# AGENTS.md fail with EROFS, reports/ and bd writes succeed, ~/.ssh is empty.
+#
+# Do not "restore" the directives below to a namespacing set without re-testing
+# a real push; the failure is silent in the sense that sweeps still run.
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-ProtectClock=yes
-ProtectHostname=yes
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
-# Everything outside these is read-only. bd's embedded Dolt DB lives under the
-# repo; Claude Code needs its own state and cache.
-ReadWritePaths=@ROOT@ %h/.claude %h/.cache %h/.config %h/.local/state %h/.local/share
-# NOTE: credentials are deliberately NOT hidden at the unit level.
-#
-# origin resolves to git@github.com via an insteadOf rewrite and the bd Dolt
-# remote is git+ssh, so the WRAPPER needs ~/.ssh to publish anything at all.
-# Hiding it here broke publishing outright (observed 2026-07-30). The model is
-# the untrusted half, not the wrapper, so scripts/solo-sweep runs just the
-# `claude` invocation under bwrap with ~/.ssh, ~/.gnupg, ~/.codex, ~/.aws,
-# ~/.docker and ~/.kube masked by tmpfs. Keep that split: re-adding
-# InaccessiblePaths for those directories here will silently stop the lane
-# pushing its own work.

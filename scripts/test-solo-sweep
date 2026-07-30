@@ -176,9 +176,16 @@ UNIT="$ROOT/scripts/systemd/solo-sweep.service"
 # ~/.ssh because origin resolves to git@github.com via insteadOf and the Dolt
 # remote is git+ssh. A unit-level InaccessiblePaths silently stops the lane
 # publishing (observed 2026-07-30).
-grep -qE '^InaccessiblePaths=.*\.ssh' "$UNIT" \
-  && bad "unit must NOT hide ~/.ssh — that breaks the wrapper's own push" \
-  || ok "unit leaves the wrapper able to push (no unit-level ssh masking)"
+# Namespacing directives break OpenSSH here, which silently stops the lane
+# publishing while sweeps continue to run. Bisected 2026-07-30.
+ns_bad="$(grep -oE '^(PrivateTmp|ProtectSystem|ProtectClock|ProtectHostname|ProtectKernelTunables|ProtectKernelModules|ProtectControlGroups|InaccessiblePaths|ReadWritePaths)=' "$UNIT" | tr -d '=' | tr '\n' ' ')"
+[[ -z "$ns_bad" ]] \
+  && ok "unit uses only namespace-free hardening (ssh/git keeps working)" \
+  || bad "unit has namespace-creating directives that break ssh: $ns_bad"
+grep -q 'NoNewPrivileges=yes' "$UNIT" \
+  && ok "unit still sets NoNewPrivileges" || bad "unit still sets NoNewPrivileges"
+grep -q -- '--ro-bind "\$ROOT" "\$ROOT"' "$SWEEP" \
+  && ok "model sees the repo read-only" || bad "model sees the repo read-only"
 grep -q 'bwrap' "$SWEEP" \
   && ok "model invocation is wrapped in bwrap" || bad "model invocation is wrapped in bwrap"
 grep -q -- '--tmpfs "\$HOME/.ssh"' "$SWEEP" \
@@ -187,9 +194,6 @@ grep -q -- '--tmpfs "\$HOME/.ssh"' "$SWEEP" \
 [[ "$(grep -c 'SANDBOX_CMD\[@\]' "$SWEEP")" -ge 2 ]] \
   && ok "fallback model invocation is sandboxed too" \
   || bad "fallback model invocation is sandboxed too"
-grep -q 'ProtectSystem=strict' "$UNIT" \
-  && ok "unit mounts the filesystem read-only outside ReadWritePaths" \
-  || bad "unit mounts the filesystem read-only outside ReadWritePaths"
 if command -v systemd-analyze >/dev/null 2>&1; then
   sed 's|@ROOT@|/var/home/matt/dev/mybd|g' "$UNIT" >"$SANDBOX/u.service"
   systemd-analyze verify "$SANDBOX/u.service" >/dev/null 2>&1 \
@@ -329,6 +333,14 @@ if command -v bwrap >/dev/null 2>&1 && [[ -d "$HOME/.ssh" ]]; then
               --tmpfs "$HOME/.kube" -- bash -c 'cat '"$HOME"'/.ssh/* 2>/dev/null | head -c 200')"
   [[ -z "$keyout" ]] && ok "model sandbox: ~/.ssh reads return nothing" \
                      || bad "model sandbox: ~/.ssh was READABLE"
+  # The repo must be physically read-only outside reports/ and .beads/.
+  wr="$(bwrap --dev-bind / / --ro-bind "$ROOT" "$ROOT" \
+          --bind "$ROOT/reports" "$ROOT/reports" --bind "$ROOT/.beads" "$ROOT/.beads" \
+          -- bash -c 'touch '"$ROOT"'/scripts/.solo_probe 2>&1; touch '"$ROOT"'/reports/.solo_probe && echo REPORTS_OK; rm -f '"$ROOT"'/reports/.solo_probe' 2>&1)"
+  grep -q 'Read-only file system' <<<"$wr" && ok "model sandbox: scripts/ is read-only" \
+                                           || bad "model sandbox: scripts/ was WRITABLE"
+  grep -q 'REPORTS_OK' <<<"$wr" && ok "model sandbox: reports/ stays writable" \
+                                || bad "model sandbox: reports/ not writable"
   # ...and the wrapper, outside the sandbox, must still see it.
   [[ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ]] \
     && ok "wrapper still sees ~/.ssh (needed to push)" \
