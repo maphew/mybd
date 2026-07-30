@@ -83,6 +83,15 @@ refusal is what makes someone try again. Concretely:
   - **Spend the round trip on judgment, not scheduling.** Where a genuine open
     question exists, ask that one and only that one (#5125 item 7 is the
     model: six mechanical items pushed, one design question put to the author).
+  - **Not retroactive: an offer already posted is honored.** This rule governs
+    reviews written after it landed (2026-07-30). Where a review already closed
+    with *"want to take this, or shall I push it?"*, that offer stands — wait for
+    the reply. Reneging by pushing anyway costs more trust than the round trip
+    this rule exists to avoid, and the evidence behind the change is about what
+    contributors prefer being *asked* up front, not about withdrawing an offer
+    already made. Open cases carrying this exemption, each with the ruling in its
+    bead notes: gastownhall/beads#5145 (`mybd-bwx67`) and #5156 (`mybd-jprmt`).
+    Delete this bullet once both have resolved.
 - **Do not post the disposition and close in the same second.** All five sampled
   2026 declines closed 0–1s after the comment; none of 17 contributors replied
   to any of them, even though every message thanked them, preserved attribution
