@@ -1,0 +1,254 @@
+<task-notification>
+<task-id>aa7a60eac7f82757a</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/aa7a60eac7f82757a.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 5159 team-server" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Context checked
+
+- PR 5159 metadata + full diff fetched via `gh` (no checkout); source read at `upstream/main` (423afdcb2) via `git show`.
+- Existing review: `coffeegoddd` (MEMBER) **APPROVED** with comments on the escape hatch and the unrelated go.mod churn.
+- CI: one FAILURE — `Test (Proxied Dolt Cmd 14/15)` → `TestProxiedServerComment/multiple_comments_ordered`: `comment_proxied_integration_test.go:122: unexpected ordering: "three", "two", "one"`. Unrelated to this change (comment timestamp-tie ordering); looks like a flake, but it should be rerun before merge, not waved through.
+
+## What the change gets right
+
+I checked the three gates you named against the actual call graph:
+
+- **Migrate gate.** `schema.MigrateUpWithLock` is reachable on the proxied path from exactly one place, `internal/storage/uow/dolt_sql_provider.go:126`. The new team-server branch short-circuits *before* it and before any `CREATE DATABASE`, and returns `backoff.Permanent` for non-serialization errors, so it does not spin. This is a strict tightening, not a bypass. The integration test asserts `schema_migrations` is byte-identical after a team-server open.
+- **Forward-drift guard.** `checkTeamServerSchema` delegates `current &gt; latest` to `schema.CheckForwardDrift` (`internal/storage/uow/team_server_schema.go:29`), the same function `dolt/store.go:1598` uses. Not bypassed.
+- **Remote-migrate gate.** Never ran on the proxied path in the first place (`CheckRemoteMigrateGate*` callers are only `dolt/store.go:2212` and `embeddeddolt/store.go:345`). Team-server mode removes migration entirely from that path, so it cannot regress it.
+- **Fails closed on a bad target.** `openDB` pings before `initSchema`, so an unreachable server errors. Missing database → `UseDatabase` fails → "bts init". Existing-but-empty database → `CurrentVersion` returns 0 via `IsTableNotExist` → "bts init". Both are covered by the integration test. I could not construct a silent-success path.
+- Reuse of `resolveInitIssuePrefix`/`resolveInitProjectID` with `gateway=true` is the right call — those gateway branches already hard-error on an absent server value and distinguish read errors from unprovisioned, which is why the "transient, not unprovisioned" tests pass.
+
+Line numbers below are post-patch and approximate where the diff hunk doesn't pin them exactly.
+
+## Findings
+
+### 1. `major` — init still writes clone-local tracking state and creates a Dolt remote **in the bts-owned shared database**
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~182-201 (unchanged `bootstrapParams`) → `/var/home/matt/dev/mybd/bd-main/internal/storage/domain/bootstrap.go:62-100`.
+
+`SkipIdentity` suppresses only `issue_prefix` and `_project_id`. Still written to the shared `metadata` table on every teammate's init: `repo_id`, `clone_id`, `last_import_time` — and if a git origin resolves, `BootstrapProject` calls `remoteUseCase.CreateRemote(ctx, "origin", remoteURL)`, adding a Dolt remote pointing at *that teammate's* git origin to the operator's database.
+
+The PR body's stated goal is "a second teammate's init can't clobber the project identity", but the analogous already-solved case is right there in the tree, `cmd/bd/init.go:1313-1318`:
+
+```
+// Tracking metadata (bd_version, repo_id, clone_id) is clone-local state.
+// In gateway mode it must not be written into the shared, server-owned
+// database: repo_id/clone_id are per-clone fingerprints and a last-init-wins
+// overwrite feeds false cross-project mismatch diagnostics...
+```
+
+`doctor` and cross-project verification read `repo_id`/`clone_id` back, so this reproduces exactly the false-mismatch diagnostics that comment describes, plus an unwanted remote on shared server state.
+
+Fix: extend `SkipIdentity` into the same predicate the gateway path uses — i.e. in team-server mode also skip `RepoID`/`CloneID`/`LastImportTime` and the remote creation, mirroring `shouldWriteInitStateToDB(cmd/bd/init.go:1191-ish)`. Cheapest shape: add `SkipInitState bool` next to `SkipIdentity`, or rename the single flag to reflect "server owns this database".
+
+### 2. `major` (pre-existing gap, materially widened here) — no runtime project-identity verification on the proxied path
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/main.go:1348-1358` short-circuits proxied mode (`return nil`) **before** the `validateWorkspaceIdentity` call at `cmd/bd/main.go:1466-1470`, and proxied mode never constructs a `DoltStore`, so `verifyProjectIdentity` / `verifyGlobalProjectIdentity` (`internal/storage/dolt/store.go:1611-1621`, `1687`, `1724`) are unreachable. I verified this is true on `upstream/main` today, so **this PR does not remove a gate**.
+
+But it changes the exposure. Until now, proxied-server meant a per-workspace database bd itself created; the "server is serving a DIFFERENT project's database" scenario the gate was written for barely applied. `--team-server` deliberately points bd at a long-lived, shared, operator-managed database, selectable per-invocation by `--database`. Init *adopts* the identity (it cannot detect a wrong target — there is no way to assert an expected one), and nothing re-checks afterward. Gateway mode, the closest analogue, gets `verifyProjectIdentity` on every non-`CreateIfMissing` open because it goes through `DoltStore`.
+
+Suggested fix: after `checkTeamServerSchema` passes, compare `configfile.Load(beadsDir).ProjectID` against the DB's `_project_id` and refuse on mismatch. The reader is already written — `adoptTeamServerIdentity`'s `teamServerIdentityReader` — so this is a small addition, not new machinery. I'd accept "file a follow-up bead and merge" here; I would not accept "no runtime identity check, ever, on a shared team database".
+
+### 3. `should-fix` — `BD_IGNORE_SCHEMA_SKEW` downgrades a *behind*-schema refusal on a fully **writable** connection
+
+`/var/home/matt/dev/mybd/bd-main/internal/storage/uow/team_server_schema.go:32-38`.
+
+The precedent this mirrors, `schema.CheckBehindDrift` (`internal/storage/schema/schema.go:186-209`), is explicitly documented "Used by read-only opens, which skip MigrateUp by design"; its escape hatch downgrades a *read* risk. Here the same env var lets a newer `bd` proceed to **write** against an older bts schema — INSERTs/UPDATEs naming columns the database does not have. That's a different risk class than "some queries may fail".
+
+Also note `--ignore-schema-skew` sets `BD_IGNORE_SCHEMA_SKEW` (`cmd/bd/main.go:690`, `922`), so a user who set the flag for an unrelated read now silently gets write permission against a stale schema.
+
+Suggested fix: in team-server mode, honor the escape hatch only for read-only commands, or not at all for the behind case (forward-drift/ahead is the case where the hatch genuinely helps a stale binary read). This appears to overlap coffeegoddd's review comment "One comment, re the escape hatch" — worth reading that thread before duplicating it.
+
+### 4. `minor` — team-server-ness is keyed to the workspace, not to the database
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/uow_factory.go:22-30`: `teamServer` comes from `persisted.IsTeamServerManaged()`, while `database` can be replaced wholesale by `databaseOverride` (`--database` / `--db`, `cmd/bd/main.go:1360-1375`).
+
+Both directions cross the boundary: `bd --database other_db` in a team-server workspace applies bts semantics to an unrelated DB (fail-closed — it refuses to create it — so this direction is benign), and a *non*-team-server proxied workspace pointed at the bts database with `--database` will happily run `MigrateUpWithLock` against the operator's schema. The second is the dangerous one and is not new, but `--team-server` is what makes "there is an operator-owned DB on this server" true.
+
+Suggested fix: refuse `--database`/`--db` overrides that differ from the persisted `dolt_database` when `IsTeamServerManaged()`, since init already requires the name be pinned. The reverse direction is out of scope for this PR but worth a bead.
+
+### 5. `minor` — `IsTeamServerManaged()` fails *open* outside proxied mode
+
+`/var/home/matt/dev/mybd/bd-main/internal/configfile/configfile.go:345-350`. `dolt_team_server: true` combined with any other `dolt_mode` silently evaluates to `false`, and "false" here means "resume migrating the operator's database". Silently-inert is the wrong default for a safety bit. The init-time guard (`cmd/bd/init.go:332-334`) means you can only reach this by hand-editing metadata.json or by a later re-init that rewrites `dolt_mode` — low likelihood, but the failure is a schema write to a shared DB.
+
+Suggested fix: make `dolt_team_server: true` with a non-proxied `dolt_mode` a hard config error at load rather than an inert field. The PR even has a test asserting the silent-false behavior (`cmd/bd/init_proxied_server_test.go`, `TestIsTeamServerManaged_RequiresProxiedServerMode`), so this is a deliberate choice worth challenging rather than an oversight.
+
+### 6. `minor` — the identity adoption is non-atomic, and the riskiest new block is untested
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~214-227 (the `configfile.Load` → set `ProjectID` → `Save` block).
+
+metadata.json is written with a locally-minted project id *before* any connection exists; the adopted id is patched in afterward. If the reload or `Save` fails, init aborts having already mutated the shared DB (finding 1) and leaving metadata.json holding a project id that does not match the database. Because nothing verifies identity at runtime (finding 2), that state is silent rather than loud.
+
+This block has no test — every other piece of the change is covered. Test coverage is otherwise good (7 `adoptTeamServerIdentity` cases, 7 `checkTeamServerSchema` cases including both escape-hatch branches, 3 bootstrap `SkipIdentity` cases, 4 `resolveDoltDatabaseName` cases, 4 integration scenarios). What's missing besides this block: the `--team-server` requires `--proxied-server` rejection, the `DBNameDerived` "requires --database" guard (the *predicate* is tested, the guard that consumes it is not), and the ahead/forward-drift case at integration level.
+
+### 7. `nit` — `adoptTeamServerIdentity` calls two resolvers purely for their error side effect
+
+`/var/home/matt/dev/mybd/bd-main/cmd/bd/init_proxied_server.go` ~279 and ~294: `resolveInitIssuePrefix(...)` result is discarded and raw `dbPrefix` is returned instead. This is *correct* today — the gateway branch of `resolveInitIssuePrefix` returns `("", false, nil)` whenever `existing != ""`, so there is no value to use — but it's fragile: `resolveInitIssuePrefix`'s non-gateway branch applies `strings.ReplaceAll(prefix, ".", "_")` sanitization, and if the gateway branch ever starts returning a sanitized value, team-server silently keeps the raw one. A one-line comment stating "called as a validator; the gateway branch returns no value" would lock the assumption in.
+
+### 8. `nit` — unrelated dependency churn
+
+`examples/bd-example-extension-go/go.mod|go.sum` and `examples/library-usage/go.mod|go.sum`: go-isatty 0.0.20→0.0.22, x/sys 0.41/0.46→0.47, x/sync 0.21→0.22, x/term 0.44→0.45. Nothing in this change touches those modules. Already flagged by coffeegoddd; should be reverted so the diff is reviewable as one thing.
+
+### 9. `nit` / maintainer question — the error messages instruct users to run a tool that does not exist in this repo
+
+`git grep -i "beads-team-server\|bts init\|bts migrate"` against `upstream/main` returns nothing. This PR adds user-facing error strings telling operators to run `bts init` / `bts migrate` (`internal/storage/uow/team_server_schema.go:23,26,36`, `internal/storage/uow/dolt_sql_provider.go` ~107, `cmd/bd/init_proxied_server.go` ~283,~297) and a flag help string naming `beads-team-server (bts)`, with no doc anywhere explaining what bts is or where to get it. Flag is `[EXPERIMENTAL]`, which mitigates this, and the approving reviewer is a DoltHub member so bts is presumably a known adjacent product — but a user who hits "ask your operator to run 'bts init'" has no way to find out what that means. Worth at least one doc line or a URL in the flag help.
+
+## Simpler-alternative / delete-more-than-it-adds check
+
+The change is already lean where it counts (the migrate bypass is one guarded branch, and it reuses the gateway resolvers rather than reimplementing them). The one consolidation worth raising: `--team-server` and the existing `Gateway` flag (`internal/storage/dolt/gateway_credential.go:30-62`) encode the *same policy* — "the server owns schema and identity; bd is a passive client" — via two independent mechanisms on two different code paths, and they now diverge (gateway suppresses init-state writes, team-server doesn't — finding 1). They cannot be trivially merged (gateway is credential-derived and DoltStore-only; team-server is metadata-persisted and UOW-only), but the *policy predicates* in `cmd/bd/init.go:151-195` (`shouldConsultInitProjectID` / `shouldWriteProjectIDLocally` / `shouldWriteInitStateToDB`) should be shared rather than partially reused. Doing that would both fix finding 1 and remove the divergence risk for the next server mode.
+
+## Verdict
+
+**APPROVE-WITH-COMMENTS**, contingent on finding 1.
+
+The core safety claim holds: this does not add a Dolt-server connect path that bypasses the migrate gate or the forward-drift guard — it removes migration from the path entirely, and it fails closed on unreachable, missing, empty, behind, and ahead databases, with tests for each. Findings 3-9 are follow-up material.
+
+Finding 1 is the one I'd want addressed before merge (or as an immediate follow-up with a bead), because it is a partial implementation of the PR's own stated goal, the correct behavior is already written down 800 lines away in the same file for the gateway case, and the fix is small. Finding 2 is the larger structural gap; it predates this PR and I would not block on it, but it should not merge without a tracked follow-up, given that this PR is what makes shared-team databases a supported proxied-mode target.</result>
+<usage><subagent_tokens>129921</subagent_tokens><tool_uses>47</tool_uses><duration_ms>470586</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bu6gdnb6b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/bu6gdnb6b.output</output-file>
+<status>completed</status>
+<summary>Background command "Run proxied comment test with gate enabled, 4x" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a8d7892823e348ec0</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-var-home-matt-dev-mybd/3cd94b77-e984-43af-9fda-42f02b10d74c/tasks/a8d7892823e348ec0.output</output-file>
+<status>completed</status>
+<summary>Agent "Review PR 4697 ownership leases" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Re-review: gastownhall/beads#4697 (head `9123e061`)
+
+## What changed since the last look
+
+The PR was **completely re-authored**, not incrementally pushed. Three commits on `423afdcb2` (current `upstream/main`), no textual rebase survived:
+
+- `9d4c95dd6` fence — migration 0062 + ignored/0019
+- `024aaa1ae` guard — `ExpectedFence` folded into `UpdateIssueOptions`/`CloseIssueOptions`
+- `9123e0612` lease — `lease.auto` + `bd lease disarm`
+
+CI: **87 SUCCESS, 2 SKIPPED, 0 failures.** Mergeable/clean.
+
+Every ask from the 07-27 review was executed: migration renumbered (and a hygiene tripwire added that caught its own collision), the `row_lock` import-upsert regression undone, `claim_fence` classified into `IssueSelectColumnsLite` and out of `LeaseSelectColumns`, the parallel guard interface replaced by `#5008`'s shipped surface, the context-value transport and exit-9 taxonomy deleted, the `--if-assignee` re-registration gone, cross-actor release re-secured, doc-comment rewrites reverted.
+
+## The scoping answer (primary deliverable)
+
+**Nothing in the current head is gated on the wisp-leasability ruling.** Concretely:
+
+- **Slice 4 is gone.** No changes to `internal/storage/issueops/lease.go`'s wisp handling, no `--lease-ttl`, no batch renew APIs. `internal/storage/schema/migrations/0055_move_leases_to_table.up.sql` is untouched — **nothing in this diff reverses a migration.**
+- The migration-repairs helpers are also gone (author dropped them with a verification argument rather than splitting them; the "fastest win" from the last review dissolved).
+- The only wisp surface left is `ignored/0019_add_wisp_claim_fence.up.sql`, which adds a `claim_fence` column to `wisps`. That is **not** a lease column and does not make wisps leasable — its own header states "wisps are never leased," matching 0055's shipped position. Wisps have been *claimable* on `main` since before this PR (`internal/storage/dolt/wisps.go` → `claimWisp`, `updateWisp`, `closeWisp`), so fencing wisp claims is consistent with the status quo either way the ruling lands.
+
+Two loose threads that touch the ruling's orbit but do not gate anything:
+
+- **The PR title is stale.** "tier-complete requested leases" advertises slice 4, which is out. Worth asking the author to retitle before merge so the commit log doesn't imply a decision that was never made.
+- If the owner ever rules "wisps are not ownership-bearing work at all," `ignored/0019` is the one file to revisit. That is a forward-looking note, not a block: it would be a follow-up migration, not a revert of this one.
+
+**So: the entire diff is independently reviewable and can progress regardless of the ruling.**
+
+## Verification I ran (not just diff-reading)
+
+- `go build ./...` and `go vet ./...` clean (`CGO_ENABLED=1 -tags gms_pure_go`).
+- `go test ./internal/storage/issueops/ ./internal/storage/sqlbuild/ ./internal/types/ ./internal/storage/domain/db/` — all pass.
+- `go test ./internal/storage/dolt/ -run 'Fence|Disarm|Lease|Reclaim|CloseIssueChecked|Guard'` — pass (487s).
+- Migration numbering checked against `upstream/main` directly: synced max is `0061_content_derived_aux_ids` → `0062`; ignored max is `ignored/0018_aux_row_id_rekey2_marker` → `0019`. Both gapless, both above the base max.
+
+### On your weighted questions
+
+**1. Is the fence actually a fence?** Yes, and the CAS placement is right where it matters.
+
+- `internal/storage/issueops/unclaim.go:104-112` and `:220-232` — the fence is a **WHERE-clause conjunct** (`AND claim_fence = ?`), not just a precheck, with a re-read disambiguation on 0 rows at `:136` and `:258`. Real CAS.
+- `internal/storage/issueops/claim.go:100-116` — the bump rides inside the existing claim CAS statement, paired with `RowLockClause()`. Two concurrent claimers write different random `row_lock` values → Dolt cell conflict (1213/1205) → `withRetryTx` replay → the loser's CAS matches 0 rows. Both cannot win.
+- `update`/`close --if-fence` use precheck-in-same-tx (`CheckExpectedFieldsInTx`) plus the row_lock commit-conflict-and-replay, **which is exactly the structure the already-merged `ExpectedVersion`/`ExpectedAssignee` guards use**. No new TOCTOU window; it inherits whatever the shipped guards have.
+- `internal/storage/issueops/lease.go:686-705` — the reclaim path *derives* the reported post-bump fence (`r.ClaimFence++`) instead of re-reading. I checked the argument: the snapshot `SELECT` at `:595` reads `i.claim_fence` in the same `sql.Tx`/working set, and `leases.issue_id` is a PK so each id appears once. The derivation is exact.
+
+**2. Guard uniformity — I looked specifically for bypass paths and found none.** `git grep "SET assignee"` across all non-test Go returns exactly: `issueops/claim.go` (×2), `issueops/unclaim.go` (×2), `issueops/lease.go` (reclaim), `domain/db/issue.go` (×2, proxied dual). All bump. `bd assign` and `bd batch` route through `UpdateIssue` → `updateIssueInTx`, which bumps via `IsOwnershipTransition`. Both import/upsert sites (`issueops/helpers.go:83`, `domain/db/issue.go:652`) prepend `UpsertFenceAssignments` first in the `ON DUPLICATE KEY UPDATE` list, which is required for correctness since MySQL evaluates assignments in order — that ordering is right.
+
+Every `CheckExpectedFieldsInTx` and `CloseIssueCheckedInTx` call site threads `ExpectedFence` (dolt issues + wisps, embeddeddolt, `domain.ApplyUpdate`). Where the proxied transport genuinely cannot carry the guard, it **refuses loudly** rather than silently dropping it (`cmd/bd/close.go:66-72`, `cmd/bd/unclaim.go:87-89`) — this is the failure mode the last review flagged and it is now handled.
+
+**3. Dead-holder reclaim.** Unchanged semantics; the fence is the mitigation, not a change to expiry. Note the protection is **opt-in**: a reclaimed holder running a plain `bd close` (no `--if-fence`) still wins. The PR is honest about this. Not a defect.
+
+**4. Migration safety on already-migrated DBs.** `0062` is `INFORMATION_SCHEMA`-guarded, additive, `NOT NULL DEFAULT 0`. `ignored/0019` is double-guarded (table exists AND column absent). The ignored track has its own cursor (`ignored_schema_migrations`) applied in the same `Migrate` pass, following the `ignored/0013_add_wisp_row_lock` precedent exactly. `scripts/check-migration-hygiene.sh` Check D is a genuinely good addition — it catches the below-`MAX(version)` silent-skip class no existing gate covered.
+
+## Findings
+
+All **IN SCOPE**. Nothing rises to blocker.
+
+**1. `internal/storage/issueops/fence_invariant_test.go:143` — should-fix (minor)**
+`TestFenceTransitionCoverage` claims to enforce that "every ownership-transition entry point in this package carries a fence bump," but `mustBump` is a hardcoded list: `{"claim.go", "unclaim.go", "lease.go", "reopen.go"}`. A new file in `issueops` that writes `assignee` would pass silently — which is precisely the drift the test exists to prevent. Fix: walk all non-test `.go` files in the package, and require a bump in any whose SQL literals assign `assignee` or move status across the closed boundary. (Its sibling `TestFenceBumpAlwaysPairsRowLock` *does* scan all literals, but enforces the reverse implication: bump ⇒ row_lock, not assignee-write ⇒ bump.)
+
+**2. `internal/storage/issueops/lease.go` `DisarmAutoLeasesWith` — minor**
+The loop breaks on `n == 0`, but exhausting `maxDisarmResweeps` while still clearing rows is indistinguishable from convergence — `bd lease disarm` prints `cleared N lease(s)` either way. The operator has no signal that the sweep may be incomplete, on a command whose whole purpose is removing reclaim exposure. Fix: return a `converged bool` alongside the total and have `cmd/bd/lease.go` say "re-run `bd lease disarm`" when it is false.
+
+**3. `--force` + `--if-fence` policy is inconsistent across verbs — nit**
+`cmd/bd/update.go:874` marks them mutually exclusive ("so the guard family behaves uniformly"). `cmd/bd/unclaim.go:171` and `cmd/bd/close.go:435` deliberately allow the combination, with the stated rule "`--force` never skips a supplied guard." Both positions are defensible on their own (`update --force` waives the reassign *policy* fence, which is ownership-shaped), but the PR asserts two contradictory rationales for the same flag pair. Pick one and say why the odd verb is odd.
+
+**4. Batch `--if-fence` applies one fence to every ID — minor**
+`bd close A B C --if-fence 4` and the equivalent `bd update` guard all three rows on generation 4. Unlike `--if-assignee`, where one holder plausibly owns several issues, a fence is a strictly per-row generation and a shared value is nearly always a user error. Consider rejecting `--if-fence` when `len(resolvedIDs) &gt; 1`. (Precedent cuts the other way — the shipped guards already allow it — so this is a judgment call, not a defect.)
+
+**5. `Storage.UnclaimIssue` gained a positional guard param — minor, and the "simpler alternative" ask**
+
+```go
+UnclaimIssue(ctx, id, actor string, force bool, expectedFence *int64) error
+UnclaimIssueIfAssignee(ctx, id, actor, expectedAssignee string, expectedFence *int64) error
+```
+
+This is the move `#5008` explicitly rejected ("guards on `UpdateIssueOptions` rather than minting a parallel interface method"). An `UnclaimIssueOptions{Force, ExpectedAssignee, ExpectedFence}` would **collapse the two methods into one**, delete the caller-side branch in `cmd/bd/unclaim.go:112-117`, and make the interface break once rather than once per future guard. It deletes more than it adds. Worth offering — possibly as a maintainer-side absorb rather than a request-changes, since the author has already done a full re-author on this branch.
+
+**6. No fresh-clone assertion for `wisps.claim_fence` — minor test gap**
+`ignored/0019` exists because a clone that adopts a `schema_migrations` cursor ≥ 0062 never executes 0062, so a wisps table without the column makes every wisp claim soft-fail with Error 1054 (the `wy-pt82l` / 0013 class). `internal/storage/schema/schema_test.go:1591` asserts the column shape for `issues` only, and its fixture runs `AllMigrationsSQL()`, which by design does not carry the ignored track. `TestWispClaimBumpsFence` exercises a normally-migrated store, which is not the failure scenario. A direct assertion on a bootstrapped-from-remote clone would close this. *Uncertain:* the PR body claims embedded convergence/self-heal coverage; I did not run `BEADS_TEST_EMBEDDED_DOLT=1` to confirm what those tests actually assert about `wisps.claim_fence`.
+
+**7. Concurrency claims are argued, not demonstrated — minor test gap (your item 5)**
+The cell-merge argument is correct and `TestFenceBumpAlwaysPairsRowLock` is a good structural guard, but it is a **source-level AST scan**. No test spawns two racing claimers (or a claimer vs. a `--if-fence` writer) and asserts exactly one wins with fence `N+1` rather than both winning or the fence landing at `N+2`. Grep confirms no `go func`/`WaitGroup`/`errgroup` in any test touching `ClaimFence`. Given "many parallel agents against one tracker" is the target operating condition, one behavioral race test would materially strengthen the case. Mitigating: the serialization mechanism is `row_lock`, which *is* concurrency-tested on `main` — so this is under-evidenced rather than unevidenced.
+
+**8. Protocol corpus `schema_version` stays 1 — nit, uncertain**
+`cmd/bd/protocol/testdata/corpus/manifest.json` keeps `"schema_version": 1` while `claim_fence` now appears in `list`/`ready`/`reopen` golden output. `storage_class` (migration 0060) is presumably the precedent for additive fields not bumping it — worth a maintainer confirmation rather than a finding against the author.
+
+## Independently mergeable pieces
+
+The three commits **are** the split, and they are clean:
+
+- **Commit 3 (`lease.auto` / `bd lease disarm`) is independent of 1 and 2** except for CHANGELOG/doc prose. It could land alone today.
+- **Commit 2 (guards) depends on commit 1** (needs the column).
+- **Commit 1 (fence) stands alone.**
+
+If you want to reduce merge surface, `9123e0612` is separable. I would not bother — the whole thing is green and coherent, and re-splitting a branch the author has already re-authored once has a real goodwill cost.
+
+## Verdict (in-scope portion, which is all of it)
+
+**APPROVE-WITH-COMMENTS.**
+
+The correctness core is sound: the fence is a real CAS where it needs to be, the guard reaches every mutating path that can carry it and refuses loudly where it cannot, no SQL path writes `assignee` without bumping, the migrations are guarded and correctly numbered, and nothing reverses 0055. The findings above are all improvements, not corrections — the strongest two are the coverage-test whitelist (1) and the missing behavioral race test (7), and neither invalidates the design.
+
+One thing worth saying to the author explicitly: the migration-hygiene Check D and the `ManageLeaseOnUpdate`-adjacent reasoning about *why* the import-reopen exception is deliberate are load-bearing contributions beyond this feature. Check D catches a whole failure class the repo had no gate for.
+
+## Files referenced
+
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/fence.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/fence_invariant_test.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/unclaim.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/claim.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/lease.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/issueops/update_cas.go`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/schema/migrations/0062_add_claim_fence.up.sql`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/schema/migrations/ignored/0019_add_wisp_claim_fence.up.sql`
+- `/var/home/matt/dev/mybd/bd-main/internal/storage/storage.go`
+- `/var/home/matt/dev/mybd/bd-main/cmd/bd/update.go`, `close.go`, `unclaim.go`, `lease.go`
+- `/var/home/matt/dev/mybd/bd-main/scripts/check-migration-hygiene.sh`
+- `/var/home/matt/dev/mybd/PR_MAINTAINER_GUIDELINES.md` (for the integration-judgment pass that follows this one)
+
+Review worktree was created under `/var/home/matt/dev/mybd/.worktrees/beads/` and removed; the local `pr4697-rr` branch was deleted. No files were modified, nothing was posted, no `bd` writes.</result>
+<usage><subagent_tokens>155874</subagent_tokens><tool_uses>55</tool_uses><duration_ms>1126688</duration_ms></usage>
+</task-notification>
