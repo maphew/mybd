@@ -228,4 +228,61 @@ in the same second display out of order.
 - `mybd-1t4fq` — **do not open a PR before #5150's author picks a direction.**
 - `mybd-phpm4` and `mybd-3tch4` both want an owner decision to defer/close now
   that 4697 un-blocked them.
-- `mybd-xjbub`, `mybd-075zn`, `mybd-ihsnv` are new and unclaimed.
+- `mybd-xjbub`, `mybd-075zn`, `mybd-ihsnv`, `mybd-bwx67` are new and unclaimed.
+
+## 6. Second review batch — 5145 and 5156
+
+Both reviewed and posted; both review beads closed.
+
+**PR 5145 (`doctor --fix` gate when schema is skewed).** The diagnosis is right
+and gh 4993 is a real issue, but the guard has four gaps, all verified in-session
+against the PR branch rather than taken from the reviewer's report:
+
+1. `doctor.go:1090` is `for _, check := range result.Checks` — the sanitizer
+   mutates a **range copy**, so `result.Checks` is untouched and
+   `exportDiagnostics`/`buildAgentResult`/`outputJSON` still emit the raw
+   `Run 'bd doctor --fix'`. `--json`/`--agent` is the documented *agent-facing*
+   surface, i.e. the audience most likely to act on the tip without judgment.
+2. `doctor.go:262` returns `runValidateCheck` before `applyFixes`, and that path
+   writes to the DB. Its tip is a bare `fmt.Printf` the sanitizer never sees, and
+   the substring test at `fix_gate.go:97` looks for `"doctor --fix"`, which
+   `"doctor --check=validate --fix"` does not contain.
+3. **The same self-disarming shape this session hit in our own fix.** The gate is
+   evaluated after `runDiagnostics` has already called `trackBdVersion()` and
+   `autoMigrateOnVersionBump()` (`doctor.go:509`, `:516`), the latter doing a
+   *writable* open that runs `MigrateUpWithLock`. So a bare `bd doctor` can apply
+   the pending migrations and *then* warn about them — and since the version file
+   was written first, the next run reports safe.
+4. `fix_gate.go:52-64` fails **open** with an empty reason on any detection error.
+
+Per PR_MAINTAINER_GUIDELINES this was posted as absorb-and-transform, not a
+bounce: one refactor (assess the gate once at the top of `RunE`, sanitize into
+`result.Checks`, thread it into the `--check=` handlers) collapses 1-3, and I
+offered to push it. Fallback tracked as `mybd-bwx67`.
+
+**PR 5156 (runtime schema census, julianknutsen).** Blocking on one two-line
+issue, CI-confirmed: `.github/workflows/migration-test.yml:42-43` adds an
+unqualified `v0.50.2` matrix entry that `historical-dolt-upgrade-test.sh:81`
+rejects by design — and which `legacy-bridge-test.sh:171` already lists among the
+versions the bridge *must reject*. It is the single red lane, and the workflow
+also runs on `push: tags: ['v*']`, so it would be red on every release tag.
+
+Two things I went looking for and found genuinely handled, worth recording so the
+next reviewer doesn't re-derive them: the census covers
+`ignored_schema_migrations` (it introspects the live runtime DB via
+`isMigrationLedger` rather than going through `AllMigrationsSQL()`, which omits
+the ignored source — 281 occurrences in the sealed artifact), and the
+census/catalog binding is fail-closed, so the artifact cannot silently rot.
+
+Flagged as maintainer calls rather than decided: a 6-hour weekly job plus
+~3 GB/week of cache churn against a 10 GB LRU, and a 2.8 MB blob in git replaced
+wholesale on every release pin — for an artifact with no consumer yet, since
+`routeForValidatedFamily` routes purely on mode + topology and never on the
+schema fingerprints.
+
+**Process note:** reviewing 5145 required the PR's tree, and I checked it out in
+the shared `bd-main` clone — exactly the branch-switch race AGENTS.md warns about
+after the 2026-05-29 incident. Caught and restored immediately, no harm done
+(another session's `.githooks` working state survived untouched). The correct
+move is `git fetch upstream pull/N/head:branch` and read via `git show`/`git
+grep <branch> -- <path>`, never `git checkout` in `bd-main`.
