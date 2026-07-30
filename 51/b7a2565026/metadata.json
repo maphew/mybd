@@ -3,7 +3,7 @@
   "checkpoint_id": "51b7a2565026",
   "strategy": "manual-commit",
   "branch": "docs/maintainer-edit-transition-scope",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "PR_MAINTAINER_GUIDELINES.md"
   ],
@@ -21,13 +21,20 @@
       "compact_transcript": "/51/b7a2565026/1/transcript.jsonl",
       "content_hash": "/51/b7a2565026/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/51/b7a2565026/2/metadata.json",
+      "transcript": "/51/b7a2565026/2/full.jsonl",
+      "compact_transcript": "/51/b7a2565026/2/transcript.jsonl",
+      "content_hash": "/51/b7a2565026/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 271077,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 5722368,
-    "output_tokens": 19679,
-    "api_call_count": 49
+    "input_tokens": 271545,
+    "cache_creation_tokens": 651756,
+    "cache_read_tokens": 51806654,
+    "output_tokens": 170288,
+    "api_call_count": 284
   }
 }
