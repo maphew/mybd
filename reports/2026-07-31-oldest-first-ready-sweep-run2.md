@@ -258,6 +258,26 @@ not file it, because I did not go back to confirm whether cobra is absorbing the
 argument or whether something else is happening, and a bead asserting the wrong
 mechanism is worse than none.
 
+**`bd dolt push` rewrote a tracked config file, and my local `bd` is two weeks
+old.** Closing the session, `git status` showed `.beads/config.yaml` modified:
+`bd dolt push` had silently changed `sync.remote` from
+`https://github.com/maphew/mybd.git` to `git@github.com:maphew/mybd.git`, in a
+file that is tracked in git. I reverted rather than committed — this repo is
+worked from Linux and Windows, and flipping the checked-in remote to SSH is a
+cross-machine decision, not something a push should do on its own. Recorded on
+mybd-uhpr, which covers the adjacent "adopts a remote without consent" symptom.
+
+I then had to correct that note. I had written that this happened "with a bd
+binary current as of this session"; it did not. The `bd` on `PATH` here has
+mtime **2026-07-15**, and the PR that added the consent gate (#5188) merged
+today at 16:41 — two weeks later. So the observation is evidence about a
+pre-#5188 binary and says nothing about whether the fix works. The
+`bd-binary-provenance` memory is what flagged this: `bd version` reports the
+*workspace* HEAD, not the build commit, so it would have confirmed the wrong
+thing. The binary mtime is the usable signal. Anyone re-testing that path must
+upgrade `bd` first — and on this host, `bd --version` will lie to them about
+whether they did.
+
 ## Handoff
 
 - **#5202 and #5203 are open and unarmed.** Neither has a `merge-when-green` bead.
@@ -270,5 +290,10 @@ mechanism is worse than none.
   acquiring .beads.gate.lock: context canceled`, since `d223edcb6`). Expect it on
   both PRs' CI; it is not from these changes. mybd-5p561 is the P0 and was claimed
   by the parallel session at 21:37Z.
-- **mybd-itgj and mybd-b8ht are still `in_progress` and claimed**, deliberately —
-  the work is not done until verification passes and the PRs land.
+- **mybd-itgj, mybd-b8ht and mybd-cjcpt are still `in_progress` and claimed**,
+  deliberately — the work is not done until verification passes and the PRs
+  land. `session-close-check` warns about this; the warning is correct and the
+  state is intentional.
+- **The local `bd` binary is from 2026-07-15** and predates several fixes that
+  landed today, including #5188 and #5093. Worth upgrading before any session
+  that tests remote-adoption or workspace-gate behaviour.
