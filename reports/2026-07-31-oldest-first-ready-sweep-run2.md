@@ -280,8 +280,17 @@ whether they did.
 
 ## Handoff
 
-- **#5202 and #5203 are open and unarmed.** Neither has a `merge-when-green` bead.
-  Arming them is `scripts/pr-handoff <n> --bead <id>`.
+- **#5202, #5203 and #5205 are open and unarmed.** None has a `merge-when-green`
+  bead. Arming them is `scripts/pr-handoff <n> --bead <id>`.
+- **#5202 has one red check** — `PR Core (wrapper timing)`, on
+  `TestCloseAndFlushPersistsQueuedEvents` in `internal/metrics`. Assessed as
+  unrelated and the basis posted on the PR: the branch touches `cmd/bd` only,
+  the test passes 3/3 locally on that head, `internal/metrics` has no recent
+  commits, every other job including the full Embedded Dolt matrix is green,
+  and test-isolation bugs are live in the tree (main's tip is #5194, "viper
+  singleton state leak across cmd/bd test runs"). I did **not** rerun it —
+  reruns belong to the patrol and this PR is not armed. If it reproduces on a
+  rerun, look again rather than waving it through.
 - **`make test` is queued for both** (`mybd-itgj`, `mybd-b8ht`) in the local
   verifier; the `verify-babysit` timer drains one job per 15-minute fire, so
   results land after this session ends. `scripts/verify-status` is the check.
