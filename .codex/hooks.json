@@ -12,18 +12,6 @@
         "matcher": "manual|auto"
       }
     ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks codex post-tool-use'",
-            "timeout": 30,
-            "type": "command"
-          }
-        ],
-        "matcher": null
-      }
-    ],
     "PreCompact": [
       {
         "hooks": [
@@ -38,64 +26,31 @@
     ],
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
-            "command": "bash scripts/session-start-stamp",
-            "type": "command"
+            "type": "command",
+            "command": "bash scripts/session-start-stamp"
           }
-        ],
-        "matcher": "startup|resume|clear"
+        ]
       },
       {
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then printf \"%s\\n\" \"{\\\"systemMessage\\\":\\\"Entire CLI is enabled but not installed or not on PATH. Installation guide: https://docs.entire.io/cli/installation#installation-methods\\\"}\"; exit 0; fi; exec entire hooks codex session-start'",
-            "timeout": 30,
-            "type": "command"
+            "type": "command",
+            "command": "bd codex-hook SessionStart"
           }
-        ],
-        "matcher": null
-      },
-      {
-        "hooks": [
-          {
-            "command": "bd codex-hook SessionStart",
-            "statusMessage": "Loading Beads context",
-            "type": "command"
-          }
-        ],
-        "matcher": "startup|resume|clear"
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks codex stop'",
-            "timeout": 30,
-            "type": "command"
-          }
-        ],
-        "matcher": null
+        ]
       }
     ],
     "UserPromptSubmit": [
       {
+        "matcher": null,
         "hooks": [
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks codex user-prompt-submit'",
-            "timeout": 30,
-            "type": "command"
-          }
-        ],
-        "matcher": null
-      },
-      {
-        "hooks": [
-          {
-            "command": "bd codex-hook UserPromptSubmit",
-            "statusMessage": "Refreshing Beads context",
-            "type": "command"
+            "type": "command",
+            "command": "bd codex-hook UserPromptSubmit"
           }
         ]
       }

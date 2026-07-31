@@ -415,10 +415,10 @@ A tracked, **opt-in** `.githooks/` tree backs this convention. It is the single
 composed hook path for the repo: the root-commit guard (`.githooks/pre-commit`,
 fires only in the MAIN checkout - linked worktrees are a no-op, warns by
 default and points you at the worktree command), `scripts/pre-commit-beads-config`
-(chained when the tracker DB is present), the Entire CLI hooks, and all five
-bd hook events (`bd hooks run <event>`, one wrapper per event: pre-commit,
-post-merge, pre-push, post-checkout, prepare-commit-msg). It is **not**
-auto-enabled. The owner turns it on with:
+(chained when the tracker DB is present), and all five bd hook events
+(`bd hooks run <event>`, one wrapper per event: pre-commit, post-merge,
+pre-push, post-checkout, prepare-commit-msg). It is **not** auto-enabled. The
+owner turns it on with:
 
 ```bash
 git config core.hooksPath .githooks
@@ -433,6 +433,16 @@ composed set - `scripts/check-beads-config` now warns on that drift and
 - `MYBD_ENFORCE_ROOT_GUARD=1` - make a root commit a hard block instead of a warning.
 - `MYBD_ALLOW_ROOT_COMMIT=1` - escape hatch for a deliberate root commit
   (config/policy, `.beads` tracker state, `reports/`).
+
+The Entire CLI was backed out of both repos on 2026-07-30 (owner directive:
+"back out Entire, I'll set it up properly later"). It had clobbered `bd-main`'s
+tracked `.githooks/pre-push` - deleting upstream's release-tag version-drift
+guard - and accumulated 24 unbounded `entire/*` shadow branches. If it is
+reinstalled, note that `entire disable --uninstall` **deletes** any hook file it
+owns rather than unwinding its preamble, so `pre-push` and `prepare-commit-msg`
+(which carry bd's wrappers too) must be rebuilt afterwards; verify with
+`scripts/test-git-hooks`. Backup of the removed shadow branches and `.entire/`
+trees: `~/.local/state/mybd/entire-backup/`.
 
 ### Local Verification Queue
 

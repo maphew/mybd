@@ -1,9 +1,11 @@
 #!/bin/sh
-# Entire CLI hooks
-if command -v entire >/dev/null 2>&1; then entire hooks git prepare-commit-msg "$1" "$2" 2>/dev/null || true; else :; fi
+# Beads (bd) expects five git hook events: pre-commit, post-merge, pre-push,
+# post-checkout, and prepare-commit-msg. This file exists solely to complete
+# the composed bd set alongside the other .githooks/* files.
 
 # core.hooksPath redirects Git away from .git/hooks, where bd installs its
-# hook shims. Compose the Beads prepare-commit-msg check with Entire's hook.
+# hook shims. Run the Beads prepare-commit-msg hook explicitly so enabling this
+# tracked hook set does not silently disable Beads' prepare-commit-msg checks.
 if command -v bd >/dev/null 2>&1; then
   export BD_GIT_HOOK=1
   _bd_timeout=${BEADS_HOOK_TIMEOUT:-300}
