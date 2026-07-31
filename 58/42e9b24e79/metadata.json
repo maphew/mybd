@@ -3,7 +3,7 @@
   "checkpoint_id": "5842e9b24e79",
   "strategy": "manual-commit",
   "branch": "chore/housekeeping-2026-07-30",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "reports/2026-07-30-housekeeping-pass.md"
   ],
@@ -21,6 +21,20 @@
       "compact_transcript": "/58/42e9b24e79/1/transcript.jsonl",
       "content_hash": "/58/42e9b24e79/1/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/58/42e9b24e79/2/metadata.json",
+      "transcript": "/58/42e9b24e79/2/full.jsonl",
+      "compact_transcript": "/58/42e9b24e79/2/transcript.jsonl",
+      "content_hash": "/58/42e9b24e79/2/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 76,
+    "cache_creation_tokens": 93361,
+    "cache_read_tokens": 2730329,
+    "output_tokens": 21285,
+    "api_call_count": 38
+  }
 }
