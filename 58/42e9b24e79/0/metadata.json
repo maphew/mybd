@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "5842e9b24e79",
+  "session_id": "019fb1b2-924e-7221-bf47-ec12f929d710",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-31T04:25:05.168644018Z",
+  "branch": "chore/housekeeping-2026-07-30",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "reports/2026-07-30-housekeeping-pass.md"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "15fc21515dd5",
+  "checkpoint_transcript_start": 211,
+  "transcript_lines_at_start": 211,
+  "compact_transcript_start": 42,
+  "initial_attribution": {
+    "calculated_at": "2026-07-31T04:25:05.112612007Z",
+    "agent_lines": 127,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 127,
+    "total_lines_changed": 127,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
