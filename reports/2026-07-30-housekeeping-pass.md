@@ -125,3 +125,82 @@ source clone.
    `mybd-rr4x` and `mybd-rqqa2` are both gated on a rebase, but that is a
    same-bead next action rather than a cross-bead ordering, so no edge is
    warranted. No prose-only ordering introduced.
+
+---
+
+## Addendum — owner follow-through, same session
+
+Owner directive after reading the above: *"back out Entire, I'll set it up
+properly later. remove matrix-bd. rebase the blocked P0s."* All three done.
+
+### Entire backed out of both repos
+
+Recon corrected one thing in the report above: Entire was installed in the
+**coordination repo too**, not just `bd-main`. Root's `.entire/` is gitignored,
+which is why `git status` looked clean — but Entire's hooks were *committed* into
+root's tracked `.githooks/` set, and it was actively tracking this very session.
+
+Backed up first — 24 shadow branches hold session transcripts and the removal is
+irreversible: `git bundle` of every `refs/heads/entire/` ref plus both `.entire/`
+trees, at `~/.local/state/mybd/entire-backup/` (137M).
+
+Then `entire disable --uninstall --force` in both repos and in the two worktrees
+carrying residue (`pr-5027-review`, `v1.1.1-hotfix`).
+
+Two things the uninstall got wrong, both repaired:
+
+1. **In `bd-main` it was clean** — `git status` came back empty, upstream's
+   76-line release-tag guard restored byte-for-byte.
+2. **In the coordination repo it deletes hook files it owns rather than
+   unwinding its preamble.** `.githooks/pre-push` and
+   `.githooks/prepare-commit-msg` also carried **bd's** `bd hooks run <event>`
+   wrappers, so backing out Entire silently took two of the five bd hook events
+   with it. Both rebuilt as pure-bd wrappers modeled on `.githooks/post-merge`.
+   `commit-msg` / `post-commit` / `post-rewrite` were Entire-only and stayed
+   deleted. This is the trap worth remembering on reinstall, and it is now
+   written into AGENTS.md.
+
+Checked rather than assumed: `scripts/test-git-hooks` all-pass,
+`scripts/check-beads-config` ok, and the `bd prime` + `session-start-stamp`
+SessionStart hooks survive in both `.claude/settings.json` and
+`.codex/hooks.json`. The `permissions` block the uninstall dropped held only
+Entire's own `deny: Read(./.entire/metadata/**)`, so losing it is correct, not
+collateral.
+
+Also found and removed en route: a stray `.entire/.gitignore` **committed** onto
+the local unpushed `hotfix/v1.1.1` branch in `20e493e56 chore(release): bump
+version to 1.1.2` — Entire cruft that would otherwise have ridden along in a
+release.
+
+`matrix-bd` worktree removed as instructed.
+
+### Both P0 lanes unparked
+
+The diagnosis held up. `84431ee5c` (#5167, the #5165 fix) and `4bcfa89f3` (#5166,
+its test follow-up) are both on `upstream/main`, so a rebase was the whole cure.
+
+- **PR 5143** / `mybd-rr4x` — `fix/identity-existing-db` rebased onto
+  `8bb0d36be`, 1 commit, no conflicts → `2352b1aa9`.
+- **PR 5163** / `mybd-rqqa2` — `fix/port-provenance-fail-closed` rebased, 3
+  commits, no conflicts → `157e0f7e2`.
+
+Neither diff changed. `CGO_ENABLED=1 go build -tags gms_pure_go ./...` clean on
+both before pushing; force-with-lease to the fork; `make test` enqueued for both
+in the local verify queue; a short why-comment posted on each PR.
+
+Merge tails handed back to the patrol with `scripts/pr-handoff` (squash). Note
+that `pr-handoff` **adds** `merge-when-green` without clearing the stale
+`merge-blocked` label — the two contradict each other, so I removed
+`merge-blocked` by hand on both. Worth knowing for anyone else re-arming a
+parked lane. Both beads are now claimed, `merge-when-green`, and out of
+`bd ready`; CI is running green-so-far on both new heads.
+
+### What I'd flag for the "set it up properly later" pass
+
+If Entire goes back in, the failure mode to design against is not the shadow
+branches — it is that its hook installer takes ownership of files that already
+belong to bd, and its uninstaller then deletes them wholesale. Installing it
+into `bd-main` at all is the sharper edge: that clone's `.githooks/` is
+*upstream's tracked code*, so anything Entire writes there is a pending
+accidental commit against `gastownhall/beads`. Consider limiting it to the
+coordination repo.
