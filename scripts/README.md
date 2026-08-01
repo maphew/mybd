@@ -391,7 +391,7 @@ to the lane.
 ## pr-babysit / pr-handoff (merge-tail patrol)
 
 ```bash
-scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>] [--base-fix]
 scripts/pr-close-handoff <pr-number> [--repo owner/repo] --bead <id> --reason <text> [--after <hours, default 72>]
 scripts/pr-babysit
 scripts/install-pr-babysit
@@ -411,6 +411,46 @@ retries transient merge states for a bounded number of passes, and merges
 only against a freshly re-read, matching head SHA. Anything it can't trust
 (unreadable checks, a genuine policy block, an authorization mismatch) parks
 the bead `merge-blocked` and unclaims it for `bd ready`.
+
+`--base-fix` is the one exception to base-health gating, and it exists because
+the rule deadlocks on exactly one PR: the fix for a red base cannot merge until
+the base is green, and the base cannot go green until it merges (bead
+mybd-01yzj — found while landing gastownhall/beads#5204 after a 13h red main).
+The flag records `pr_babysit_base_fix=<repo>@<branch>`, naming the base this PR
+remedies, and the patrol then merges on the PR's **own** green checks while
+that base is red. The exception is narrow by construction: the recorded key
+must match the base preflight reports red, that red base must be preflight's
+*sole* objection (a conflict, draft state, changes-requested, or even a
+transient merge state alongside it still holds the lane), and the PR's own
+checks were already required green to reach preflight at all. On a green base
+the flag does nothing, so it cannot decay into a standing merge licence, and
+the patrol never sets the key itself — writing it is a reviewed act at handoff.
+
+Three further guards came out of cross-vendor review, each closing a way the
+exception could have merged something it should not:
+
+- **The preflight verdict must be complete.** Preflight prints base health early
+  and keeps working (status rollup, closing-issue GraphQL). A run that died
+  after printing the red-base block would present a *partial* block list, making
+  "the red base is the only objection" unproven. The exception requires exit 1
+  plus preflight's terminal `Result: BLOCKED` line.
+- **The base is pinned across the merge.** `gh pr merge --match-head-commit`
+  pins the head but not the target, so a PR retargeted between authorization and
+  merge keeps its head SHA. The final re-read compares `baseRefName` against the
+  authorized key and withdraws the exception if it moved.
+- **The audit note is written after the merge, never before.** The pre-merge
+  authorization check compares the bead against the queue snapshot, notes
+  included — appending first would revoke this pass's own authorization and the
+  exception could never fire at all. The test harness's fake `bd` really appends
+  notes now, so that failure mode cannot hide again.
+
+Provenance is procedural, not enforced: the patrol trusts a matching metadata
+key without proving `pr-handoff` wrote it. No other automation in this repo
+writes that key and upstream PR content cannot inject it, but anyone with raw
+`bd update` or import access could pre-seed one.
+A base-fix merge does not record a green sighting: the base is still red, and
+claiming otherwise would withdraw the very `base-red` escalation the PR is
+trying to resolve.
 
 **close-when-quiet** — for a decline disposition an agent wants to offer
 rather than execute immediately. The agent posts the disposition comment
@@ -457,9 +497,56 @@ per-pass record lives in the patrol log.
 Everything here is keyed per base: a green sighting of `main` never withdraws
 an escalation for `release-1.2`, and only a *positively observed* green base
 of the same identity closes the bead. An empty queue is absence of evidence,
-not recovery. The corollary is worth knowing: if every parked lane is merged,
-blocked or closed while the base is still red, no lane remains to observe
-recovery and the bead stays open until a human closes it. The bead says so.
+not recovery.
+
+**Standing base watch.** Sightings originally came only from lanes running
+`pr-preflight`, which meant the detector watched a base only while something
+was already waiting to merge onto it — and went silent the moment the queue
+drained. That is the worst-case ordering, not a rare one: a red base parks
+lanes, they all merge when it recovers, and the next breakage lands into an
+empty queue unobserved. It happened on 2026-07-31 — main recovered at 08:18Z,
+14 parked lanes merged, main broke again 34 minutes later and stayed red ~13h
+with no bead (bead mybd-sopqb).
+
+So each pass the patrol also probes every base in `PR_BABYSIT_WATCH_BASES`
+(space-separated `owner/repo@branch`, default `gastownhall/beads@main`;
+set it empty to disable) with one `gh run list` per base — still zero model
+tokens. The verdict deliberately mirrors pr-preflight's: newest *decisive*
+completed run per workflow, so cancelled/superseded runs carry no signal and
+one green workflow finishing last cannot mask a red one. Three outcomes, and
+the third is not the second — red raises a sighting, green is recovery
+evidence, and **unreadable or undecidable produces no sighting at all**;
+silence is never recorded as green.
+
+A cross-vendor review argued the green verdict should be tied to the branch's
+current head SHA rather than to the newest decisive run per workflow. It is not,
+deliberately: workflows run on different commits (a docs-only commit may run one
+workflow and nothing else), so a per-head verdict would let a green run at a
+newer commit hide a red test workflow at an older one — the exact masking
+upstream's per-workflow rule was written to prevent (gastownhall/beads#4630).
+The residual risk it correctly identifies is window truncation: the run list is
+shared across all workflows on the branch, so a chatty bot workflow could push
+the one decisive red run out of view and leave an apparent green. The watch
+reads 60 runs rather than preflight's 30 for that reason, and counts
+`startup_failure` as red alongside `failure`/`timed_out`/`action_required`.
+
+**Known blind spot (bead mybd-msll).** Both the watch and pr-preflight judge a
+base by *the base's own* workflow runs. A job that exists only in the PR
+workflow never runs on `main`, so a gate that is broken for every PR can sit
+behind a "base is green" verdict — five PRs were reported green-based in the
+Contract corpus job that only exists in `pr.yml`. The watch inherits this by
+construction, deliberately: it mirrors preflight so the two cannot disagree.
+Catching that class needs a different signal ("the last K completed PR-workflow
+runs, across distinct heads, all failed") and arguably a different bead than
+`base-red`, since "the PR gate is broken" is not "main is broken".
+
+The watch feeds the same counter and the same one-bead-per-base escalation, so
+a red base escalates after the same wait with zero lanes behind it, and the
+bead says `no merge lanes parked` instead of claiming lanes it does not have.
+It also closes the old hole in the other direction: recovery no longer needs a
+surviving lane to observe it. If a lane and the watch disagree within one pass,
+red wins and the disagreement is logged — a spurious extra pass costs nothing,
+a spurious close reopens the blind spot.
 
 Nothing about this lane can block, unclaim, or otherwise mutate a merge tail —
 it only ever creates, notes, or closes its own `base-red` bead.

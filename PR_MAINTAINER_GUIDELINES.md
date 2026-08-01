@@ -168,6 +168,34 @@ CLI-docs-drift red (#4631) are both instances.
 - Autonomous agents run preflight with `PR_PREFLIGHT_BLOCK_RED_BASE=1` so a
   red base is a hard block rather than a warning (see AGENTS.md).
 
+### The base fix itself is the exception — hand it off explicitly
+
+"Merge only the fix for main" and "a red base hard-blocks the merge lane" are
+in direct tension for exactly one PR: the fix. Its base cannot go green until
+it merges, and the patrol will not merge it until the base is green. Handing
+that PR to the patrol by reflex parks the one thing the project most needs
+landed, indefinitely and silently (found landing gastownhall/beads#5204 after a
+13h red main; bead mybd-01yzj).
+
+So say it out loud at handoff:
+
+```bash
+scripts/pr-handoff <pr> --base-fix     # patrol may merge this onto its RED base
+```
+
+`--base-fix` records the exact base this PR remedies. The patrol then merges on
+the **PR's own green checks** while that base is red — and only when the red
+base is preflight's *sole* objection. Conflicts, draft state,
+changes-requested, or a transient merge state still hold the lane, and on a
+green base the flag does nothing. Do not set the metadata key by hand; the
+flag is a reviewed act, which is the whole reason the patrol never sets it
+itself.
+
+Merging the base fix in-session is still allowed under the ordinary rule (its
+checks are decisively green at the moment of action and no `merge-when-green`
+bead exists for it). `--base-fix` is what you use when you want to walk away
+instead.
+
 ## Open tension: Merge Discipline vs single-human reality
 
 The imported "Merge Discipline and Review Requirements" section requires a

@@ -70,6 +70,15 @@ RED_BASE_STATE="$STATE_DIR/red-base"
 # commit. This only writes one metadata key at creation; all bisect work
 # happens out-of-band in bisect-next. Set PR_BABYSIT_BISECT=0 to disable.
 BISECT_AUTOQUEUE="${PR_BABYSIT_BISECT:-1}"
+# Bases watched unconditionally every pass, independent of whether any merge
+# lane is armed behind them.  Space-separated "owner/repo@branch" specs; set
+# PR_BABYSIT_WATCH_BASES= (empty) to disable the standing watch entirely.
+# Why this exists: red-base sightings used to come only from lanes running
+# pr-preflight, so the detector went silent exactly when the queue drained.  On
+# 2026-07-31 upstream main recovered at 08:18Z, all 14 parked lanes merged, main
+# broke again 34 minutes later into an empty queue, and stayed red ~13h with no
+# bead (mybd-sopqb).  One `gh run list` per base per pass closes that hole.
+WATCH_BASES="${PR_BABYSIT_WATCH_BASES-gastownhall/beads@main}"
 # Every merge flips mergeStateStatus to UNKNOWN for every other open PR, so a
 # green backlog would otherwise drain at one PR per pass while burning the
 # others' transient budgets.  On a transient-only block, wait briefly for
@@ -77,6 +86,33 @@ BISECT_AUTOQUEUE="${PR_BABYSIT_BISECT:-1}"
 # transient queue cannot run into the service timeout.
 SETTLE_DELAY="${PR_BABYSIT_SETTLE_DELAY:-10}"
 SETTLE_RETRIES_PER_PASS=12
+
+# GitHub's first-time-contributor gate parks fork workflow runs in
+# action_required, so no checks exist at all and `gh pr checks` fails exactly
+# like a transient API error.  The sweep logged the same unreadable line every
+# 12 minutes for days while 16 fork PRs (90 runs) waited on a maintainer who had
+# no idea (bead mybd-eotx).  Name the condition once per head, on the bead where
+# bd will surface it, then stay quiet.  Approving is deliberately NOT automated:
+# running fork code in CI needs someone to diff the workflow files first.
+explain_no_checks() {
+  local bead="$1" repo="$2" pr="$3" head="$4" branch="$5" metadata="$6" runs n
+  [[ "$(jq -r '.pr_babysit_nochecks // empty' <<<"$metadata")" != "$head" ]] || return 0
+  n=0
+  if [[ -n "$branch" ]]; then
+    runs="$(gh run list --repo "$repo" --branch "$branch" --status action_required --limit 5 --json databaseId 2>/dev/null)" \
+      && jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$runs" && n="$(jq 'length' <<<"$runs")"
+  fi
+  if (( n > 0 )); then
+    bd update "$bead" --set-metadata "pr_babysit_nochecks=$head" \
+      --append-notes "[pr-babysit $(date -u +%FT%TZ)] $repo#$pr reports no checks because $n workflow run(s) sit in action_required — GitHub is holding them for maintainer approval (first-time-contributor gate). Nothing will ever report here until someone approves them, so the patrol cannot make progress on this tail. Review the PR's .github/workflows, .githooks, scripts and Makefile changes BEFORE approving; the patrol will not approve fork workflow runs itself." >/dev/null 2>&1 \
+      || { log "$bead: awaiting-approval note failed"; return 0; }
+    log "$bead: $repo#$pr AWAITING WORKFLOW APPROVAL ($n run(s) action_required) — maintainer action needed"
+  else
+    bd update "$bead" --set-metadata "pr_babysit_nochecks=$head" >/dev/null 2>&1 \
+      || { log "$bead: no-checks marker failed"; return 0; }
+    log "$bead: $repo#$pr has no checks on ${branch:-its head} and none awaiting approval; not repeating for this head"
+  fi
+}
 
 # Blocked tails whose observed condition has changed get one path back into
 # automation.  Only patrol-written, head-scoped verdicts are re-armable, and
@@ -121,11 +157,12 @@ rearm_sweep() {
       continue
     fi
     sweep_err="$STATE_DIR/gh-sweep.err"
-    pr_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,mergeStateStatus 2>"$sweep_err")" || { [[ -s "$sweep_err" ]] && log "$bead: sweep gh pr view stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"; rm -f "$sweep_err"; continue; }
+    pr_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,headRefName,mergeStateStatus 2>"$sweep_err")" || { [[ -s "$sweep_err" ]] && log "$bead: sweep gh pr view stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"; rm -f "$sweep_err"; continue; }
     rm -f "$sweep_err"
     jq -e 'type == "object" and (.state | type == "string") and (.headRefOid | type == "string")' >/dev/null 2>/dev/null <<<"$pr_json" || continue
     state="$(jq -r .state <<<"$pr_json")"; head="$(jq -r .headRefOid <<<"$pr_json")"
     msstatus="$(jq -r '.mergeStateStatus // empty' <<<"$pr_json")"
+    headbranch="$(jq -r '.headRefName // empty' <<<"$pr_json")"
     if [[ "$state" == MERGED ]]; then
       if bd close "$bead" --reason "PR $repo#$pr merged (observed by pr-babysit re-arm sweep)." >/dev/null 2>&1; then
         log "$bead: $repo#$pr merged while blocked; bead closed"
@@ -155,8 +192,21 @@ rearm_sweep() {
           fi ;;
         *)
           sweep_err="$STATE_DIR/gh-sweep.err"
-          checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$sweep_err")" || { [[ -s "$sweep_err" ]] && log "$bead: sweep gh pr checks stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"; rm -f "$sweep_err"; continue; }
+          if ! checks="$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link 2>"$sweep_err")"; then
+            # "No checks reported" is a standing condition, not an API hiccup:
+            # explain it once per head instead of every 12 minutes forever.
+            if grep -qi 'no checks reported' "$sweep_err" 2>/dev/null; then
+              explain_no_checks "$bead" "$repo" "$pr" "$head" "$headbranch" "$metadata"
+            elif [[ -s "$sweep_err" ]]; then
+              log "$bead: sweep gh pr checks stderr: $(tr '\n' ' ' <"$sweep_err" | cut -c1-200)"
+            fi
+            rm -f "$sweep_err"; continue
+          fi
           rm -f "$sweep_err"
+          # Checks are readable again; the standing explanation no longer holds.
+          [[ -z "$(jq -r '.pr_babysit_nochecks // empty' <<<"$metadata")" ]] \
+            || bd update "$bead" --unset-metadata pr_babysit_nochecks >/dev/null 2>&1 \
+            || log "$bead: no-checks marker clear failed"
           jq -e 'type == "array" and length > 0 and all(.[]; type == "object" and (.name | type == "string") and (.bucket | type == "string") and (.bucket == "pass" or .bucket == "pending" or .bucket == "fail" or .bucket == "skipping" or .bucket == "cancel"))' >/dev/null 2>/dev/null <<<"$checks" || continue
           if [[ "$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<<"$checks")" == 0 ]]; then
             eligible=1; why="checks no longer failing on the blocked head"
@@ -194,6 +244,8 @@ rearm_sweep() {
 # substitution, not a pipe), and are consumed by red_base_escalate after it.
 RED_BASE_SIGHTINGS=""   # one "key<TAB>detail" line per lane parked behind a red base
 GREEN_BASE_KEYS=""      # one "key" line per base positively observed green
+WATCH_RED_SIGHTINGS=""  # one "key<TAB>detail" line per WATCH_BASES base seen red
+WATCH_GREEN_KEYS=""     # one "key" line per WATCH_BASES base seen green
 
 # Record one lane parked behind a red base, naming the base and the failing-run
 # detail from the preflight block line so the escalation cites the run.
@@ -211,6 +263,105 @@ green_base_note() {
   local repo="$1" out="$2" branch
   branch="$(sed -nE 's/^\[pass\] Base branch (.+) CI is green( \(.*)?$/\1/p' <<<"$out" | head -n1)"
   GREEN_BASE_KEYS+="$repo@${branch:-unknown}"$'\n'
+}
+
+# The stop-the-line exception (mybd-01yzj).  A red base holds every lane behind
+# it, which is right for every ordinary PR — merging onto a red base hides new
+# failures.  For the PR that IS the base fix it is circular: the base cannot go
+# green until this PR merges, and the patrol will not merge it until the base is
+# green, so the one PR the project most wants landed is the one the automation
+# categorically cannot land.
+#
+# The exception is deliberately narrow.  It requires all of: an explicit
+# pr_babysit_base_fix key written by `pr-handoff --base-fix` (a reviewed, human
+# or agent act — the patrol never sets it), that key naming the exact base
+# preflight reports red, and the red base being the SOLE preflight objection.
+# The PR's own checks were already required green to reach preflight at all.
+# Anything else — conflicts, draft, changes-requested, a transient merge state
+# alongside the red base — still holds the lane. On a green base the flag does
+# nothing, so it cannot become a standing merge licence.
+BASE_FIX_KEY=""
+base_fix_authorized() {
+  local bead="$1" metadata="$2" repo="$3" blocks="$4" out="$5" status="$6" claim branch other
+  BASE_FIX_KEY=""
+  claim="$(jq -r '.pr_babysit_base_fix // empty' <<<"$metadata")"
+  [[ -n "$claim" ]] || return 1
+  # Preflight prints base health early and keeps working (status rollup, closing
+  # issues, GraphQL).  If it died after printing the red-base block, the block
+  # list is a partial verdict and "the red base is the sole objection" is
+  # unproven.  Its final line, printed only on a completed blocked run, is the
+  # completion marker; exit 1 is the blocked status (2 is usage/early failure).
+  if (( status != 1 )) || ! grep -qE '^Result: BLOCKED' <<<"$out"; then
+    log "$bead: base-fix flag set but preflight did not run to a complete verdict; exception withheld"
+    return 1
+  fi
+  other="$(grep -vE "$RED_BASE_BLOCK_RE" <<<"$blocks" || true)"
+  if [[ -n "$other" ]]; then
+    log "$bead: base-fix flag set but preflight objects to more than the red base; exception withheld"
+    return 1
+  fi
+  branch="$(sed -nE 's/^\[block\] Base branch (.+) CI is RED(:.*)?$/\1/p' <<<"$blocks" | head -n1)"
+  if [[ -z "$branch" ]]; then
+    log "$bead: base-fix flag set but the red base could not be identified; exception withheld"
+    return 1
+  fi
+  if [[ "$claim" != "$repo@$branch" ]]; then
+    log "$bead: base-fix flag names $claim but the red base is $repo@$branch; exception withheld"
+    return 1
+  fi
+  BASE_FIX_KEY="$claim"
+  return 0
+}
+
+# Standing base-health watch: read each watched base's CI directly, with no PR
+# in the picture.  Deliberately mirrors pr-preflight's base-health verdict
+# (newest DECISIVE completed run per workflow) so the two never disagree about
+# what "red" means — cancelled/superseded runs carry no signal, and one green
+# workflow finishing last must not mask a red one.
+#
+# Three outcomes, and the third is not the second: red -> sighting, green ->
+# recovery evidence, anything unreadable or undecidable -> NO sighting at all.
+# Silence must never be recorded as green; that is the failure this lane exists
+# to prevent, so an API error simply carries the existing record forward.
+base_watch_probe() {
+  local specs=() spec repo branch runs latest red_n green_n detail
+  [[ -n "$WATCH_BASES" ]] || return 0
+  # Read into an array rather than iterating the unquoted string: a stray glob
+  # in the setting would otherwise expand against the checkout before the spec
+  # is ever validated.
+  read -r -a specs <<<"$WATCH_BASES"
+  for spec in "${specs[@]}"; do
+    if [[ ! "$spec" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([A-Za-z0-9_./-]+)$ ]]; then
+      log "base-watch: ignoring malformed watch spec '$spec'"; continue
+    fi
+    repo="${BASH_REMATCH[1]}"; branch="${BASH_REMATCH[2]}"
+    # 60, not preflight's 30: the window is shared across every workflow on the
+    # branch, so a chatty bot workflow can push the one decisive run that matters
+    # out of a short window and turn a red base into an apparent green one.
+    if ! runs="$(gh run list --repo "$repo" --branch "$branch" --status completed \
+        --limit 60 --json conclusion,workflowName,databaseId,createdAt,url 2>>"$LOG")" \
+      || ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$runs"; then
+      log "base-watch: $repo@$branch run history unreadable; no sighting this pass"; continue
+    fi
+    # Group by workflow name, but a run with no name gets a group of its own
+    # keyed by run id: collapsing unnamed runs (ruleset runs, for one) into a
+    # single bucket would let one green among them hide a red.
+    latest="$(jq -c '[group_by(.workflowName // ("run:" + (.databaseId | tostring)))[]
+      | [.[] | select((.conclusion // "") == "success" or ((.conclusion // "") | test("^(failure|timed_out|action_required|startup_failure)$")))][0]
+      | select(. != null)]' <<<"$runs")" || { log "base-watch: $repo@$branch run data unparseable; no sighting this pass"; continue; }
+    red_n="$(jq '[.[] | select((.conclusion // "") | test("^(failure|timed_out|action_required|startup_failure)$"))] | length' <<<"$latest")"
+    green_n="$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$latest")"
+    if (( red_n > 0 )); then
+      detail="$(jq -r '[.[] | select((.conclusion // "") | test("^(failure|timed_out|action_required|startup_failure)$"))
+        | "\(.workflowName // "unnamed run") \(.conclusion) at \(.createdAt) (\(.url))"] | join("; ")' <<<"$latest")"
+      WATCH_RED_SIGHTINGS+="$repo@$branch"$'\t'"$detail"$'\n'
+      log "base-watch: $repo@$branch RED ($red_n workflow(s) failing)"
+    elif (( green_n > 0 )); then
+      WATCH_GREEN_KEYS+="$repo@$branch"$'\n'
+    else
+      log "base-watch: $repo@$branch health indeterminate (no decisive completed runs); no sighting this pass"
+    fi
+  done
 }
 
 cd "$ROOT" || exit 1
@@ -350,7 +501,7 @@ while read -r item; do
     continue
   fi
 
-  settle_attempted=0
+  settle_attempted=0; base_fix_bypass=0; BASE_FIX_KEY=""
   while :; do
     preflight_out="$(PR_PREFLIGHT_BLOCK_RED_BASE=1 "$PREFLIGHT" "$pr" --repo "$repo" 2>&1)"; preflight_status=$?
     [[ -n "$preflight_out" ]] && sed "s|^|$(date -u +%FT%TZ) [preflight $repo#$pr] |" <<<"$preflight_out" >>"$LOG"
@@ -373,7 +524,19 @@ while read -r item; do
       # their own schedule and must not convert waiting tails into blocks.
       # It is escalated globally instead — see red_base_escalate.
       red_base_note "$repo" "$blocks"
-      transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
+      if base_fix_authorized "$bead" "$metadata" "$repo" "$blocks" "$preflight_out" "$preflight_status"; then
+        # The one case where merging onto a red base is the correct move: this
+        # PR is the declared remedy for that base.  Loud on purpose — it is the
+        # only path in the patrol that merges without a green base.
+        # Log now, write to the bead only AFTER the merge: the pre-merge
+        # authorization check compares the bead against the queued snapshot
+        # (notes included), so mutating notes here would revoke this pass's own
+        # authorization and the exception could never actually merge.
+        log "$bead: BASE-FIX exception — $repo#$pr merges onto RED base $BASE_FIX_KEY on its own green checks"
+        base_fix_bypass=1
+      else
+        transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
+      fi
     elif [[ -n "$blocks" ]]; then
       # Transient-only blocks (merge state UNKNOWN/UNSTABLE, checks still
       # pending): GitHub computes these lazily, so wait a bounded number of
@@ -389,27 +552,42 @@ while read -r item; do
     else
       transition "$bead" "$metadata" "$notes" "preflight-unavailable:$head" "Preflight failed without a recognizable block; retained under patrol." || log "$bead: transition failed"
     fi
-    continue
+    (( base_fix_bypass )) || continue
   fi
-  if ! grep -qE '^\[pass\] Base branch .+ CI is green( \(|$)' <<<"$preflight_out"; then
-    transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
-    continue
+  if (( base_fix_bypass == 0 )); then
+    if ! grep -qE '^\[pass\] Base branch .+ CI is green( \(|$)' <<<"$preflight_out"; then
+      transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
+      continue
+    fi
+    # A positively observed green base is the only thing that clears a standing
+    # red-base escalation for that same base.  "No lanes reported red" is absence
+    # of evidence — an empty queue must not be read as recovery.  A base-fix
+    # merge deliberately skips this: the base is red, and saying otherwise here
+    # would withdraw the very escalation this PR is trying to resolve.
+    green_base_note "$repo" "$preflight_out"
   fi
-  # A positively observed green base is the only thing that clears a standing
-  # red-base escalation for that same base.  "No lanes reported red" is absence
-  # of evidence — an empty queue must not be read as recovery.
-  green_base_note "$repo" "$preflight_out"
   # A fully healthy preflight resets the transient budget: the counter tracks
   # consecutive transient sightings, not lifetime ones.
   if [[ "$(jq -r '.pr_babysit_transient // empty' <<<"$metadata")" == "$head":* ]]; then
     bd update "$bead" --unset-metadata pr_babysit_transient >/dev/null 2>&1 || log "$bead: transient counter clear failed"
   fi
   # Checks and preflight may take time; re-read head and rollup atomically.
-  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
+  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,baseRefName,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
     transition "$bead" "$metadata" "$notes" "premerge-pr-unavailable:$head" "Could not revalidate PR before merge; retained under patrol." || log "$bead: transition failed"
     continue
   fi
   final_head="$(jq -r .headRefOid <<<"$final_json")"
+  # `gh pr merge --match-head-commit` pins the head but not the target.  A PR
+  # retargeted between preflight and merge keeps its head SHA, so a base-fix
+  # authorization for one base could land the PR on another.
+  if (( base_fix_bypass )); then
+    final_base="$(jq -r '.baseRefName // empty' <<<"$final_json")"
+    if [[ -z "$final_base" || "$repo@$final_base" != "$BASE_FIX_KEY" ]]; then
+      transition "$bead" "$metadata" "$notes" "base-retargeted:$head" "PR base changed to ${final_base:-unknown} after the base-fix authorization for $BASE_FIX_KEY; retained under patrol." || log "$bead: transition failed"
+      log "$bead: base-fix withdrawn — PR retargeted to ${final_base:-unknown}, authorized base was $BASE_FIX_KEY"
+      continue
+    fi
+  fi
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
   # Patrol-owned retry counters (checksun/transient/rearm) are excluded from
   # the metadata comparison: the patrol legitimately clears them mid-pass, and
@@ -425,7 +603,13 @@ while read -r item; do
     if ! after_json="$(gh pr view "$pr" --repo "$repo" --json state 2>>"$LOG")" || ! after_state="$(jq -er '.state | strings' <<<"${after_json:-}" 2>/dev/null)"; then
       transition "$bead" "$metadata" "$notes" "postmerge-unavailable:$head" "Merge returned success but state confirmation failed; retained under patrol." || log "$bead: transition failed"
     elif [[ "$after_state" == MERGED ]]; then
-      if bd close "$bead" --reason "PR $repo#$pr merged by pr-babysit ($method)." >/dev/null 2>&1; then log "$bead: MERGED $repo#$pr ($method); bead closed"; else log "$bead: merged PR close failed"; fi
+      if (( base_fix_bypass )); then
+        # Durable record of the one merge the patrol makes without a green base.
+        bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] Merged onto RED base $BASE_FIX_KEY under the base-fix exception: this PR was the declared remedy for that base, its own checks were green, and the red base was preflight's only objection." >/dev/null 2>&1 \
+          || log "$bead: base-fix note append failed"
+      fi
+      close_extra=""; (( base_fix_bypass )) && close_extra=" under the base-fix exception for $BASE_FIX_KEY"
+      if bd close "$bead" --reason "PR $repo#$pr merged by pr-babysit ($method)${close_extra}." >/dev/null 2>&1; then log "$bead: MERGED $repo#$pr ($method); bead closed"; else log "$bead: merged PR close failed"; fi
     else
       transition "$bead" "$metadata" "$notes" "merge-queued:$head" "Merge command succeeded but PR remains $after_state; retained under patrol." || log "$bead: transition failed"
     fi
@@ -464,25 +648,69 @@ red_base_state_read() {
   done <"$RED_BASE_STATE"
 }
 
-# Standing escalation bead for a base, found by patrol-written metadata so the
-# bead — not the state file — is the record of truth after state loss.
-# Exit 1 means "could not ask", which must never be read as "none exists".
-red_base_existing_bead() {
-  local key="$1" out
+# Standing escalation beads, read once per pass and then consulted per base:
+# the bead — not the state file — is the record of truth.  Exit 1 means "could
+# not ask", which must never be read as "none exists".
+RED_BASE_BEADS=""; RED_BASE_BEADS_OK=0
+red_base_beads_load() {
+  local out
+  RED_BASE_BEADS=""; RED_BASE_BEADS_OK=0
   # Status is filtered in jq, not passed to `bd list`: this lane must never
   # emit a mutation-shaped argument list, and `--status open` reads like one.
   out="$(bd list --label base-red --limit 0 --json 2>/dev/null)" || return 1
   jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$out" || return 1
-  jq -r --arg k "$key" 'map(select(.status == "open" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$out"
+  RED_BASE_BEADS="$out"; RED_BASE_BEADS_OK=1
+}
+red_base_existing_bead() {
+  local key="$1"
+  (( RED_BASE_BEADS_OK )) || return 1
+  # NOT status == "open": `bd update --claim` moves a bead to in_progress, and
+  # an agent picking up the base-red bead is the expected case.  Reading that as
+  # "no bead exists" would mint a duplicate P0 next escalation window, or drop
+  # the state record on recovery and orphan the claimed bead.
+  jq -r --arg k "$key" 'map(select(.status != "closed" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$RED_BASE_BEADS"
+}
+
+# Second opinion on a remembered bead id when the metadata lookup does not find
+# it.  Forgetting an id lets the base re-escalate, which is right when the bead
+# was genuinely closed — and catastrophic (a new P0 every escalation window) if
+# the bead is alive and merely unfindable by label or metadata.  Exit 2 means
+# "could not tell", which keeps the id.
+red_base_bead_open() {
+  local id="$1" out
+  out="$(bd show "$id" --json 2>/dev/null)" || return 2
+  jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$out" || return 2
+  [[ "$(jq -r 'length' <<<"$out")" != 0 ]] || return 1
+  [[ "$(jq -r '.[0].status // empty' <<<"$out")" != "closed" ]]
+}
+
+base_is_watched() {
+  local key="$1" specs=() spec
+  [[ -n "$WATCH_BASES" ]] || return 1
+  read -r -a specs <<<"$WATCH_BASES"
+  for spec in "${specs[@]}"; do [[ "$spec" == "$key" ]] && return 0; done
+  return 1
 }
 
 red_base_create() {
-  local key="$1" count="$2" first="$3" lanes="$4" detail="$5" desc
-  desc="The pr-babysit patrol has observed base branch $key red for $count consecutive passes, since $first. $lanes merge lane(s) are parked behind it and cannot merge while it is red (agents run PR_PREFLIGHT_BLOCK_RED_BASE=1).
+  local key="$1" count="$2" first="$3" lanes="$4" detail="$5" desc lanes_para recovery_para title_tail
+  if (( lanes > 0 )); then
+    title_tail="$lanes merge lane(s) parked"
+    lanes_para="$lanes merge lane(s) are parked behind it and cannot merge while it is red (agents run PR_PREFLIGHT_BLOCK_RED_BASE=1). The parked lanes are NOT blocked and need no re-arm: they resume automatically once the base is green."
+  else
+    title_tail="no merge lanes parked"
+    lanes_para="No merge lanes are parked behind it — this was seen by the standing base watch, not by a lane. A red base with an empty queue is not harmless: every PR opened or updated against it inherits red checks, which is how 'those failures are pre-existing' becomes the default reading and new breakage rides in under that cover."
+  fi
+  if base_is_watched "$key"; then
+    recovery_para="This bead closes itself on the next patrol pass in which $key is observed green, by the standing watch or by a lane; the watch runs whether or not anything is queued, so recovery is noticed with no queue and no human."
+  else
+    recovery_para="This bead closes itself on the next patrol pass in which a LANE observes $key green — $key is not in PR_BABYSIT_WATCH_BASES, so if every parked lane is merged, blocked or closed while the base is still red, no observer remains and this bead will stay open until a human closes it."
+  fi
+  desc="The pr-babysit patrol has observed base branch $key red for $count consecutive passes, since $first. $lanes_para
 
-Preflight reported: ${detail:-(no detail parsed)}
+Reported: ${detail:-(no detail parsed)}
 
-The parked lanes are NOT blocked and need no re-arm: they resume automatically once the base is green. This bead closes itself on the next patrol pass in which a lane observes $key green — note that if every parked lane is merged, blocked or closed while the base is still red, no lane remains to make that observation and this bead will stay open until a human closes it.
+$recovery_para
 
 What is needed here is a decision about the base itself: rerun a suspected flake, or land the fix for the base. While it is red that fix is the only mergeable PR — see PR_MAINTAINER_GUIDELINES.md 'Base-Branch Health'.
 
@@ -494,19 +722,24 @@ Raised automatically by scripts/pr-babysit; patrol log: $LOG"
   else
     meta="$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k}')"
   fi
-  bd create "Base branch $key has been red for $count patrol passes; $lanes merge lane(s) parked" \
+  bd create "Base branch $key has been red for $count patrol passes; $title_tail" \
     -t bug -p 0 -l base-red \
     --metadata "$meta" \
     --description "$desc" --json 2>/dev/null | jq -r '.id // empty'
 }
 
 red_base_escalate() {
-  local now state keys key rec count first bead lanes detail newstate="" tmp
+  local now state keys key rec count first bead lanes detail newstate="" tmp red_now live bd_ok
   now="$(date -u +%FT%TZ)"
   state="$(red_base_state_read)"
-  # Union of bases already tracked and bases observed red this pass.
-  keys="$( { cut -f1 <<<"$state"; cut -f1 <<<"$RED_BASE_SIGHTINGS"; } | grep -v '^$' | sort -u )"
+  # Union of bases already tracked and every base observed at all this pass, by
+  # either observer.  Green keys are in the union too: a base whose state record
+  # was lost while its bead stayed open would otherwise never be reconciled, and
+  # the bead would outlive the outage with nothing left to close it.
+  keys="$( { cut -f1 <<<"$state"; cut -f1 <<<"$RED_BASE_SIGHTINGS"; cut -f1 <<<"$WATCH_RED_SIGHTINGS"; \
+             printf '%s' "$GREEN_BASE_KEYS"; printf '%s' "$WATCH_GREEN_KEYS"; } | grep -v '^$' | sort -u )"
   [[ -n "$keys" ]] || { rm -f "$RED_BASE_STATE"; return 0; }
+  red_base_beads_load || true
 
   while read -r key; do
     [[ -n "$key" ]] || continue
@@ -515,17 +748,56 @@ red_base_escalate() {
     if [[ -n "$rec" ]]; then
       count="$(cut -f2 <<<"$rec")"; first="$(cut -f3 <<<"$rec")"; bead="$(cut -f4 <<<"$rec")"
     fi
+    # Reconcile the remembered bead id against bd, which owns the truth.  Two
+    # silent failures live here if this is skipped: a bead id left in state after
+    # someone closed the bead suppresses re-escalation forever, and a bead
+    # created just before a state write failed becomes unreachable and never
+    # closes.  "Could not ask bd" is neither answer — keep what state says.
+    bd_ok=0
+    if live="$(red_base_existing_bead "$key")"; then
+      bd_ok=1
+      if [[ -n "$live" ]]; then
+        [[ "$live" == "$bead" ]] || log "red-base: $key adopting open bead $live (state said '${bead:-none}')"
+        bead="$live"
+      elif [[ -n "$bead" ]]; then
+        red_base_bead_open "$bead"; case $? in
+          0) log "red-base: $key bead $bead is open but no longer matches the base-red lookup (label or metadata drift); keeping it" ;;
+          1) log "red-base: $key bead $bead is no longer open; forgetting it"; bead="" ;;
+          *) log "red-base: $key could not verify bead $bead; keeping it for now" ;;
+        esac
+      fi
+    fi
+    # lanes counts PARKED MERGE LANES, which is reported on the bead and is not
+    # the same question as "is this base red" — the standing watch sees a red
+    # base with zero lanes behind it, which is precisely the 13h-outage case.
     lanes="$(awk -F'\t' -v k="$key" '$1 == k {n++} END {print n + 0}' <<<"$RED_BASE_SIGHTINGS")"
+    red_now=0
+    (( lanes > 0 )) && red_now=1
+    if [[ "$(awk -F'\t' -v k="$key" '$1 == k {n++} END {print n + 0}' <<<"$WATCH_RED_SIGHTINGS")" != 0 ]]; then
+      red_now=1
+    fi
+    # Observers disagreeing within one pass is a race, not a recovery.  Red wins
+    # in both directions — a spurious extra pass costs nothing, a spurious close
+    # reopens the blind spot — and either disagreement is logged.
+    if (( red_now == 1 )); then
+      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS" || grep -qxF "$key" <<<"$WATCH_GREEN_KEYS"; then
+        log "red-base: $key was reported both red and green within one pass; treating as red"
+      fi
+    fi
 
-    if (( lanes == 0 )); then
+    if (( red_now == 0 )); then
+      # Nothing tracked and nothing open: this base is simply healthy, and a
+      # healthy base must not produce a line every 12 minutes forever.
+      if [[ -z "$rec" && -z "$bead" ]]; then continue; fi
       # Not observed red this pass.  Only a positively observed GREEN base of
-      # this exact identity is recovery; every other reason a lane did not
-      # report (queue empty, lanes merged away, bd unavailable, a different
-      # base green) is absence of evidence, and the record carries forward.
-      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS"; then
+      # this exact identity is recovery; every other reason no observer
+      # reported (queue empty, lanes merged away, bd or gh unavailable, a
+      # different base green) is absence of evidence, and the record carries
+      # forward.
+      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS" || grep -qxF "$key" <<<"$WATCH_GREEN_KEYS"; then
         if [[ -z "$bead" ]]; then
           log "red-base: $key recovered before escalating"; continue
-        elif bd close "$bead" --reason "Base branch $key recovered; parked merge lanes resumed with no manual action." >/dev/null 2>&1; then
+        elif bd close "$bead" --reason "Base branch $key observed green again; any parked merge lanes resume with no manual action." >/dev/null 2>&1; then
           log "red-base: $key recovered; escalation bead $bead closed"; continue
         else
           log "red-base: $key recovered but closing $bead failed; retrying next pass"
@@ -536,15 +808,14 @@ red_base_escalate() {
     fi
 
     detail="$(awk -F'\t' -v k="$key" '$1 == k {print $2; exit}' <<<"$RED_BASE_SIGHTINGS")"
+    [[ -n "$detail" ]] || detail="$(awk -F'\t' -v k="$key" '$1 == k {print $2; exit}' <<<"$WATCH_RED_SIGHTINGS")"
     count=$((count + 1))
-    if [[ -z "$bead" ]]; then
-      if ! bead="$(red_base_existing_bead "$key")"; then
-        # Could not read bd.  Creating now risks a duplicate bead, so hold the
-        # count and decide next pass.
-        log "red-base: $key red but bd is unreadable; escalation decision deferred"
-        newstate+="$key"$'\t'"$count"$'\t'"$first"$'\t'"$bead"$'\n'
-        continue
-      fi
+    if [[ -z "$bead" ]] && (( bd_ok == 0 )); then
+      # Could not read bd, so "no bead" is unproven.  Creating now risks a
+      # duplicate, so hold the count and decide next pass.
+      log "red-base: $key red but bd is unreadable; escalation decision deferred"
+      newstate+="$key"$'\t'"$count"$'\t'"$first"$'\t'"$bead"$'\n'
+      continue
     fi
     if [[ -z "$bead" ]] && (( count >= RED_BASE_ESCALATE_LIMIT )); then
       bead="$(red_base_create "$key" "$count" "$first" "$lanes" "$detail")"
@@ -576,6 +847,7 @@ red_base_escalate() {
     rm -f "$tmp"; log "red-base: state write failed"
   fi
 }
+base_watch_probe
 red_base_escalate
 
 # --- close-when-quiet: decline offers become closes after a quiet window ----
