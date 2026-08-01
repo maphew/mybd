@@ -21,11 +21,19 @@ have_codex=1; command -v codex >/dev/null 2>&1 || have_codex=0
 
 # A throwaway repo with one commit, so HEAD is a real sha we control.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/prgate.XXXXXX")"
-trap 'rm -rf "$tmp"; [[ -n "${planted:-}" ]] && rm -f "$REVIEW_DIR/$planted.md"' EXIT
+trap 'rm -rf "$tmp" "$tmp-other"; [[ -n "${planted:-}" ]] && rm -f "$REVIEW_DIR/$planted.md"' EXIT
 git -C "$tmp" init -q
 git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$tmp" remote add origin git@github.com:maphew/beads.git
 sha="$(git -C "$tmp" rev-parse HEAD)"
+
+# A second checkout with nothing to do with beads, for the case where only an
+# explicit -R/--repo reveals that the PR targets upstream.
+other="$tmp-other"
+mkdir -p "$other"
+git -C "$other" init -q
+git -C "$other" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$other" remote add origin git@github.com:someone/unrelated.git
 
 run() { # run <cmd> <cwd> -> exit code
   jq -nc --arg c "$1" --arg d "$2" \
@@ -48,21 +56,41 @@ echo "pr-review-gate:"
 check "unrelated command"        0 "$(run 'ls -la' "$tmp")"
 check "gh pr view"               0 "$(run 'gh pr view 123 --repo gastownhall/beads' "$tmp")"
 check "gh pr create, other repo" 0 "$(run 'gh pr create --repo maphew/mybd --title x' "$tmp")"
+check "gh pr create, -R other"   0 "$(run 'gh pr create -R maphew/mybd --title x' "$tmp")"
 check "substring, not a command" 0 "$(run 'echo "how to gh pr create"' "$tmp")"
+check "quoted, not a command"    0 "$(run "printf 'run gh pr create --repo gastownhall/beads now'" "$tmp")"
 check "escape hatch honored"     0 "$(run 'MYBD_SKIP_XVENDOR=1 gh pr create --repo gastownhall/beads' "$tmp")"
 
 if (( have_codex )); then
   # Deny: upstream PR, no review log for HEAD.
   check "unreviewed, --repo named"  2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "unreviewed, -R named"      2 "$(run 'gh pr create -R gastownhall/beads --title x' "$tmp")"
+  # The bypass -R has to close: an upstream PR opened from a checkout whose
+  # remotes are NOT beads, where remote inference alone would wave it through.
+  check "-R upstream from elsewhere" 2 "$(run 'gh pr create -R gastownhall/beads --title x' "$other")"
   check "unreviewed, inferred repo" 2 "$(run 'gh pr create --title x' "$tmp")"
   check "unreviewed, cd prefix"     2 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
 
-  # Allow: a review log for exactly this HEAD.
+  # Allow: a review log for exactly this HEAD, against the base being targeted.
   mkdir -p "$REVIEW_DIR"
   planted="$sha"
-  printf '# test fixture\n' > "$REVIEW_DIR/$sha.md"
+  printf '# fixture\n\n- base: `main`\n' > "$REVIEW_DIR/$sha.md"
   check "reviewed HEAD passes"      0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
   check "reviewed via cd prefix"    0 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
+  check "reviewed, quoted repo"     0 "$(run 'gh pr create --repo "gastownhall/beads" --title x' "$tmp")"
+
+  # The log covers a commit AND a base. A review taken against one base says
+  # nothing about the same sha proposed against another.
+  check "base mismatch re-arms"     2 "$(run 'gh pr create --repo gastownhall/beads --base release' "$tmp")"
+  check "matching base passes"      0 "$(run 'gh pr create --repo gastownhall/beads --base main' "$tmp")"
+
+  # An explicit --head names the proposal; a reviewed cwd must not vouch for it.
+  git -C "$tmp" branch -q other-work
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m diverge
+  git -C "$tmp" branch -qf other-work HEAD
+  git -C "$tmp" reset -q --hard "$sha"
+  check "--head outvotes cwd HEAD"  2 "$(run 'gh pr create --repo gastownhall/beads --head me:other-work' "$tmp")"
+  check "-H outvotes cwd HEAD"      2 "$(run 'gh pr create --repo gastownhall/beads -H me:other-work' "$tmp")"
 
   # A moved HEAD must re-arm: the log vouches for a commit, not a branch.
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second

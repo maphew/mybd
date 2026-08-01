@@ -406,22 +406,35 @@ the one step that has to be thought about.
 
 `pr-review-gate` is the backstop, wired as a `PreToolUse` hook on `Bash` in
 `.claude/settings.json`. It blocks `gh pr create` against `gastownhall/beads`
-unless a review log exists for the exact HEAD being proposed. It resolves that
-HEAD from a leading `cd X &&`, a `git -C X`, an explicit `--head owner:branch`,
-or the session cwd, and passes if **any** of them is reviewed.
+unless a review log exists for the exact commit **and base** being proposed.
+The target repo comes from `--repo`/`-R`, falling back to the checkout's
+remotes; the proposed commit from `--head`/`-H` when given, otherwise from a
+leading `cd X &&`, a `git -C X`, or the session cwd.
 
-Deliberately narrow — everything below is an allow, so the gate cannot become a
-nuisance from a phone:
+Deliberately narrow — everything in the first block is an allow, so the gate
+cannot become a nuisance from a phone:
 
 | situation | gate |
 |---|---|
 | anything that is not `gh pr create` | passes |
+| `gh pr create` inside a quoted string (`printf 'gh pr create …'`) | passes |
 | `gh pr create` for another repo (incl. `maphew/mybd`) | passes |
 | `codex` not on PATH | passes, with no second vendor there is no path through |
 | `MYBD_SKIP_XVENDOR=1 gh pr create …` | passes |
-| review log exists for this HEAD | passes |
-| upstream PR, HEAD never reviewed | **blocked**, exit 2 |
+| review log exists for this commit and base | passes |
+| upstream PR, commit never reviewed | **blocked**, exit 2 |
 | upstream PR, reviewed then amended | **blocked** — the log vouches for a commit, not a branch |
+| reviewed against a different base than the PR targets | **blocked** — a different base is a different diff |
+| `-R gastownhall/beads` run from a non-beads checkout | **blocked** — the flag outranks remote inference |
+| `--head`/`-H` naming an unreviewed branch from a reviewed cwd | **blocked** — the named head is the proposal |
+
+The last four rows are there because the first version of this gate got all
+four wrong, and the Codex review it exists to require is what found them
+(`scripts/test-pr-review-gate` pins each; all four fail against the pre-fix
+gate). Quoting is handled with two views of the command — quoted spans blanked
+for "is this an invocation?", quote characters stripped for reading flag
+values — so neither `printf 'gh pr create …'` nor `--repo "gastownhall/beads"`
+is misread.
 
 The escape hatch is a command-line prefix rather than an exported env var on
 purpose: an export would silently disarm every later PR in the session, and

@@ -43,9 +43,17 @@ cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
 hook_cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
 [[ -n "$cmd" ]] || exit 0
 
+# Two views of the command, because a gate that fires on text inside a string
+# would block `printf 'run gh pr create ...'`, and one that ignores quotes
+# entirely would read `--repo "gastownhall/beads"` as no --repo at all:
+#   cmd_code  - quoted spans blanked; used to decide "is this an invocation?"
+#   cmd_flags - quote characters removed; used to read flag VALUES.
+cmd_code="$(sed -E "s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd")"
+cmd_flags="$(tr -d "'\\\"" <<<"$cmd")"
+
 # Not a PR creation, or deliberately excused.
-grep -qE '(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' <<<"$cmd" || exit 0
-grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd" && exit 0
+grep -qE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' <<<"$cmd_code" || exit 0
+grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd_code" && exit 0
 
 # Without codex there is no second vendor to consult, so the gate stands down
 # rather than blocking work it cannot offer a path through.
@@ -56,15 +64,17 @@ command -v codex >/dev/null 2>&1 || exit 0
 declare -a dirs=()
 [[ -n "$hook_cwd" ]] && dirs+=("$hook_cwd")
 while IFS= read -r d; do [[ -n "$d" ]] && dirs+=("$d"); done < <(
-  grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd" \
-    | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//; s/^"//; s/"$//'
-  grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+' <<<"$cmd" \
+  grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd_flags" \
+    | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//'
+  grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" \
     | sed -E 's/.*-C[[:space:]]+//'
 )
 
-# --repo decides the target when present; otherwise infer from the remotes.
+# --repo / -R decides the target when present; otherwise infer from the remotes.
+# Both spellings must be read: `gh pr create -R gastownhall/beads` from the
+# coordination checkout would otherwise infer maphew/mybd and skip the gate.
 target_is_upstream=0
-repo_flag="$(grep -oE -- '--repo[=[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' <<<"$cmd" | head -1 | sed -E 's/--repo[=[:space:]]+//')"
+repo_flag="$(grep -oE -- '(--repo|-R)[=[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--repo|-R)[=[:space:]]+//')"
 if [[ -n "$repo_flag" ]]; then
   [[ "$repo_flag" == "$UPSTREAM_REPO" ]] && target_is_upstream=1
 else
@@ -75,23 +85,43 @@ else
 fi
 (( target_is_upstream )) || exit 0
 
-# An explicit --head owner:branch names the commit more precisely than any cwd.
+# Which commit is actually being proposed? An explicit --head/-H names it, and
+# when it resolves it is the ONLY answer: falling back to the cwd's HEAD as well
+# would let a reviewed working checkout vouch for an unreviewed branch being
+# pushed past it.
 declare -a shas=()
-head_flag="$(grep -oE -- '--head[=[:space:]]+[^[:space:];&|]+' <<<"$cmd" | head -1 | sed -E 's/--head[=[:space:]]+//')"
+head_flag="$(grep -oE -- '(--head|-H)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--head|-H)[=[:space:]]+//')"
 if [[ -n "$head_flag" ]]; then
   ref="${head_flag##*:}"
   for d in "${dirs[@]}" "$ROOT/bd-main"; do
-    s="$(git -C "$d" rev-parse --verify --quiet "$ref" 2>/dev/null)" || continue
-    [[ -n "$s" ]] && shas+=("$s") && break
+    for candidate in "$ref" "origin/$ref" "upstream/$ref"; do
+      s="$(git -C "$d" rev-parse --verify --quiet "$candidate" 2>/dev/null)" || continue
+      [[ -n "$s" ]] && shas+=("$s") && break 2
+    done
   done
 fi
-for d in "${dirs[@]}"; do
-  s="$(git -C "$d" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
-  [[ -n "$s" ]] && shas+=("$s")
-done
+# Only when no explicit head resolved do the checkout HEADs stand in for it.
+if [[ ${#shas[@]} -eq 0 ]]; then
+  for d in "${dirs[@]}"; do
+    s="$(git -C "$d" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
+    [[ -n "$s" ]] && shas+=("$s")
+  done
+fi
 
+# The log has to cover the diff being proposed, which means the same base as
+# well as the same commit: a review taken against `release` says nothing about
+# the same sha opened against `main`.
+want_base="$(grep -oE -- '(--base|-B)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--base|-B)[=[:space:]]+//')"
+want_base="${want_base:-main}"
+base_mismatch=""
 for s in ${shas[@]+"${shas[@]}"}; do
-  [[ -f "$REVIEW_DIR/$s.md" ]] && exit 0
+  log="$REVIEW_DIR/$s.md"
+  [[ -f "$log" ]] || continue
+  logged_base="$(sed -nE 's/^- base: `(.*)`$/\1/p' "$log" | head -1)"
+  if [[ -z "$logged_base" || "$logged_base" == "$want_base" ]]; then
+    exit 0
+  fi
+  base_mismatch="reviewed against \`$logged_base\`, but this PR targets \`$want_base\`"
 done
 
 reviewed_hint=""
@@ -102,8 +132,10 @@ if [[ -d "$REVIEW_DIR" ]]; then
 fi
 
 proposed="${shas[0]:-unknown}"
+headline="no cross-vendor review for the commit this PR would propose"
+[[ -n "$base_mismatch" ]] && headline="the review for this commit does not cover this base — $base_mismatch"
 cat >&2 <<EOF
-Blocked: no cross-vendor review for the commit this PR would propose.
+Blocked: $headline.
 
   head:   ${proposed:0:12}
   wanted: $REVIEW_DIR/${proposed:0:12}....md$reviewed_hint
@@ -112,7 +144,7 @@ AGENTS.md requires a second model family on the diff before an upstream PR —
 an independent vendor catches what same-family agents miss, and this gate
 exists because the prose version of the rule was followed unevenly. Run:
 
-  scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
+  scripts/pr-open -C <worktree> --base $want_base --search "<topic keywords>"
 
 then reconcile the findings and retry this command. If HEAD moved since the
 last review, that is the gate working: review the commit you are actually
