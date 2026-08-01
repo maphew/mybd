@@ -29,11 +29,13 @@ case "${1:-} ${2:-}" in
     [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
     rollup="${FAKE_ROLLUP:-}"
     [[ -n "$rollup" ]] || rollup='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]'
-    jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
+    jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --arg hb "${FAKE_HEAD_BRANCH:-feature}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, headRefName:$hb, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
     [[ -f "$FAKE_MERGE_MARK" ]] && exit "${FAKE_POST_PR_EXIT:-0}"
     exit "${FAKE_PR_EXIT:-0}"
     ;;
-  "pr checks") printf '%s\n' "${FAKE_CHECKS:-[]}"; exit "${FAKE_CHECKS_EXIT:-0}" ;;
+  "pr checks")
+    [[ -z "${FAKE_CHECKS_STDERR:-}" ]] || printf '%s\n' "$FAKE_CHECKS_STDERR" >&2
+    printf '%s\n' "${FAKE_CHECKS:-[]}"; exit "${FAKE_CHECKS_EXIT:-0}" ;;
   "pr merge")
     [[ "${FAKE_MERGE_EXIT:-0}" == 0 ]] || exit "$FAKE_MERGE_EXIT"
     expected=""; for arg in "$@"; do [[ "$arg" == "--match-head-commit" ]] && next=1 && continue; [[ "${next:-}" == 1 ]] && expected="$arg" && unset next; done
@@ -42,7 +44,11 @@ case "${1:-} ${2:-}" in
     touch "$FAKE_MERGE_MARK"
     ;;
   "run rerun") exit "${FAKE_RERUN_EXIT:-0}" ;;
-  "run list") printf '%s\n' "${FAKE_BASE_RUNS:-[]}"; exit "${FAKE_BASE_RUNS_EXIT:-0}" ;;
+  "run list")
+    if [[ " $* " == *"--status action_required"* ]]; then
+      printf '%s\n' "${FAKE_ACTION_REQUIRED:-[]}"; exit "${FAKE_ACTION_REQUIRED_EXIT:-0}"
+    fi
+    printf '%s\n' "${FAKE_BASE_RUNS:-[]}"; exit "${FAKE_BASE_RUNS_EXIT:-0}" ;;
   *) echo "unexpected gh invocation: $*" >&2; exit 64 ;;
 esac
 EOF
@@ -64,7 +70,19 @@ case "${1:-}" in
     fi
     ;;
   show) jq --arg id "$2" '[.[] | select(.id == $id)]' "$FAKE_QUEUE" ;;
-  create) printf '{"id":"mybd-created"}\n' ;;
+  create)
+    # Faithful enough for the base-red lane: a created bead becomes visible to
+    # later `bd list --label` and `bd show`, exactly as production bd would, so
+    # the patrol's own dedup path is what the tests exercise.
+    lbl=""; meta="{}"; prev=""
+    for arg in "$@"; do
+      case "$prev" in -l) lbl="$arg" ;; --metadata) meta="$arg" ;; esac
+      prev="$arg"
+    done
+    jq --arg l "$lbl" --argjson m "$meta" \
+      '. + [{id:"mybd-created", status:"open", assignee:"", labels:(if $l == "" then [] else [$l] end), external_ref:"", notes:"", metadata:$m}]' \
+      "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
+    printf '{"id":"mybd-created"}\n' ;;
   update)
     bead="$2"; shift 2
     while [[ $# -gt 0 ]]; do
@@ -98,7 +116,9 @@ case "${1:-}" in
       esac
     done
     ;;
-  close|unclaim) ;;
+  close)
+    qtmp="$FAKE_QUEUE.tmp"; jq --arg id "$2" 'map(if .id == $id then .status = "closed" else . end)' "$FAKE_QUEUE" >"$qtmp"; mv -f "$qtmp" "$FAKE_QUEUE" ;;
+  unclaim) ;;
   *) echo "unexpected bd invocation: $*" >&2; exit 64 ;;
 esac
 EOF
@@ -150,7 +170,7 @@ reset() {
   export XDG_STATE_HOME="$CASE/state"
   unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS FAKE_PREFLIGHT_SETTLES
   unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
-  unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT
+  unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT FAKE_CHECKS_STDERR FAKE_ACTION_REQUIRED FAKE_ACTION_REQUIRED_EXIT
   export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -455,6 +475,40 @@ run_patrol
 grep -q '^close ' "$FAKE_BD_LOG" && fail "indeterminate base health was treated as recovery"
 grep -q 'health indeterminate' "$CASE/state/pr-babysit/patrol.log" || fail "indeterminate probe was silent"
 
+# bd is the record of truth, not the state file.  Losing the state record while
+# the bead is open must not orphan the bead: without reconciliation the base
+# recovers, nothing holds the id, and a P0 outlives the outage forever.
+reset base-watch-state-loss "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' PR_BABYSIT_RED_BASE_LIMIT=2 FAKE_BASE_RUNS="$red_runs"
+run_patrol; run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "watch did not escalate"
+rm -f "$CASE/state/pr-babysit/red-base"     # state loss
+run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "state loss produced a duplicate escalation"
+grep -q 'adopting open bead mybd-created' "$CASE/state/pr-babysit/patrol.log" || fail "open bead was not adopted after state loss"
+export FAKE_BASE_RUNS="$green_runs"
+run_patrol
+grep -q '^close mybd-created' "$FAKE_BD_LOG" || fail "adopted bead was not withdrawn on recovery"
+
+# The mirror case: a remembered id whose bead someone closed by hand must not
+# suppress escalation forever — that is the silent failure this lane exists to end.
+reset base-watch-stale-id "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' PR_BABYSIT_RED_BASE_LIMIT=2 FAKE_BASE_RUNS="$red_runs"
+mkdir -p "$CASE/state/pr-babysit"
+printf 'gastownhall/beads@main\t9\t2026-07-31T09:00:00Z\tmybd-gone\n' >"$CASE/state/pr-babysit/red-base"
+run_patrol
+grep -q 'bead mybd-gone is no longer open; forgetting it' "$CASE/state/pr-babysit/patrol.log" || fail "stale bead id was trusted"
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "forgotten stale id did not allow re-escalation"
+
+# A healthy watched base is silent: no state, no bead, nothing to say.
+reset base-watch-quiet "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' FAKE_BASE_RUNS="$green_runs"
+run_patrol; run_patrol
+[[ "$(count 'red-base:' "$CASE/state/pr-babysit/patrol.log")" == 0 ]] || fail "a healthy base produced red-base chatter"
+
 # A malformed watch spec is reported and skipped, not fatal.
 reset base-watch-malformed "$policy"
 printf '[]\n' >"$FAKE_QUEUE"
@@ -639,6 +693,46 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do run_patrol; done
 jq -e '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE" >/dev/null || fail "flapping transient tail did not come to rest blocked"
 [[ "$(jq -r '.[0].metadata.pr_babysit_rearm' "$FAKE_QUEUE")" == "$head_a:2" ]] || fail "transient flap did not stop at the re-arm budget"
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "flapping transient tail merged"
+
+# --- "no checks reported" is explained once, not logged forever (mybd-eotx) ---
+# 16 fork PRs held in GitHub's first-time-contributor approval gate produced no
+# checks at all, so 10 blocked lanes logged the same unreadable-checks line every
+# 12 minutes for days while the maintainer had no idea approval was owed.
+reset nochecks-approval "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_CHECKS_EXIT=1 FAKE_CHECKS_STDERR='no checks reported on the "feature" branch' \
+  FAKE_ACTION_REQUIRED='[{"databaseId":1},{"databaseId":2}]'
+run_patrol
+[[ "$(count 'AWAITING WORKFLOW APPROVAL' "$CASE/state/pr-babysit/patrol.log")" == 1 ]] || fail "awaiting-approval condition was not named"
+[[ "$(count 'action_required' "$FAKE_BD_LOG")" == 1 ]] || fail "awaiting-approval was not recorded on the bead"
+[[ "$(jq -r '.[0].metadata.pr_babysit_nochecks' "$FAKE_QUEUE")" == "$head_a" ]] || fail "no-checks marker was not recorded"
+run_patrol; run_patrol
+[[ "$(count 'AWAITING WORKFLOW APPROVAL' "$CASE/state/pr-babysit/patrol.log")" == 1 ]] || fail "awaiting-approval repeated on an unmoved head"
+[[ "$(count 'sweep gh pr checks stderr' "$CASE/state/pr-babysit/patrol.log")" == 0 ]] || fail "standing condition fell back to the noisy stderr line"
+# The quiet is head-scoped, not permanent: a marker left over from an earlier
+# head does not suppress the explanation for the head actually blocked now.
+reset nochecks-stale-marker "$policy"
+make_blocked "checks-persistent:$head_a" "" "{\"pr_babysit_nochecks\":\"$head_b\"}"
+export FAKE_CHECKS_EXIT=1 FAKE_CHECKS_STDERR='no checks reported on the "feature" branch' \
+  FAKE_ACTION_REQUIRED='[{"databaseId":1}]'
+run_patrol
+[[ "$(count 'AWAITING WORKFLOW APPROVAL' "$CASE/state/pr-babysit/patrol.log")" == 1 ]] || fail "stale marker from another head suppressed the explanation"
+
+# No checks and nothing awaiting approval is still explained once — silence here
+# would be a regression on the noisy line, not an improvement on it.
+reset nochecks-plain "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_CHECKS_EXIT=1 FAKE_CHECKS_STDERR='no checks reported on the "feature" branch'
+run_patrol; run_patrol
+[[ "$(count 'none awaiting approval' "$CASE/state/pr-babysit/patrol.log")" == 1 ]] || fail "plain no-checks was not explained exactly once"
+[[ "$(count 'action_required' "$FAKE_BD_LOG")" == 0 ]] || fail "plain no-checks claimed a pending approval"
+
+# A genuine API error is not a standing condition and keeps reporting.
+reset nochecks-api-error "$policy"
+make_blocked "checks-persistent:$head_a"
+export FAKE_CHECKS_EXIT=1 FAKE_CHECKS_STDERR='HTTP 503: upstream connect error'
+run_patrol; run_patrol
+[[ "$(count 'sweep gh pr checks stderr' "$CASE/state/pr-babysit/patrol.log")" == 2 ]] || fail "API error was silenced as a standing condition"
 
 # gh exit 8 (checks pending) is a wait state, never unavailable-data.
 reset checks-exit8 "$policy"

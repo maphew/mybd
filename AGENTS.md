@@ -295,7 +295,11 @@ main is red, the only mergeable PR is the fix for main - stop-the-line, see
 
 A red base stalls every armed merge lane behind it, so the pr-babysit patrol
 raises a **`base-red`** P0 bead after ~1h of consecutive red passes (per base
-branch, one bead, self-withdrawing on recovery). If one shows up in `bd ready`,
+branch, one bead, self-withdrawing on recovery). Since 2026-07-31 the patrol
+also probes `PR_BABYSIT_WATCH_BASES` (default `gastownhall/beads@main`)
+unconditionally each pass, so a base is watched even with nothing queued behind
+it — before that the detector went silent whenever the queue drained, and main
+sat red 13h with no bead. If one shows up in `bd ready`,
 it is the stop-the-line signal: fix or rerun the base first, and expect the
 parked lanes to resume on their own - they are not blocked and need no re-arm.
 See `scripts/README.md` "pr-babysit / pr-handoff". A zero-token bisect lane
@@ -491,10 +495,13 @@ Never babysit CI in-session. When a PR's remaining work is "merge when checks
 pass", run:
 
 ```bash
-scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>] [--base-fix]
 ```
 
-and end the session. The `pr-babysit` systemd user timer (installed via
+and end the session. **If the PR you are handing off is the fix for a red
+base, pass `--base-fix`** — without it the patrol parks the one PR that can
+restore green behind the very base it repairs, and does so silently. See
+PR_MAINTAINER_GUIDELINES.md "Base-Branch Health". The `pr-babysit` systemd user timer (installed via
 `scripts/install-pr-babysit`, fires every 12 min, zero model tokens) then owns
 the merge: it merges green PRs after a blocking `pr-preflight` base-health
 check, reruns failed jobs once when flake-rerun is allowed, and on persistent

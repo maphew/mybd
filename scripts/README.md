@@ -495,6 +495,28 @@ the third is not the second — red raises a sighting, green is recovery
 evidence, and **unreadable or undecidable produces no sighting at all**;
 silence is never recorded as green.
 
+A cross-vendor review argued the green verdict should be tied to the branch's
+current head SHA rather than to the newest decisive run per workflow. It is not,
+deliberately: workflows run on different commits (a docs-only commit may run one
+workflow and nothing else), so a per-head verdict would let a green run at a
+newer commit hide a red test workflow at an older one — the exact masking
+upstream's per-workflow rule was written to prevent (gastownhall/beads#4630).
+The residual risk it correctly identifies is window truncation: the run list is
+shared across all workflows on the branch, so a chatty bot workflow could push
+the one decisive red run out of view and leave an apparent green. The watch
+reads 60 runs rather than preflight's 30 for that reason, and counts
+`startup_failure` as red alongside `failure`/`timed_out`/`action_required`.
+
+**Known blind spot (bead mybd-msll).** Both the watch and pr-preflight judge a
+base by *the base's own* workflow runs. A job that exists only in the PR
+workflow never runs on `main`, so a gate that is broken for every PR can sit
+behind a "base is green" verdict — five PRs were reported green-based in the
+Contract corpus job that only exists in `pr.yml`. The watch inherits this by
+construction, deliberately: it mirrors preflight so the two cannot disagree.
+Catching that class needs a different signal ("the last K completed PR-workflow
+runs, across distinct heads, all failed") and arguably a different bead than
+`base-red`, since "the PR gate is broken" is not "main is broken".
+
 The watch feeds the same counter and the same one-bead-per-base escalation, so
 a red base escalates after the same wait with zero lanes behind it, and the
 bead says `no merge lanes parked` instead of claiming lanes it does not have.
