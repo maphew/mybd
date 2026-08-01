@@ -288,6 +288,30 @@ bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/b
 bd-main/scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
 ```
 
+**Preflight and `gh pr list` answer "is there an open PR for this?", not "is
+anyone already doing this?"** On a machine running parallel sessions that commit
+locally before pushing, those are different questions. Before you start editing,
+ask the second one too — keyed on the FILE, not on the topic:
+
+```bash
+git -C bd-main log --all --oneline --since=3.days -- <path you are about to edit>
+```
+
+Do not substitute a scan of branch names for this. 72 of 73 local `bd-main`
+branches carry commits not on `upstream/main`, so a name-based sweep returns
+dozens of candidates and gets ignored; the path-scoped query returns one or two
+and is worth reading. Check the file you are about to touch, and read any hit
+before writing a line — the branch you find may hold a better version of the
+change you were about to make.
+
+Why this is written down (2026-08-01): a session fixed a `internal/config`
+symlink bug that an earlier session the same morning had already fixed, better,
+on an unpushed local branch with no bead and no PR. Both `gh pr list` and
+`pr-preflight --search` were run and both correctly reported nothing, because
+neither can see an unpushed branch. `scripts/session-close-check` now warns at
+the producing end (see "Cold-start handoff"); this is the receiving end, and it
+works even when the other session skipped everything.
+
 Autonomous agents export `PR_PREFLIGHT_BLOCK_RED_BASE=1` so preflight
 hard-blocks (rather than warns) when the base branch is red. While upstream
 main is red, the only mergeable PR is the fix for main - stop-the-line, see
@@ -677,13 +701,18 @@ these three (answer in the handoff, do not just tick them):
    are not on the cold-start path; memories are.
 2. **Is every deliverable/report this session produced reachable from an OPEN
    bead or a memory?** A pointer that lives only in a *closed* bead is a smell -
-   a cold agent runs `bd ready`, not `bd list --status=closed`.
+   a cold agent runs `bd ready`, not `bd list --status=closed`. **A branch is a
+   deliverable.** An unpushed branch named by no bead is invisible to `bd ready`,
+   to `gh pr list`, and to `pr-preflight --search` alike - the next session will
+   not find it and may well rebuild it.
 3. **Does any bead I touched say "after / gated-on / once X lands" in prose but
    lack a dependency edge?** Prose ordering is invisible to `bd ready`; encode it
    as a `bd dep` edge or the cold agent will pick blocked work.
 
 A warn-only mechanical backstop catches the cheap omissions (unreferenced new
-reports, thin new beads, beads left `in_progress`). It never blocks a close:
+reports, thin new beads, beads left `in_progress`, and branches this session
+advanced that are neither pushed nor named by an open bead - in this repo or in
+`bd-main`). It never blocks a close:
 
 ```bash
 scripts/session-close-check            # warn, exit 0 (Windows: scripts/session-close-check.ps1)
