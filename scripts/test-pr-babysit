@@ -42,6 +42,7 @@ case "${1:-} ${2:-}" in
     touch "$FAKE_MERGE_MARK"
     ;;
   "run rerun") exit "${FAKE_RERUN_EXIT:-0}" ;;
+  "run list") printf '%s\n' "${FAKE_BASE_RUNS:-[]}"; exit "${FAKE_BASE_RUNS_EXIT:-0}" ;;
   *) echo "unexpected gh invocation: $*" >&2; exit 64 ;;
 esac
 EOF
@@ -133,6 +134,9 @@ export PR_BABYSIT_SETTLE_DELAY=0
 # The review lane is exercised by its own cases below; the merge/close cases
 # run with it disabled so their gh/bd expectations stay exact.
 export PR_BABYSIT_REVIEW=0
+# Same for the standing base watch: its cases set PR_BABYSIT_WATCH_BASES
+# explicitly, everything else runs with lane-only sightings as before.
+export PR_BABYSIT_WATCH_BASES=
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
@@ -146,7 +150,8 @@ reset() {
   export XDG_STATE_HOME="$CASE/state"
   unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS FAKE_PREFLIGHT_SETTLES
   unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
-  export PR_BABYSIT_REVIEW=0
+  unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT
+  export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
@@ -358,6 +363,59 @@ run_patrol; run_patrol; run_patrol
 [[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "corrupt state record suppressed escalation"
 grep -q 'dropping unparseable state record' "$CASE/state/pr-babysit/patrol.log" || fail "corrupt state record was silently discarded"
 unset PR_BABYSIT_RED_BASE_LIMIT
+
+# --- standing base watch (mybd-sopqb) -------------------------------------
+# The whole point: a red base with ZERO armed lanes still escalates.  Before
+# this lane the detector was fed only by parked lanes, so it went silent the
+# moment the queue drained — main was red 13h on 2026-07-31 with no bead.
+red_runs='[{"conclusion":"failure","workflowName":"Main","createdAt":"2026-07-31T09:00:00Z","url":"https://github.com/gastownhall/beads/actions/runs/1"}]'
+green_runs='[{"conclusion":"success","workflowName":"Main","createdAt":"2026-07-31T22:00:00Z","url":"https://github.com/gastownhall/beads/actions/runs/2"}]'
+
+reset base-watch-no-lanes "$policy"
+printf '[]\n' >"$FAKE_QUEUE"   # no armed lanes at all
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' PR_BABYSIT_RED_BASE_LIMIT=3 FAKE_BASE_RUNS="$red_runs"
+watch_state="$CASE/state/pr-babysit/red-base"
+run_patrol; run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 0 ]] || fail "watch escalated before its budget"
+grep -q $'^gastownhall/beads@main\t2\t' "$watch_state" || fail "watch counter did not advance with an empty queue"
+run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "watch did not raise a bead with zero armed lanes"
+grep -q 'no merge lanes parked' "$FAKE_BD_LOG" || fail "watch bead claimed lanes were parked"
+run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "watch raised a duplicate bead"
+
+# ...and the watch also observes recovery, which lanes could not: this is the
+# case where the old bead text admitted it would stay open until a human closed it.
+export FAKE_BASE_RUNS="$green_runs"
+run_patrol
+grep -q '^close mybd-created' "$FAKE_BD_LOG" || fail "watch did not withdraw its escalation on recovery"
+grep -q '^gastownhall/beads@main' "$watch_state" 2>/dev/null && fail "recovered base survived in state"
+
+# An unreadable run history is absence of evidence, never green.
+reset base-watch-unreadable "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' PR_BABYSIT_RED_BASE_LIMIT=3
+mkdir -p "$CASE/state/pr-babysit"
+printf 'gastownhall/beads@main\t2\t2026-07-31T09:00:00Z\tmybd-standing\n' >"$CASE/state/pr-babysit/red-base"
+export FAKE_BASE_RUNS_EXIT=1
+run_patrol
+grep -q '^close ' "$FAKE_BD_LOG" && fail "unreadable run history was treated as recovery"
+grep -q $'^gastownhall/beads@main\t2\t' "$CASE/state/pr-babysit/red-base" || fail "unreadable probe did not carry the record forward"
+grep -q 'run history unreadable' "$CASE/state/pr-babysit/patrol.log" || fail "unreadable probe was silent"
+# A base with no decisive completed runs is equally undecidable, not green.
+unset FAKE_BASE_RUNS_EXIT; export FAKE_BASE_RUNS='[{"conclusion":"cancelled","workflowName":"Main","createdAt":"2026-07-31T09:00:00Z","url":"u"}]'
+run_patrol
+grep -q '^close ' "$FAKE_BD_LOG" && fail "indeterminate base health was treated as recovery"
+grep -q 'health indeterminate' "$CASE/state/pr-babysit/patrol.log" || fail "indeterminate probe was silent"
+
+# A malformed watch spec is reported and skipped, not fatal.
+reset base-watch-malformed "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='not-a-spec'
+run_patrol
+grep -q "ignoring malformed watch spec" "$CASE/state/pr-babysit/patrol.log" || fail "malformed watch spec was silently ignored"
+unset PR_BABYSIT_RED_BASE_LIMIT
+export PR_BABYSIT_WATCH_BASES=
 
 reset policy-block "$policy"; export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT='[block] Merge conflict detected'
 run_patrol; grep -q -- '--status open' "$FAKE_BD_LOG" || fail "policy block did not open/block bead"

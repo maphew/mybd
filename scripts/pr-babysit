@@ -70,6 +70,15 @@ RED_BASE_STATE="$STATE_DIR/red-base"
 # commit. This only writes one metadata key at creation; all bisect work
 # happens out-of-band in bisect-next. Set PR_BABYSIT_BISECT=0 to disable.
 BISECT_AUTOQUEUE="${PR_BABYSIT_BISECT:-1}"
+# Bases watched unconditionally every pass, independent of whether any merge
+# lane is armed behind them.  Space-separated "owner/repo@branch" specs; set
+# PR_BABYSIT_WATCH_BASES= (empty) to disable the standing watch entirely.
+# Why this exists: red-base sightings used to come only from lanes running
+# pr-preflight, so the detector went silent exactly when the queue drained.  On
+# 2026-07-31 upstream main recovered at 08:18Z, all 14 parked lanes merged, main
+# broke again 34 minutes later into an empty queue, and stayed red ~13h with no
+# bead (mybd-sopqb).  One `gh run list` per base per pass closes that hole.
+WATCH_BASES="${PR_BABYSIT_WATCH_BASES-gastownhall/beads@main}"
 # Every merge flips mergeStateStatus to UNKNOWN for every other open PR, so a
 # green backlog would otherwise drain at one PR per pass while burning the
 # others' transient budgets.  On a transient-only block, wait briefly for
@@ -194,6 +203,8 @@ rearm_sweep() {
 # substitution, not a pipe), and are consumed by red_base_escalate after it.
 RED_BASE_SIGHTINGS=""   # one "key<TAB>detail" line per lane parked behind a red base
 GREEN_BASE_KEYS=""      # one "key" line per base positively observed green
+WATCH_RED_SIGHTINGS=""  # one "key<TAB>detail" line per WATCH_BASES base seen red
+WATCH_GREEN_KEYS=""     # one "key" line per WATCH_BASES base seen green
 
 # Record one lane parked behind a red base, naming the base and the failing-run
 # detail from the preflight block line so the escalation cites the run.
@@ -211,6 +222,47 @@ green_base_note() {
   local repo="$1" out="$2" branch
   branch="$(sed -nE 's/^\[pass\] Base branch (.+) CI is green( \(.*)?$/\1/p' <<<"$out" | head -n1)"
   GREEN_BASE_KEYS+="$repo@${branch:-unknown}"$'\n'
+}
+
+# Standing base-health watch: read each watched base's CI directly, with no PR
+# in the picture.  Deliberately mirrors pr-preflight's base-health verdict
+# (newest DECISIVE completed run per workflow) so the two never disagree about
+# what "red" means — cancelled/superseded runs carry no signal, and one green
+# workflow finishing last must not mask a red one.
+#
+# Three outcomes, and the third is not the second: red -> sighting, green ->
+# recovery evidence, anything unreadable or undecidable -> NO sighting at all.
+# Silence must never be recorded as green; that is the failure this lane exists
+# to prevent, so an API error simply carries the existing record forward.
+base_watch_probe() {
+  local spec repo branch runs latest red_n green_n detail
+  [[ -n "$WATCH_BASES" ]] || return 0
+  for spec in $WATCH_BASES; do
+    if [[ ! "$spec" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([A-Za-z0-9_./-]+)$ ]]; then
+      log "base-watch: ignoring malformed watch spec '$spec'"; continue
+    fi
+    repo="${BASH_REMATCH[1]}"; branch="${BASH_REMATCH[2]}"
+    if ! runs="$(gh run list --repo "$repo" --branch "$branch" --status completed \
+        --limit 30 --json conclusion,workflowName,createdAt,url 2>>"$LOG")" \
+      || ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$runs"; then
+      log "base-watch: $repo@$branch run history unreadable; no sighting this pass"; continue
+    fi
+    latest="$(jq -c '[group_by(.workflowName)[]
+      | [.[] | select((.conclusion // "") == "success" or ((.conclusion // "") | test("^(failure|timed_out|action_required)$")))][0]
+      | select(. != null)]' <<<"$runs")" || { log "base-watch: $repo@$branch run data unparseable; no sighting this pass"; continue; }
+    red_n="$(jq '[.[] | select((.conclusion // "") | test("^(failure|timed_out|action_required)$"))] | length' <<<"$latest")"
+    green_n="$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$latest")"
+    if (( red_n > 0 )); then
+      detail="$(jq -r '[.[] | select((.conclusion // "") | test("^(failure|timed_out|action_required)$"))
+        | "\(.workflowName) failed at \(.createdAt) (\(.url))"] | join("; ")' <<<"$latest")"
+      WATCH_RED_SIGHTINGS+="$repo@$branch"$'\t'"$detail"$'\n'
+      log "base-watch: $repo@$branch RED ($red_n workflow(s) failing)"
+    elif (( green_n > 0 )); then
+      WATCH_GREEN_KEYS+="$repo@$branch"$'\n'
+    else
+      log "base-watch: $repo@$branch health indeterminate (no decisive completed runs); no sighting this pass"
+    fi
+  done
 }
 
 cd "$ROOT" || exit 1
@@ -476,13 +528,31 @@ red_base_existing_bead() {
   jq -r --arg k "$key" 'map(select(.status == "open" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$out"
 }
 
+base_is_watched() {
+  local key="$1" spec
+  for spec in $WATCH_BASES; do [[ "$spec" == "$key" ]] && return 0; done
+  return 1
+}
+
 red_base_create() {
-  local key="$1" count="$2" first="$3" lanes="$4" detail="$5" desc
-  desc="The pr-babysit patrol has observed base branch $key red for $count consecutive passes, since $first. $lanes merge lane(s) are parked behind it and cannot merge while it is red (agents run PR_PREFLIGHT_BLOCK_RED_BASE=1).
+  local key="$1" count="$2" first="$3" lanes="$4" detail="$5" desc lanes_para recovery_para title_tail
+  if (( lanes > 0 )); then
+    title_tail="$lanes merge lane(s) parked"
+    lanes_para="$lanes merge lane(s) are parked behind it and cannot merge while it is red (agents run PR_PREFLIGHT_BLOCK_RED_BASE=1). The parked lanes are NOT blocked and need no re-arm: they resume automatically once the base is green."
+  else
+    title_tail="no merge lanes parked"
+    lanes_para="No merge lanes are parked behind it — this was seen by the standing base watch, not by a lane. A red base with an empty queue is not harmless: every PR opened or updated against it inherits red checks, which is how 'those failures are pre-existing' becomes the default reading and new breakage rides in under that cover."
+  fi
+  if base_is_watched "$key"; then
+    recovery_para="This bead closes itself on the next patrol pass in which $key is observed green, by the standing watch or by a lane; the watch runs whether or not anything is queued, so recovery is noticed with no queue and no human."
+  else
+    recovery_para="This bead closes itself on the next patrol pass in which a LANE observes $key green — $key is not in PR_BABYSIT_WATCH_BASES, so if every parked lane is merged, blocked or closed while the base is still red, no observer remains and this bead will stay open until a human closes it."
+  fi
+  desc="The pr-babysit patrol has observed base branch $key red for $count consecutive passes, since $first. $lanes_para
 
-Preflight reported: ${detail:-(no detail parsed)}
+Reported: ${detail:-(no detail parsed)}
 
-The parked lanes are NOT blocked and need no re-arm: they resume automatically once the base is green. This bead closes itself on the next patrol pass in which a lane observes $key green — note that if every parked lane is merged, blocked or closed while the base is still red, no lane remains to make that observation and this bead will stay open until a human closes it.
+$recovery_para
 
 What is needed here is a decision about the base itself: rerun a suspected flake, or land the fix for the base. While it is red that fix is the only mergeable PR — see PR_MAINTAINER_GUIDELINES.md 'Base-Branch Health'.
 
@@ -494,18 +564,19 @@ Raised automatically by scripts/pr-babysit; patrol log: $LOG"
   else
     meta="$(jq -nc --arg k "$key" '{pr_babysit_red_base:$k}')"
   fi
-  bd create "Base branch $key has been red for $count patrol passes; $lanes merge lane(s) parked" \
+  bd create "Base branch $key has been red for $count patrol passes; $title_tail" \
     -t bug -p 0 -l base-red \
     --metadata "$meta" \
     --description "$desc" --json 2>/dev/null | jq -r '.id // empty'
 }
 
 red_base_escalate() {
-  local now state keys key rec count first bead lanes detail newstate="" tmp
+  local now state keys key rec count first bead lanes detail newstate="" tmp red_now
   now="$(date -u +%FT%TZ)"
   state="$(red_base_state_read)"
-  # Union of bases already tracked and bases observed red this pass.
-  keys="$( { cut -f1 <<<"$state"; cut -f1 <<<"$RED_BASE_SIGHTINGS"; } | grep -v '^$' | sort -u )"
+  # Union of bases already tracked and bases observed red this pass, by either
+  # observer: a parked lane's preflight or the standing watch.
+  keys="$( { cut -f1 <<<"$state"; cut -f1 <<<"$RED_BASE_SIGHTINGS"; cut -f1 <<<"$WATCH_RED_SIGHTINGS"; } | grep -v '^$' | sort -u )"
   [[ -n "$keys" ]] || { rm -f "$RED_BASE_STATE"; return 0; }
 
   while read -r key; do
@@ -515,17 +586,30 @@ red_base_escalate() {
     if [[ -n "$rec" ]]; then
       count="$(cut -f2 <<<"$rec")"; first="$(cut -f3 <<<"$rec")"; bead="$(cut -f4 <<<"$rec")"
     fi
+    # lanes counts PARKED MERGE LANES, which is reported on the bead and is not
+    # the same question as "is this base red" — the standing watch sees a red
+    # base with zero lanes behind it, which is precisely the 13h-outage case.
     lanes="$(awk -F'\t' -v k="$key" '$1 == k {n++} END {print n + 0}' <<<"$RED_BASE_SIGHTINGS")"
+    red_now=0
+    (( lanes > 0 )) && red_now=1
+    if [[ "$(awk -F'\t' -v k="$key" '$1 == k {n++} END {print n + 0}' <<<"$WATCH_RED_SIGHTINGS")" != 0 ]]; then
+      red_now=1
+      # A lane and the watch reading the same API differently is a race, not a
+      # recovery.  Red wins: a spurious extra pass costs nothing, a spurious
+      # close re-opens the blind spot.
+      grep -qxF "$key" <<<"$GREEN_BASE_KEYS" && log "base-watch: $key reported red by watch and green by a lane in the same pass; treating as red"
+    fi
 
-    if (( lanes == 0 )); then
+    if (( red_now == 0 )); then
       # Not observed red this pass.  Only a positively observed GREEN base of
-      # this exact identity is recovery; every other reason a lane did not
-      # report (queue empty, lanes merged away, bd unavailable, a different
-      # base green) is absence of evidence, and the record carries forward.
-      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS"; then
+      # this exact identity is recovery; every other reason no observer
+      # reported (queue empty, lanes merged away, bd or gh unavailable, a
+      # different base green) is absence of evidence, and the record carries
+      # forward.
+      if grep -qxF "$key" <<<"$GREEN_BASE_KEYS" || grep -qxF "$key" <<<"$WATCH_GREEN_KEYS"; then
         if [[ -z "$bead" ]]; then
           log "red-base: $key recovered before escalating"; continue
-        elif bd close "$bead" --reason "Base branch $key recovered; parked merge lanes resumed with no manual action." >/dev/null 2>&1; then
+        elif bd close "$bead" --reason "Base branch $key observed green again; any parked merge lanes resume with no manual action." >/dev/null 2>&1; then
           log "red-base: $key recovered; escalation bead $bead closed"; continue
         else
           log "red-base: $key recovered but closing $bead failed; retrying next pass"
@@ -536,6 +620,7 @@ red_base_escalate() {
     fi
 
     detail="$(awk -F'\t' -v k="$key" '$1 == k {print $2; exit}' <<<"$RED_BASE_SIGHTINGS")"
+    [[ -n "$detail" ]] || detail="$(awk -F'\t' -v k="$key" '$1 == k {print $2; exit}' <<<"$WATCH_RED_SIGHTINGS")"
     count=$((count + 1))
     if [[ -z "$bead" ]]; then
       if ! bead="$(red_base_existing_bead "$key")"; then
@@ -576,6 +661,7 @@ red_base_escalate() {
     rm -f "$tmp"; log "red-base: state write failed"
   fi
 }
+base_watch_probe
 red_base_escalate
 
 # --- close-when-quiet: decline offers become closes after a quiet window ----

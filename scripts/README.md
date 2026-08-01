@@ -457,9 +457,34 @@ per-pass record lives in the patrol log.
 Everything here is keyed per base: a green sighting of `main` never withdraws
 an escalation for `release-1.2`, and only a *positively observed* green base
 of the same identity closes the bead. An empty queue is absence of evidence,
-not recovery. The corollary is worth knowing: if every parked lane is merged,
-blocked or closed while the base is still red, no lane remains to observe
-recovery and the bead stays open until a human closes it. The bead says so.
+not recovery.
+
+**Standing base watch.** Sightings originally came only from lanes running
+`pr-preflight`, which meant the detector watched a base only while something
+was already waiting to merge onto it — and went silent the moment the queue
+drained. That is the worst-case ordering, not a rare one: a red base parks
+lanes, they all merge when it recovers, and the next breakage lands into an
+empty queue unobserved. It happened on 2026-07-31 — main recovered at 08:18Z,
+14 parked lanes merged, main broke again 34 minutes later and stayed red ~13h
+with no bead (bead mybd-sopqb).
+
+So each pass the patrol also probes every base in `PR_BABYSIT_WATCH_BASES`
+(space-separated `owner/repo@branch`, default `gastownhall/beads@main`;
+set it empty to disable) with one `gh run list` per base — still zero model
+tokens. The verdict deliberately mirrors pr-preflight's: newest *decisive*
+completed run per workflow, so cancelled/superseded runs carry no signal and
+one green workflow finishing last cannot mask a red one. Three outcomes, and
+the third is not the second — red raises a sighting, green is recovery
+evidence, and **unreadable or undecidable produces no sighting at all**;
+silence is never recorded as green.
+
+The watch feeds the same counter and the same one-bead-per-base escalation, so
+a red base escalates after the same wait with zero lanes behind it, and the
+bead says `no merge lanes parked` instead of claiming lanes it does not have.
+It also closes the old hole in the other direction: recovery no longer needs a
+surviving lane to observe it. If a lane and the watch disagree within one pass,
+red wins and the disagreement is logged — a spurious extra pass costs nothing,
+a spurious close reopens the blind spot.
 
 Nothing about this lane can block, unclaim, or otherwise mutate a merge tail —
 it only ever creates, notes, or closes its own `base-red` bead.
