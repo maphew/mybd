@@ -140,6 +140,7 @@ case "${1:-}" in
   close)
     qtmp="$FAKE_QUEUE.tmp"; jq --arg id "$2" 'map(if .id == $id then .status = "closed" else . end)' "$FAKE_QUEUE" >"$qtmp"; mv -f "$qtmp" "$FAKE_QUEUE" ;;
   unclaim) ;;
+  dolt) ;;
   *) echo "unexpected bd invocation: $*" >&2; exit 64 ;;
 esac
 EOF
@@ -169,7 +170,7 @@ exit "${FAKE_PREFLIGHT_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+exit "${FAKE_SYSTEMCTL_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/systemd-analyze" <<'EOF'
 #!/usr/bin/env bash
@@ -177,6 +178,23 @@ printf '%s\n' "$*" >>"$FAKE_SYSTEMD_ANALYZE_LOG"
 exit "${FAKE_SYSTEMD_ANALYZE_EXIT:-0}"
 EOF
 chmod +x "$FAKE_BIN/gh" "$FAKE_BIN/bd" "$FAKE_BIN/preflight" "$FAKE_BIN/systemctl" "$FAKE_BIN/systemd-analyze"
+
+# A curated PATH with no systemctl reachable at all, for the pr-handoff
+# no-systemctl case below. Just removing the fake systemctl from FAKE_BIN is
+# not enough on a real systemd host (this one included): `command -v` would
+# still find the genuine /usr/bin/systemctl further down $PATH. Real
+# systemctl lives in the same directory as several other tools pr-handoff
+# genuinely needs (jq, date, sed, sort, wc, tr, dirname), so excluding that
+# whole directory means resolving those individually instead.
+NOSYS_BIN="$TMP/bin-no-systemctl"
+mkdir -p "$NOSYS_BIN"
+ln -sf "$FAKE_BIN/gh" "$NOSYS_BIN/gh"
+ln -sf "$FAKE_BIN/bd" "$NOSYS_BIN/bd"
+for _tool in bash dirname jq date sed sort wc tr mv; do
+  _tool_path="$(command -v "$_tool")" || { echo "FAIL: no-systemctl PATH setup: $_tool not found on the real PATH" >&2; exit 1; }
+  ln -sf "$_tool_path" "$NOSYS_BIN/$_tool"
+done
+unset _tool _tool_path
 
 export PATH="$FAKE_BIN:$PATH"
 export PR_BABYSIT_PREFLIGHT="$FAKE_BIN/preflight"
@@ -187,6 +205,10 @@ export PR_BABYSIT_REVIEW=0
 # Same for the standing base watch: its cases set PR_BABYSIT_WATCH_BASES
 # explicitly, everything else runs with lane-only sightings as before.
 export PR_BABYSIT_WATCH_BASES=
+# Same for the dolt-pull pre-step: its own cases exercise it explicitly;
+# everything else runs with it disabled so existing bd-log expectations
+# (first bd invocation is always the rearm sweep's `bd list`) stay exact.
+export PR_BABYSIT_DOLT_PULL=0
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
@@ -204,7 +226,8 @@ reset() {
   unset FAKE_PREFLIGHT_TRUNCATED FAKE_BASE_REF FAKE_HEAD_BRANCH
   unset FAKE_BEHIND FAKE_BASE_TIP FAKE_CHECK_STARTED FAKE_CHECK_COMPLETED FAKE_COMPARE_EXIT FAKE_BASE_TIP_EXIT FAKE_UPDATE_BRANCH_EXIT FAKE_BASE_ACTIVITY_EXIT
   unset PR_BABYSIT_FRESHEN PR_BABYSIT_FRESHEN_LIMIT
-  export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
+  unset FAKE_SYSTEMCTL_EXIT FAKE_BD_DOLT_PULL_EXIT
+  export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES= PR_BABYSIT_DOLT_PULL=0
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   jq -cn --arg notes "$notes" --arg ref "$ref" --argjson metadata "$metadata" \
@@ -1192,5 +1215,67 @@ patrol_log | grep -q 'bd create failed for gastownhall/beads#901' || fail "creat
 unset FAKE_BD_FAIL_ON
 run_patrol
 patrol_log | grep -q 'created review-needed bead for gastownhall/beads#901' || fail "create was not retried after failure"
+
+# --- dolt sync pre-step (mybd-jgxt) ------------------------------------------
+# This machine is the designated pr-babysit babysitter; a handoff enqueued on
+# another machine only reaches this patrol via a dolt pull. The guarded
+# pre-step must run inside the same flock as the rest of the pass (exercised
+# implicitly: it always runs before the rearm sweep's first `bd list`, which
+# every case above already depends on), must not abort the pass on failure,
+# runs at most once per pass, and is skippable via PR_BABYSIT_DOLT_PULL — the
+# knob every other case above relies on to keep its bd-log expectations exact.
+
+reset dolt-pull-runs "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' PR_BABYSIT_DOLT_PULL=1
+run_patrol
+[[ "$(count '^dolt pull$' "$FAKE_BD_LOG")" == 1 ]] || fail "dolt pull did not run exactly once per pass"
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "a successful dolt pull blocked an otherwise-green merge"
+
+# A failing pull is logged and the pass continues against the local queue —
+# it must not abort the merge/close/review lanes that follow it.
+reset dolt-pull-fails "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' PR_BABYSIT_DOLT_PULL=1 FAKE_BD_FAIL_ON=dolt
+run_patrol
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "a failing dolt pull aborted the pass"
+grep -q 'dolt pull failed; continuing against the local queue' "$CASE/state/pr-babysit/patrol.log" \
+  || fail "a failing dolt pull was not logged"
+
+# The skip knob is honored — this is the default `reset` leaves in place, so
+# confirm explicitly rather than only relying on every other case's silence.
+reset dolt-pull-skipped "$policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+[[ "$(count '^dolt pull$' "$FAKE_BD_LOG")" == 0 ]] || fail "PR_BABYSIT_DOLT_PULL=0 still ran a pull"
+[[ -f "$FAKE_MERGE_MARK" ]] || fail "the skip knob broke an otherwise-green merge"
+
+# --- pr-handoff: platform-aware timer warning (mybd-jgxt) --------------------
+# The pr-babysit timer only means something on a systemd host: a host with no
+# systemctl at all gets the designation reminder instead of a warning that
+# looks actionable but names a timer that host can never have installed.
+
+reset handoff-systemd-inactive-warns '{}'
+export FAKE_SYSTEMCTL_EXIT=1
+out="$("$ROOT/scripts/pr-handoff" 601 --repo owner/handoff-a --method rebase 2>&1 >/dev/null)"
+grep -q 'WARNING: pr-babysit.timer is not active' <<<"$out" \
+  || fail "systemd host with an inactive timer did not warn"
+unset FAKE_SYSTEMCTL_EXIT
+
+# An active timer on a systemd host stays quiet, same as before this change.
+reset handoff-systemd-active-quiet '{}'
+out="$("$ROOT/scripts/pr-handoff" 602 --repo owner/handoff-b --method rebase 2>&1 >/dev/null)"
+[[ -z "$out" ]] || fail "systemd host with an active timer printed unexpected stderr: $out"
+
+# A host with no systemctl on PATH at all gets the designation message, not
+# the systemd-specific warning. Uses the curated no-systemctl PATH built at
+# setup time, not just a missing fake binary — this host has a real
+# /usr/bin/systemctl that `command -v` would otherwise still find.
+reset handoff-no-systemctl '{}'
+out="$(PATH="$NOSYS_BIN" "$ROOT/scripts/pr-handoff" 603 --repo owner/handoff-c --method rebase 2>&1 >/dev/null)"
+grep -q 'designated Linux machine runs the pr-babysit patrol' <<<"$out" \
+  || fail "a host with no systemctl did not print the designation message"
+grep -q "bd dolt push" <<<"$out" \
+  || fail "the designation message did not mention bd dolt push"
+! grep -q 'WARNING: pr-babysit.timer is not active' <<<"$out" \
+  || fail "a host with no systemctl printed the systemd-only warning"
 
 echo "pr-babysit behavioural tests: PASS"

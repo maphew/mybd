@@ -105,6 +105,16 @@ if [[ -n "$BASE_FIX_KEY" ]]; then
   echo "BASE-FIX: the patrol may merge this PR while $BASE_FIX_KEY is RED, on this PR's own green checks."
   echo "          Every other preflight block still holds, and the exception is inert once $BASE_FIX_KEY is green."
 fi
-if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
-  echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
+# The pr-babysit patrol is a systemd user timer, so this check only means
+# something on a systemd host. On a host with no systemctl at all (Windows Git
+# Bash, macOS) the warning below would be wrong and actionable-looking — there
+# is no local timer to enable. This machine is not the designated babysitter
+# (see AGENTS.md "PR Merge Tails (babysitter pattern)"); the handoff still
+# reaches the patrol, but only once bd state syncs there, so say that instead.
+if command -v systemctl >/dev/null 2>&1; then
+  if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
+    echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
+  fi
+else
+  echo "NOTE: the designated Linux machine runs the pr-babysit patrol, not this host. Run 'bd dolt push' at session close so this handoff reaches its queue." >&2
 fi

@@ -697,6 +697,17 @@ follow-up activity re-queues it automatically. The lane never touches claimed
 beads or beads in the merge/close lanes and never posts upstream. Details and
 knobs: `scripts/README.md` "pr-babysit / pr-handoff".
 
+**The Linux machine is the designated pr-babysit babysitter; there is no
+Windows port** (owner directive maphew, bead mybd-jgxt). A session on any
+machine enqueues the same way — `pr-handoff`/`pr-close-handoff` plus
+`bd dolt push` at session close — and only the Linux patrol merges or closes.
+`pr-handoff` knows this: on a host with no `systemctl` it skips the
+timer-not-active warning (meaningless off the designated machine) and prints
+the designation reminder instead. The patrol closes its half of the gap by
+pulling once per pass, inside its own lock, before reading the queue
+(`PR_BABYSIT_DOLT_PULL=0` to skip, for the hermetic tests) — a failed pull
+just leaves the pass reasoning about whatever queue is already on disk.
+
 ### Unattended model lane (solo-sweep)
 
 The three lanes above are zero-token. `scripts/solo-sweep` is the one that
