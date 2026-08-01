@@ -28,7 +28,10 @@ case "${1:-} ${2:-}" in
     [[ -f "${FAKE_PREFLIGHT_MARK:-/dev/null}" ]] && head="${FAKE_HEAD_AFTER_PREFLIGHT:-$head}"
     [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
     rollup="${FAKE_ROLLUP:-}"
-    [[ -n "$rollup" ]] || rollup='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]'
+    # Real completed CheckRuns always carry both timestamps and the stale-green
+    # guard reads startedAt, so the default fixture carries both.
+    started="${FAKE_CHECK_STARTED:-2026-01-01T00:00:00Z}"
+    [[ -n "$rollup" ]] || rollup="[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"startedAt\":\"$started\",\"completedAt\":\"${FAKE_CHECK_COMPLETED:-$started}\"}]"
     jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --arg hb "${FAKE_HEAD_BRANCH:-feature}" --arg bb "${FAKE_BASE_REF:-main}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, headRefName:$hb, baseRefName:$bb, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
     [[ -f "$FAKE_MERGE_MARK" ]] && exit "${FAKE_POST_PR_EXIT:-0}"
     exit "${FAKE_PR_EXIT:-0}"
@@ -43,6 +46,14 @@ case "${1:-} ${2:-}" in
     [[ "$expected" == "$actual" ]] || exit 65
     touch "$FAKE_MERGE_MARK"
     ;;
+  "pr update-branch")
+    [[ "${FAKE_UPDATE_BRANCH_EXIT:-0}" == 0 ]] || exit "$FAKE_UPDATE_BRANCH_EXIT"
+    ;;
+  "api "*/compare/*)
+    # Default 0: existing cases describe an up-to-date branch and must merge.
+    printf '%s\n' "${FAKE_BEHIND:-0}"; exit "${FAKE_COMPARE_EXIT:-0}" ;;
+  "api "*/commits/*)
+    printf '%s\n' "${FAKE_BASE_TIP:-2000-01-01T00:00:00Z}"; exit "${FAKE_BASE_TIP_EXIT:-0}" ;;
   "run rerun") exit "${FAKE_RERUN_EXIT:-0}" ;;
   "run list")
     if [[ " $* " == *"--status action_required"* ]]; then
@@ -189,6 +200,8 @@ reset() {
   unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
   unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT FAKE_CHECKS_STDERR FAKE_ACTION_REQUIRED FAKE_ACTION_REQUIRED_EXIT
   unset FAKE_PREFLIGHT_TRUNCATED FAKE_BASE_REF FAKE_HEAD_BRANCH
+  unset FAKE_BEHIND FAKE_BASE_TIP FAKE_CHECK_STARTED FAKE_CHECK_COMPLETED FAKE_COMPARE_EXIT FAKE_BASE_TIP_EXIT FAKE_UPDATE_BRANCH_EXIT
+  unset PR_BABYSIT_FRESHEN PR_BABYSIT_FRESHEN_LIMIT
   export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -402,6 +415,89 @@ run_patrol; run_patrol; run_patrol
 grep -q 'dropping unparseable state record' "$CASE/state/pr-babysit/patrol.log" || fail "corrupt state record was silently discarded"
 unset PR_BABYSIT_RED_BASE_LIMIT
 
+# --- stale-green guard (mybd-uncb7) -----------------------------------------
+# A green earned before the base's tip commit was earned against a base that no
+# longer exists.  GitHub will merge it anyway (branch protection here does not
+# require up-to-date branches, so mergeStateStatus never says BEHIND), so the
+# patrol refreshes the branch and judges the new head instead.
+greenchecks='[{"name":"unit","bucket":"pass","link":""}]'
+
+reset stale-green-freshens "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "stale green was merged"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "stale green was not refreshed"
+grep -q 'stale-green-freshened:' "$FAKE_BD_LOG" || fail "freshen was not recorded on the bead"
+[[ "$(jq -r '.[0].metadata.pr_babysit_freshen' "$FAKE_QUEUE")" == 1 ]] || fail "freshen attempt was not counted"
+
+# Behind alone is not stale: pull_request checks run against head merged into
+# the base AS OF RUN TIME, so a run that finished after the base moved is valid.
+reset behind-but-fresh "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T10:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "a behind-but-freshly-tested PR was not merged"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "a fresh verdict was needlessly refreshed"
+
+# The distinction that makes startedAt the signal rather than completedAt: a run
+# that began before the base moved and finished after it still tested the old
+# merge ref, and reading completion time would wave exactly that case through.
+reset straddling-run "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T08:00:00Z FAKE_CHECK_COMPLETED=2026-08-01T10:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "a run that straddled the base move was merged"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "a run that straddled the base move was not refreshed"
+unset FAKE_CHECK_COMPLETED
+
+# An up-to-date branch is never refreshed, however old its green.
+reset not-behind "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=0 FAKE_CHECK_STARTED=2020-01-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "an up-to-date branch was not merged"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "an up-to-date branch was refreshed"
+
+# Could-not-ask is not permission to merge.
+for probe in compare base-tip rollup; do
+  reset "freshness-unreadable-$probe" "$policy"
+  export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5
+  case "$probe" in
+    compare)   export FAKE_COMPARE_EXIT=1 ;;
+    base-tip)  export FAKE_BASE_TIP_EXIT=1 ;;
+    rollup)    export FAKE_ROLLUP='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]' ;;
+  esac
+  run_patrol
+  [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "merged with unreadable freshness ($probe)"
+  [[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "refreshed on unreadable freshness ($probe)"
+  grep -q 'freshness-unavailable:' "$FAKE_BD_LOG" || fail "unreadable freshness was not surfaced on the bead ($probe)"
+done
+
+# The refresh budget is per lane, not per head — update-branch moves the head
+# itself, so a head-scoped counter would never bind.
+reset freshen-budget '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_freshen":"3"}'
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "exhausted freshen budget still pushed"
+grep -q 'stale-green-persistent:' "$FAKE_BD_LOG" || fail "exhausted freshen budget did not block"
+[[ "$(jq -r '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE")" != "null" ]] || fail "exhausted freshen budget left the lane armed"
+
+# A refusal from GitHub (conflict, or no write access to a fork branch) is the
+# (b)-shaped fallback: park it for a human rather than retry forever.
+reset freshen-fails "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z FAKE_UPDATE_BRANCH_EXIT=1
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "merged after a failed refresh"
+grep -q 'stale-green-update-failed:' "$FAKE_BD_LOG" || fail "failed refresh did not block"
+
+# One reserved attempt is spent even when the push fails, so a permanently
+# failing refresh cannot push once per pass forever.
+[[ "$(jq -r '.[0].metadata.pr_babysit_freshen' "$FAKE_QUEUE")" == 1 ]] || fail "failed refresh did not spend its reservation"
+
+# The knob restores the old behaviour wholesale.
+reset freshen-disabled "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z PR_BABYSIT_FRESHEN=0
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "PR_BABYSIT_FRESHEN=0 did not disable the guard"
+unset PR_BABYSIT_FRESHEN
+
 # --- base-fix exception (mybd-01yzj) ---------------------------------------
 # The PR that fixes a red base is the one PR the ordinary rule cannot land: the
 # base cannot go green until it merges, and it will not merge until the base is
@@ -415,6 +511,16 @@ export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_
 run_patrol
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "base-fix PR was not merged onto its red base"
 grep -q 'BASE-FIX exception' "$CASE/state/pr-babysit/patrol.log" || fail "base-fix merge was not logged loudly"
+
+# The stale-green guard does not apply to the base-fix lane: being behind a red
+# base is expected, and a CI cycle of delay is what stop-the-line cannot pay.
+reset base-fix-skips-freshen "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT="$redonly" \
+  FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix PR was refreshed instead of landed"
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "stale-green guard blocked the base fix"
+unset FAKE_BEHIND FAKE_CHECK_STARTED FAKE_BASE_TIP
 
 # The exception covers the red base and nothing else: any other objection holds.
 reset base-fix-other-block "$basefix_policy"

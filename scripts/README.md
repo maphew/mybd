@@ -452,6 +452,61 @@ A base-fix merge does not record a green sighting: the base is still red, and
 claiming otherwise would withdraw the very `base-red` escalation the PR is
 trying to resolve.
 
+### Stale-green guard (mybd-uncb7)
+
+The last check before a merge asks whether the green being merged on was
+earned against a base that still exists. GitHub runs `pull_request` checks
+against a merge ref built when the run is **created**, so "the branch is behind"
+is *not* by itself a stale verdict — a run created after the base moved tested
+today's base, `behind_by` or not. Stale means the newest check *started* before
+the base's tip commit. When the branch is behind *and* its newest check started
+before the base tip, the patrol runs `gh pr update-branch` and declines to merge
+on that pass; the new head's checks decide on a later one.
+
+The signal is `startedAt` rather than `completedAt` on purpose: a run that began
+before the base moved and finished after it still tested the old merge ref, and
+reading completion time would wave exactly that case through.
+
+Nothing else catches this. Upstream branch protection does not require
+up-to-date branches — `mergeStateStatus` never reports `BEHIND` (measured
+2026-08-01: absent across all 100 open PRs), so `pr-preflight`'s `BEHIND` arm
+can never fire and GitHub merges the stale green without complaint.
+
+Bounds, because this lane pushes a merge commit into a PR branch:
+
+- **Merge-lane only.** `pr-handoff` is per-PR human opt-in, so the lane already
+  holds authority over exactly this PR — strictly less than the merge it is
+  declining to perform. There is no recovery-triggered fan-out over open PRs;
+  see mybd-uncb7 for why that was rejected.
+- **Skipped under `--base-fix`.** Being behind a red base is expected of the PR
+  that fixes it, and a full CI cycle of delay is what stop-the-line cannot pay.
+- **Budgeted per lane, not per head** (`pr_babysit_freshen`, default 3) —
+  update-branch moves the head itself, so a head-scoped counter would never
+  bind. Exhausting it parks the bead `merge-blocked`, as does a refusal from
+  GitHub (conflict, or no write access to a fork branch). The attempt is
+  reserved *before* the call, so a crash spends it rather than risking a push
+  every pass.
+- **Fails closed.** An unreadable comparison, base tip, or check timestamp
+  retains the bead under patrol rather than merging — could-not-ask is not
+  permission.
+
+Both stale-green blocks are **durable**: `stale-green-persistent` and
+`stale-green-update-failed` are deliberately absent from the re-arm sweep's
+class whitelist, because both mean a human has to choose (rebase by hand,
+resolve the conflict, ask the contributor, or merge anyway). The re-arm sweep
+does clear `pr_babysit_freshen` alongside the other retry counters when it
+restores a lane blocked for some *other* reason; an agent re-arming a
+stale-green block by hand should clear it too, or the lane re-blocks on its
+first pass.
+
+Knobs: `PR_BABYSIT_FRESHEN=0` disables the guard entirely (restoring the
+pre-2026-08-01 behaviour); `PR_BABYSIT_FRESHEN_LIMIT` changes the budget.
+
+Sanity-checked against the live queue at implementation time: the one armed
+lane (gastownhall/beads#5227) was 5 commits behind `main` with its newest check
+started 3 minutes *after* the base tip — behind, freshly tested, merged
+normally. The guard is meant to be quiet.
+
 **close-when-quiet** — for a decline disposition an agent wants to offer
 rather than execute immediately. The agent posts the disposition comment
 itself; `pr-close-handoff` does not post anything upstream. It only labels

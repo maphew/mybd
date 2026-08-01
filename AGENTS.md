@@ -555,6 +555,18 @@ only an agent or a new head releases it. If you pick up a `merge-blocked`
 bead to work on it, **claim it first** — the sweep never touches claimed
 beads, so the claim is what keeps the patrol out of your lane.
 
+Since 2026-08-01 the patrol also refuses to merge a **stale green**: if the
+branch is behind its base *and* its newest check started before the base's
+tip commit, that verdict was earned against a base that no longer exists, so
+the patrol runs `gh pr update-branch` and judges the new head next pass instead
+(budgeted, merge-lane only, skipped under `--base-fix`). Being merely behind is
+not stale — PR checks test head merged into the base as of run time. This is
+narrow on purpose: a fan-out that re-based every PR after a red-base recovery
+was considered and rejected (mybd-uncb7), because the job that goes red on main
+usually does not run on PRs at all (mybd-5eacq) and the generic remedy is a
+merge queue (mybd-jcx5), not a rebase sweep. See `scripts/README.md`
+"Stale-green guard".
+
 Role split, not claims: `bd update --claim` is idempotent for the same user,
 and all local sessions run as the same user, so claims cannot mutually exclude
 parallel sessions (2026-07-24: one session merged gastownhall/beads#4942 with a
