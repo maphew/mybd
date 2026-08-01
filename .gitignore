@@ -9,6 +9,11 @@ scratch/cleanroom/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+# Workspace-operation gate (internal/workspacegate). The gate file for .beads
+# sits BESIDE it in the project root, so no .beads/ pattern can cover it; bd
+# doctor lists this in ProjectGitignorePatterns but this file predates it.
+*.gate.lock*
+.beads/proxieddb/
 .beads/backup/
 .beads/embeddeddolt/
 .beads/interactions.jsonl
