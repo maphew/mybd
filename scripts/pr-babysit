@@ -370,6 +370,25 @@ base_watch_probe() {
 }
 
 cd "$ROOT" || exit 1
+
+# This machine is the designated pr-babysit babysitter (AGENTS.md "PR Merge
+# Tails (babysitter pattern)"): sessions on other machines enqueue via
+# pr-handoff plus `bd dolt push`, but bd state only moves between machines on
+# push/pull, so a handoff enqueued elsewhere sits invisible to this patrol
+# until something pulls. Do it here, inside the flock this pass already holds
+# — never a second lock, never bd running concurrently with anything else in
+# this repo. Non-fatal: a failed pull is logged and the pass falls through to
+# whatever queue is already on disk, exactly as if no other machine had
+# written anything; a stuck remote must not stall every armed lane behind it.
+# PR_BABYSIT_DOLT_PULL=0 skips this for the hermetic test suite.
+if [[ "${PR_BABYSIT_DOLT_PULL:-1}" == 1 ]]; then
+  if bd dolt pull >>"$LOG" 2>&1; then
+    log "dolt pull ok"
+  else
+    log "dolt pull failed; continuing against the local queue"
+  fi
+fi
+
 rearm_sweep
 QUEUE="$(bd list --label merge-when-green --json 2>/dev/null)" || { log "bd unavailable; skipping"; exit 0; }
 if ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$QUEUE"; then log "bd returned malformed queue data"; exit 0; fi

@@ -490,6 +490,14 @@ fuller narrative (transient-block budgets, re-arm sweep, base-health gating).
 The third lane (review-needed, below) has no handoff script: it watches
 upstream directly.
 
+Only the designated Linux machine runs the patrol timer — there is no Windows
+port (mybd-jgxt). `pr-handoff` checks `command -v systemctl` before deciding
+what to say about that: on a systemd host with the timer really inactive it
+prints the usual `WARNING: pr-babysit.timer is not active`; on a host with no
+`systemctl` at all (Windows Git Bash, macOS) that warning would be wrong and
+actionable-looking, so it prints a reminder instead that `bd dolt push` at
+session close is what gets this handoff to the patrol's queue.
+
 **merge-when-green** — `pr-handoff` labels a bd bead `merge-when-green` and
 records `pr_babysit_repo`/`pr_babysit_pr`/`pr_babysit_method`/
 `pr_babysit_flake_rerun` metadata. The patrol reruns flaky checks once,
@@ -744,6 +752,16 @@ bead when done — later activity re-queues automatically. Disable with
 Install the timer once with `scripts/install-pr-babysit` (systemd user unit,
 fires every 12 minutes); patrol log at
 `${XDG_STATE_HOME:-~/.local/state}/pr-babysit/patrol.log`.
+
+**Sync gap.** Bd state moves between machines by `bd dolt push`/`pull`, not by
+this patrol running — a handoff enqueued on a machine other than the
+designated one sits invisible until something pulls. Each pass, before
+reading any queue, the patrol runs a guarded `bd dolt pull` inside the flock
+it already holds (never a second lock, and bd/dolt stay serial in this repo
+either way). It is non-fatal: a failed pull is logged and the pass falls
+through to whatever queue is already on disk, same as an ordinary pass with
+nothing new pulled in. `PR_BABYSIT_DOLT_PULL=0` skips it, for the hermetic
+test suite.
 
 ## solo-sweep (unattended model lane)
 
