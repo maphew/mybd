@@ -320,6 +320,48 @@ any PR whose green checks predate it needs re-basing before its result means
 anything. Worth generalising — every PR open across a red-base recovery is
 carrying a verdict from the wrong base, and nothing in the lanes re-bases them.
 
+## Postscript 2 — that last paragraph is wrong, and the correction matters
+
+Followed up in a later session (bead **mybd-uncb7**). The generalisation above
+does not hold, and acting on it would have been a mistake.
+
+`main.yml`'s test job carries `if: github.event_name == 'push' && github.ref ==
+'refs/heads/main'` (`.github/workflows/main.yml:401`). **`Test (macos-latest)` —
+the job that was red, the job carrying the hooksPath failure — never runs on a
+pull request at all.** `pr.yml` reaches macos-latest only for doc-freshness and
+preflight-process jobs. So a PR sitting green through the
+`2026-07-31T23:16Z`–`2026-08-01T08:39Z` red window was not holding a verdict
+from the wrong *base*; it was holding a verdict that never contained the failing
+*job*. Re-basing it changes nothing. **The `gh pr update-branch` on #5222 was
+ritual, not remedy** — the paragraph above reads it as the general case, and it
+is not even the specific case.
+
+That gap is already filed as **mybd-5eacq** (P1), and it is the root cause of
+this whole incident class: a PR structurally cannot fail on the job that broke
+main.
+
+Two further facts that close the question:
+
+- **Scale.** 100 open PRs upstream. Of the newest 40, only ~4 completed any
+  check after recovery and ~19 carry green from *before* the red window opened.
+  Stale-verdict is the steady state of that queue, not a red-base artifact — a
+  recovery-triggered sweep would chase the 4 and miss the 19, while pushing
+  merge commits into dozens of contributor branches and firing ~100 CI matrices
+  from a zero-token cron.
+- **The generic fix is already proposed.** A merge queue tests
+  head-merged-onto-current-base at merge time, for every PR, without mutating
+  anyone's branch. That is **mybd-jcx5**, posted upstream as
+  gastownhall/beads#5053. A rebase sweep would be a third mechanism overlapping
+  it and mybd-5eacq.
+
+What *is* real: branch protection does not require up-to-date branches —
+`mergeStateStatus` across all 100 open PRs is CLEAN/DIRTY/UNKNOWN/UNSTABLE and
+`BEHIND` never appears — and `pr-preflight` sends `BEHIND` to a warn branch that
+therefore can never fire (`bd-main/scripts/pr-preflight.sh:250`). So a stale
+green *can* be merged. The only place that happens with no human present is the
+`pr-babysit` merge lane, which holds one armed lane. The bounded guard for that
+one spot is specced on mybd-uncb7; the fan-out is not.
+
 ---
 
 _claude-opus-5-high on behalf of maphew_
