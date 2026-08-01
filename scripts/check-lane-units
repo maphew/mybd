@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# check-lane-units - report drift between tracked systemd unit templates and the
+# units actually installed under ~/.config/systemd/user.
+#
+# Usage:
+#   scripts/check-lane-units [--json] [--quiet]
+#
+# Why this exists: every lane in this repo (verify-babysit, pr-babysit,
+# solo-sweep, tri-daily) is a tracked template in scripts/systemd/ rendered into
+# the user unit directory by a scripts/install-* script, and NOTHING reconciles
+# the two afterwards. Edit a template, commit it, and git now says the feature
+# exists while the machine keeps running the old unit. That is not theoretical:
+# on 2026-07-31 verify-babysit.service had carried a second ExecStart
+# (scripts/bisect-next) in git for days while the installed unit still had only
+# verify-next, so the zero-token bisect lane had never fired once (mybd-ks4vq).
+# The failure is invisible precisely because the tracked file looks right.
+#
+# This check is read-only and zero-token. It deliberately does NOT reinstall
+# anything: a hand-edit of an installed unit is legitimate, and silently
+# clobbering it would be the same class of bug in the other direction.
+#
+# Classification, per unit:
+#   drift  - a directive present in the tracked template is missing from (or
+#            differs in) the installed unit. This is the stale-machine case the
+#            check exists for. Names the installer to re-run.
+#   local  - the installed unit is a superset: every template directive is
+#            present, plus extra lines. Expected for solo-sweep, whose installer
+#            injects Environment= lines from its arming flags. Informational.
+#   absent - template has no installed counterpart; that lane is simply not
+#            installed on this machine. Informational.
+#   ok     - in sync.
+#
+# Exit: 0 when no unit is in drift (including "absent" and "local"), 1 when at
+# least one is, 2 on usage error. Callers that want warn-only behaviour (see
+# session-close-check) should ignore the status and relay the output.
+
+set -uo pipefail
+
+json_out=0
+quiet=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) json_out=1; shift ;;
+    --quiet) quiet=1; shift ;;
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: scripts/check-lane-units [--json] [--quiet]" >&2; exit 2 ;;
+  esac
+done
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# @ROOT@ resolution must match the installers exactly, or the check invents
+# drift for every unit. They point the unit at the STABLE checkout (the main
+# working tree), not at whichever worktree the installer happened to run from:
+# a unit whose WorkingDirectory is a throwaway worktree breaks when it is
+# removed. Templates, in contrast, come from the checkout this script lives in,
+# so running the check from a branch that edits a template correctly reports
+# "the machine does not have your change yet".
+common_dir="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "$common_dir" ]]; then
+  [[ "$common_dir" = /* ]] || common_dir="$ROOT/$common_dir"
+  STABLE_ROOT="$(cd "$(dirname "$common_dir")" && pwd)"
+else
+  STABLE_ROOT="$ROOT"
+fi
+
+TEMPLATE_DIR="$ROOT/scripts/systemd"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+
+emit_nothing_to_do() {
+  local reason="$1"
+  if [[ "$json_out" -eq 1 ]]; then
+    printf '{"skipped":%s,"units":[]}\n' "$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')"
+  elif [[ "$quiet" -eq 0 ]]; then
+    echo "check-lane-units: $reason" >&2
+  fi
+  exit 0
+}
+
+[[ -d "$TEMPLATE_DIR" ]] || emit_nothing_to_do "no unit templates at $TEMPLATE_DIR"
+[[ -d "$UNIT_DIR" ]] || emit_nothing_to_do "no systemd user unit directory ($UNIT_DIR); nothing installed here"
+
+# Comments and blank lines carry no runtime behaviour, and the templates are
+# heavily commented, so comparing them raw would drown the real signal. Trailing
+# whitespace is normalised for the same reason.
+significant() { sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1"; }
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+root_escaped="$(printf '%s' "$STABLE_ROOT" | sed 's/[\\&|]/\\&/g')"
+
+drifted=0
+records=()
+
+shopt -s nullglob
+templates=("$TEMPLATE_DIR"/*.service "$TEMPLATE_DIR"/*.timer)
+shopt -u nullglob
+
+[[ "${#templates[@]}" -gt 0 ]] || emit_nothing_to_do "no *.service or *.timer templates in $TEMPLATE_DIR"
+
+for tpl in "${templates[@]}"; do
+  unit="$(basename "$tpl")"
+  base="${unit%.*}"
+  installed="$UNIT_DIR/$unit"
+
+  installer=""
+  installer_note=""
+  if [[ -x "$ROOT/scripts/install-$base" ]]; then
+    installer="scripts/install-$base"
+    # solo-sweep's installer refuses to arm without a window; saying "re-run the
+    # installer" without that is advice that fails on contact.
+    if grep -q -- '--days' "$ROOT/scripts/install-$base" 2>/dev/null; then
+      installer_note=" (needs --days N to re-arm)"
+    fi
+  fi
+
+  if [[ ! -f "$installed" ]]; then
+    records+=("$unit|absent|$installer|$installer_note||")
+    continue
+  fi
+
+  sed "s|@ROOT@|$root_escaped|g" "$tpl" >"$tmp/rendered"
+  significant "$tmp/rendered" >"$tmp/tpl.norm"
+  significant "$installed" >"$tmp/inst.norm"
+
+  # Ordered diff, not a set comparison: multiple ExecStart= lines run in the
+  # order they appear, so a reordering is real drift. diff also reports an
+  # inserted line (solo-sweep's injected Environment=) as an addition only,
+  # which is exactly the classification we want.
+  missing="$(diff "$tmp/tpl.norm" "$tmp/inst.norm" 2>/dev/null | sed -n 's/^< //p')"
+  extra="$(diff "$tmp/tpl.norm" "$tmp/inst.norm" 2>/dev/null | sed -n 's/^> //p')"
+
+  if [[ -n "$missing" ]]; then
+    status="drift"
+    drifted=$((drifted + 1))
+  elif [[ -n "$extra" ]]; then
+    status="local"
+  else
+    status="ok"
+  fi
+  records+=("$unit|$status|$installer|$installer_note|$missing|$extra")
+done
+
+if [[ "$json_out" -eq 1 ]]; then
+  printf '{"stable_root":"%s","unit_dir":"%s","drifted":%d,"units":[' \
+    "$(json_escape "$STABLE_ROOT")" "$(json_escape "$UNIT_DIR")" "$drifted"
+  first=1
+  for rec in "${records[@]}"; do
+    IFS='|' read -r unit status installer _note missing extra <<<"$rec"
+    [[ "$first" -eq 1 ]] || printf ','
+    first=0
+    printf '{"unit":"%s","status":"%s","installer":"%s","missing":[' \
+      "$(json_escape "$unit")" "$status" "$(json_escape "$installer")"
+    sep=""
+    while IFS= read -r l; do
+      [[ -n "$l" ]] || continue
+      printf '%s"%s"' "$sep" "$(json_escape "$l")"; sep=","
+    done <<<"$missing"
+    printf '],"extra":['
+    sep=""
+    while IFS= read -r l; do
+      [[ -n "$l" ]] || continue
+      printf '%s"%s"' "$sep" "$(json_escape "$l")"; sep=","
+    done <<<"$extra"
+    printf ']}'
+  done
+  printf ']}\n'
+  exit $(( drifted > 0 ? 1 : 0 ))
+fi
+
+for rec in "${records[@]}"; do
+  IFS='|' read -r unit status installer note missing extra <<<"$rec"
+  case "$status" in
+    ok) [[ "$quiet" -eq 1 ]] || printf 'ok     %s\n' "$unit" ;;
+    absent) [[ "$quiet" -eq 1 ]] || printf 'absent %s (lane not installed on this machine)\n' "$unit" ;;
+    local)
+      [[ "$quiet" -eq 1 ]] || {
+        printf 'local  %s (installed unit adds lines; every template directive is present)\n' "$unit"
+        while IFS= read -r l; do [[ -n "$l" ]] && printf '         + %s\n' "$l"; done <<<"$extra"
+      }
+      ;;
+    drift)
+      printf 'DRIFT  %s - installed unit does not match the tracked template\n' "$unit" >&2
+      while IFS= read -r l; do [[ -n "$l" ]] && printf '         missing: %s\n' "$l" >&2; done <<<"$missing"
+      while IFS= read -r l; do [[ -n "$l" ]] && printf '         extra:   %s\n' "$l" >&2; done <<<"$extra"
+      if [[ -n "$installer" ]]; then
+        printf '         re-run: %s%s\n' "$installer" "$note" >&2
+      else
+        printf '         no scripts/install-* found for this unit; reinstall by hand\n' >&2
+      fi
+      ;;
+  esac
+done
+
+if [[ "$drifted" -gt 0 ]]; then
+  echo "check-lane-units: $drifted unit(s) drifted from their tracked template" >&2
+  exit 1
+fi
+[[ "$quiet" -eq 1 ]] || echo "check-lane-units: installed units match their templates" >&2
+exit 0

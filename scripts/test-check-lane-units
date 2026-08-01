@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# test-check-lane-units - exercise the lane unit-drift check against a synthetic
+# unit directory, without touching the real ~/.config/systemd/user or systemd.
+#
+# Usage: bash scripts/test-check-lane-units
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+check="$root/scripts/check-lane-units"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+[[ -x "$check" ]] || { echo "test-check-lane-units: missing $check" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "test-check-lane-units: jq is required" >&2; exit 2; }
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# A throwaway checkout: real templates and installers, fake unit directory. The
+# check derives @ROOT@ from the git common dir, so this has to be a git repo or
+# it would silently compare against the wrong root.
+fixture="$tmp/repo"
+mkdir -p "$fixture/scripts/systemd"
+git -C "$fixture" init -q 2>/dev/null || { echo "test-check-lane-units: git init failed" >&2; exit 2; }
+cp "$check" "$fixture/scripts/check-lane-units"
+chmod +x "$fixture/scripts/check-lane-units"
+
+cat >"$fixture/scripts/systemd/demo-lane.service" <<'EOF'
+[Unit]
+Description=Demo lane
+
+[Service]
+Type=oneshot
+# a comment that carries no runtime behaviour
+WorkingDirectory=@ROOT@
+ExecStart=-@ROOT@/scripts/demo-next
+ExecStart=-@ROOT@/scripts/demo-bisect
+EOF
+
+cat >"$fixture/scripts/install-demo-lane" <<'EOF'
+#!/usr/bin/env bash
+echo "pretend installer"
+EOF
+chmod +x "$fixture/scripts/install-demo-lane"
+
+unitdir="$tmp/units/systemd/user"
+mkdir -p "$unitdir"
+export XDG_CONFIG_HOME="$tmp/units"
+
+render() {
+  sed "s|@ROOT@|$fixture|g" "$fixture/scripts/systemd/demo-lane.service"
+}
+
+run() { ( cd "$fixture" && ./scripts/check-lane-units "$@" ) ; }
+
+# --- 1. in sync -> silent about drift, exit 0 --------------------------------
+render >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 0 ]] && ! grep -q DRIFT <<<"$out"; then
+  pass "in-sync unit reports no drift (exit 0)"
+else
+  fail "in-sync unit should be clean, got rc=$rc: $out"
+fi
+
+# Comments and blank lines must not count as drift, or every template edit that
+# only touches the rationale would cry wolf.
+render | grep -v '^#' | grep -v '^$' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 0 ]]; then
+  pass "comment/blank-line differences are not drift"
+else
+  fail "comment-only difference flagged as drift: $out"
+fi
+
+# --- 2. the real failure mode: a template line missing from the installed unit
+# This is the mybd-ks4vq shape - verify-babysit.service grew a second ExecStart
+# in git and the machine never got it.
+render | grep -v 'demo-bisect' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] \
+  && grep -q 'DRIFT.*demo-lane.service' <<<"$out" \
+  && grep -q 'missing:.*demo-bisect' <<<"$out"; then
+  pass "missing ExecStart reported as drift, naming the unit and the line"
+else
+  fail "missing ExecStart not reported correctly (rc=$rc): $out"
+fi
+if grep -q 'scripts/install-demo-lane' <<<"$out"; then
+  pass "drift output names the installer to re-run"
+else
+  fail "drift output does not name the installer: $out"
+fi
+
+# --- 3. a changed value is drift too (not just a deleted line) ---------------
+render | sed 's|WorkingDirectory=.*|WorkingDirectory=/somewhere/else|' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q 'missing:.*WorkingDirectory' <<<"$out"; then
+  pass "changed directive reported as drift"
+else
+  fail "changed directive not reported (rc=$rc): $out"
+fi
+
+# --- 4. extra lines only -> "local", not drift -------------------------------
+# solo-sweep's installer injects Environment= lines from its arming flags; if
+# those counted as drift the check would be permanently red on this machine and
+# would be ignored.
+{ render; echo 'Environment=DEMO_EXTRA=1'; } >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 0 ]] && grep -q 'local .*demo-lane.service' <<<"$out"; then
+  pass "installer-injected extra lines classified local, not drift"
+else
+  fail "extra lines misclassified (rc=$rc): $out"
+fi
+
+# --- 5. not installed at all -> informational, exit 0 ------------------------
+rm -f "$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 0 ]] && grep -q 'absent .*demo-lane.service' <<<"$out"; then
+  pass "uninstalled lane reported absent without failing"
+else
+  fail "uninstalled lane mishandled (rc=$rc): $out"
+fi
+
+# --- 6. no unit directory at all (non-Linux / never installed) ---------------
+out="$( XDG_CONFIG_HOME="$tmp/nonexistent" run 2>&1 )"; rc=$?
+if [[ "$rc" -eq 0 ]] && grep -q 'no systemd user unit directory' <<<"$out"; then
+  pass "missing unit directory skips cleanly"
+else
+  fail "missing unit directory not handled (rc=$rc): $out"
+fi
+
+# --- 7. JSON output is well-formed and carries the verdict -------------------
+render | grep -v 'demo-bisect' >"$unitdir/demo-lane.service"
+out="$(run --json 2>/dev/null)"; rc=$?
+if jq -e . >/dev/null 2>&1 <<<"$out"; then
+  pass "--json emits valid JSON"
+else
+  fail "--json emitted invalid JSON: $out"
+fi
+if [[ "$rc" -eq 1 ]] \
+  && [[ "$(jq -r '.drifted' <<<"$out")" == "1" ]] \
+  && [[ "$(jq -r '.units[] | select(.unit=="demo-lane.service") | .status' <<<"$out")" == "drift" ]] \
+  && [[ "$(jq -r '.units[] | select(.unit=="demo-lane.service") | .missing[0]' <<<"$out")" == *demo-bisect* ]]; then
+  pass "--json reports the drifted unit and the missing line"
+else
+  fail "--json verdict wrong (rc=$rc): $out"
+fi
+
+# --- 8. read-only: the check must never repair what it found ------------------
+before="$(cat "$unitdir/demo-lane.service")"
+run >/dev/null 2>&1
+if [[ "$before" == "$(cat "$unitdir/demo-lane.service")" ]]; then
+  pass "check does not rewrite the installed unit"
+else
+  fail "check modified the installed unit"
+fi
+
+if [[ "$fails" -eq 0 ]]; then
+  echo "test-check-lane-units: all checks passed"
+  exit 0
+fi
+echo "test-check-lane-units: $fails failure(s)" >&2
+exit 1

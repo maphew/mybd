@@ -126,6 +126,57 @@ else
   pass "open-bead report remains recognized when another report warns"
 fi
 
+# Check 5 (lane unit drift) is wired in but must stay inert where the repo has
+# no check-lane-units - that is why the cases above see no lane output at all.
+if grep -Fq "lane unit" "$unreferenced_stderr"; then
+  fail "lane-unit check fired in a fixture with no scripts/check-lane-units"
+else
+  pass "lane-unit check is inert when check-lane-units is absent"
+fi
+
+# Now give the fixture the check plus a template the "installed" unit does not
+# match, and confirm session-close-check relays exactly one warning per drifted
+# unit (detail lines are context, not extra warnings) and that --strict fails.
+mkdir -p "$reporoot/scripts/systemd" "$tmp/units/systemd/user"
+cp "$root/scripts/check-lane-units" "$reporoot/scripts/check-lane-units"
+chmod +x "$reporoot/scripts/check-lane-units"
+cat >"$reporoot/scripts/systemd/demo-lane.service" <<'EOF'
+[Service]
+Type=oneshot
+ExecStart=-@ROOT@/scripts/demo-next
+ExecStart=-@ROOT@/scripts/demo-bisect
+EOF
+printf '#!/usr/bin/env bash\ntrue\n' >"$reporoot/scripts/install-demo-lane"
+chmod +x "$reporoot/scripts/install-demo-lane"
+sed "s|@ROOT@|$reporoot|g" "$reporoot/scripts/systemd/demo-lane.service" \
+  | grep -v demo-bisect >"$tmp/units/systemd/user/demo-lane.service"
+
+lane_stderr="$tmp/lane.stderr"
+if (cd "$reporoot" && XDG_CONFIG_HOME="$tmp/units" bash "$check" --since HEAD --strict) \
+    >/dev/null 2>"$lane_stderr"; then
+  lane_rc=0
+else
+  lane_rc=$?
+fi
+
+if [[ "$lane_rc" -eq 1 ]] && grep -Fq "lane unit" "$lane_stderr"; then
+  pass "drifted lane unit warns through session-close-check and fails --strict"
+else
+  fail "lane drift not relayed (rc=$lane_rc): $(cat "$lane_stderr")"
+fi
+
+if grep -Fq "re-run: scripts/install-demo-lane" "$lane_stderr"; then
+  pass "relayed lane warning still names the installer to re-run"
+else
+  fail "installer hint lost in relay: $(cat "$lane_stderr")"
+fi
+
+if [[ "$(grep -c 'WARN: lane unit' "$lane_stderr")" -eq 1 ]]; then
+  pass "one warning per drifted unit, detail lines relayed as context"
+else
+  fail "expected exactly one lane-unit WARN: $(cat "$lane_stderr")"
+fi
+
 if [[ "$fails" -eq 0 ]]; then
   echo "test-session-close-check: all checks passed"
   exit 0

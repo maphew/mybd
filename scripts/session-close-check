@@ -15,13 +15,17 @@
 # In concurrent sessions sharing one checkout the single stamp is coarse; pass
 # --since for precise scoping (see session-start-stamp for the non-clobber rule).
 #
-# Four checks, each backing one judgment prompt from the close protocol:
+# Five checks, the first four backing one judgment prompt each from the close
+# protocol:
 #   1. Unreferenced reports - a new reports/*.md file referenced by no OPEN bead
 #      and no memory (learning stranded off the cold-start path).
 #   2. Thin new beads - a bead created this session with a near-empty description.
 #   3. Left in_progress - a bead still in_progress that this session started.
 #   4. Unreferenced branches - a branch this session advanced that is neither
 #      pushed nor named by an open bead or memory, in this repo or bd-main.
+#   5. Lane unit drift - a tracked scripts/systemd/ template that the installed
+#      unit does not match, i.e. a lane change that looks landed in git while the
+#      machine still runs the old behaviour (scripts/check-lane-units).
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
 tri_require bd jq git
@@ -76,6 +80,28 @@ if [[ -z "$since" && -f "$stamp" ]]; then
   fi
 elif [[ -n "$since" ]]; then
   resolve_boundary "$since" || tri_die "could not parse --since value: $since"
+fi
+
+# --- Check 5: installed lane units vs their tracked templates ----------------
+# Deliberately outside the session boundary and outside the bd probe: this is
+# machine state, not session state, and it stays useful in exactly the runs
+# where the other four go quiet (no stamp, bd behind the migration gate). Warn
+# only - check-lane-units never repairs anything, and a hand-edited unit is
+# legitimate, so the decision to re-run an installer stays with the reader.
+if [[ -x "$root/scripts/check-lane-units" ]]; then
+  if ! lane_out="$("$root/scripts/check-lane-units" --quiet 2>&1)"; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      # One warning per drifted unit. The detail lines (missing directive, the
+      # installer to re-run) and check-lane-units' own tally are relayed as
+      # context so the count stays "how many things are wrong", not "how many
+      # lines were printed".
+      case "$line" in
+        DRIFT*) warn "lane unit ${line#DRIFT}" ;;
+        *) printf '        %s\n' "$line" >&2 ;;
+      esac
+    done <<<"$lane_out"
+  fi
 fi
 
 if [[ -z "${since_epoch:-}" ]]; then

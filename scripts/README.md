@@ -335,6 +335,53 @@ done
 The verifier intentionally uses local git, local bd metadata, and local logs
 only. It does not call GitHub Actions or poll GitHub status.
 
+## check-lane-units (installed-unit drift)
+
+```bash
+scripts/check-lane-units          # human-readable, exit 1 if any unit drifted
+scripts/check-lane-units --json   # machine-readable
+scripts/check-lane-units --quiet  # print only drift (used by session-close-check)
+```
+
+Every lane below — `verify-babysit`, `pr-babysit`, `solo-sweep`, `tri-daily` —
+is a tracked template in `scripts/systemd/` that a `scripts/install-*` script
+renders (substituting `@ROOT@`) into `~/.config/systemd/user/`. Nothing
+reconciles the two afterwards. **Editing a template does not change the
+machine**, and the resulting failure is invisible in exactly the way that
+matters: git says the feature exists.
+
+That is not hypothetical. On 2026-07-31 `verify-babysit.service` had carried a
+second `ExecStart` (`scripts/bisect-next`) in git for days while the installed
+unit still had only `verify-next`, so the zero-token bisect lane had never fired
+once, and AGENTS.md's claim that `base-red` beads "often arrive pre-diagnosed"
+was false in production for a purely deployment reason (mybd-ks4vq, mybd-fbr7z).
+
+The check renders each template with this machine's `@ROOT@` and diffs it
+against the installed unit, ignoring comments and blank lines. Per unit:
+
+| status   | meaning | exit contribution |
+|----------|---------|-------------------|
+| `ok`     | in sync | 0 |
+| `local`  | installed unit is a **superset** — every template directive is present, plus extra lines. Expected for `solo-sweep`, whose installer injects `Environment=` lines from its arming flags (`--model`, `--max-runs`, …). | 0 |
+| `absent` | no installed counterpart; that lane simply is not installed here | 0 |
+| `DRIFT`  | a template directive is missing from or differs in the installed unit | 1 |
+
+Only `DRIFT` is a finding, and the output names the installer to re-run (with
+`--days N` noted for `solo-sweep`, which refuses to arm without a window).
+
+It is **read-only on purpose**: it never reinstalls. A deliberate hand-edit of
+an installed unit is legitimate, and clobbering it silently would be the same
+class of bug pointing the other way. Zero-token, no network, no `bd`.
+
+`session-close-check` runs it as check 5 (warn-only). Unlike the other four
+checks it is machine state rather than session state, so it deliberately sits
+outside both the session boundary and the `bd` probe — it stays useful in the
+runs where the rest go quiet. There is no `.ps1` wrapper: systemd user units do
+not exist on Windows, and on a machine with no `~/.config/systemd/user` the
+check reports that and exits 0.
+
+Tests: `bash scripts/test-check-lane-units`.
+
 ## bisect-next (red-base bisect lane)
 
 ```bash
