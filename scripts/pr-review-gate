@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# pr-review-gate - PreToolUse hook: no `gh pr create` upstream without a
+# cross-vendor review of the exact commit being proposed.
+#
+# Why this is a hook and not a sentence in AGENTS.md: it was a sentence in
+# AGENTS.md, and compliance turned out to track the session model rather than
+# the policy. Measured across 168 transcripts on 2026-08-01, sessions that
+# opened an upstream PR also ran `codex-agent reviewer` 47% of the time on
+# fable-5 and 23% on opus-5; four Opus sessions on 07-31/08-01 opened 15 PRs
+# between them with no cross-vendor review at all. Every other non-negotiable
+# in this repo (pr-preflight, verify-enqueue, agent-sig) is an imperative with
+# a script behind it. This one was a "may". Now it is a gate.
+#
+# Reads the PreToolUse JSON on stdin. Exit 0 allows the command; exit 2 blocks
+# it and hands the message to the model.
+#
+# Blocks only when all of these hold:
+#   - the command runs `gh pr create`
+#   - it targets gastownhall/beads (named with --repo, or inferred from the
+#     remotes of the checkout it runs in)
+#   - no review log exists for the HEAD sha of any checkout the command
+#     plausibly runs in
+#   - codex is on PATH (no codex, no gate — it degrades instead of deadlocking)
+#
+# Escape hatch: prefix the command with MYBD_SKIP_XVENDOR=1. It lives in the
+# command line on purpose. An env var exported earlier in the session would
+# silently disarm every later PR too, and would not show up in the transcript
+# next to the PR it excused.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Same main-checkout anchoring as scripts/pr-open, for the same reason.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+UPSTREAM_REPO="gastownhall/beads"
+
+input="$(cat)"
+command -v jq >/dev/null 2>&1 || exit 0
+
+cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
+hook_cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
+[[ -n "$cmd" ]] || exit 0
+
+# Two views of the command, because a gate that fires on text inside a string
+# would block `printf 'run gh pr create ...'`, and one that ignores quotes
+# entirely would read `--repo "gastownhall/beads"` as no --repo at all:
+#   cmd_code  - quoted spans blanked; used to decide "is this an invocation?"
+#   cmd_flags - quote characters removed; used to read flag VALUES.
+cmd_code="$(sed -E "s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd")"
+cmd_flags="$(tr -d "'\\\"" <<<"$cmd")"
+
+# Not a PR creation, or deliberately excused. `gh pr new` is an official alias
+# for `gh pr create`, so gating only the latter leaves the rule one word away
+# from being bypassed.
+grep -qE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]]|$)' <<<"$cmd_code" || exit 0
+grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd_code" && exit 0
+
+# Without codex there is no second vendor to consult, so the gate stands down
+# rather than blocking work it cannot offer a path through.
+command -v codex >/dev/null 2>&1 || exit 0
+
+# Which checkouts might this run in? A leading `cd X &&`, an explicit `git -C X`,
+# and the session cwd. Any of them having a reviewed HEAD is enough.
+# ONE effective directory, not a set of candidates. `gh` runs where the command
+# put it: the last `cd` in the command if there is one, else the session cwd.
+# Treating every mentioned directory as interchangeable meant
+# `cd <unreviewed> && gh pr create` could be satisfied by the reviewed cwd it
+# started from. (A `git -C X` says nothing about where gh runs, so it is not a
+# candidate at all.)
+effective_dir="$hook_cwd"
+last_cd="$(grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd_flags" \
+  | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//' | tail -1)"
+[[ -n "$last_cd" ]] && effective_dir="$last_cd"
+[[ -n "$effective_dir" ]] || effective_dir="$PWD"
+declare -a dirs=("$effective_dir")
+
+# --repo / -R decides the target when present; otherwise infer from the remotes.
+# Both spellings must be read: `gh pr create -R gastownhall/beads` from the
+# coordination checkout would otherwise infer maphew/mybd and skip the gate.
+# An inline GH_REPO= assignment does the same job for gh, so it counts too.
+#
+# gh accepts [HOST/]OWNER/REPO, so `--repo github.com/gastownhall/beads` is the
+# same target as `gastownhall/beads` and must not read as a different one.
+norm_repo() {
+  local v="${1%/}"
+  if [[ "$(awk -F/ '{print NF}' <<<"$v")" -ge 3 ]]; then
+    v="$(awk -F/ '{print $(NF-1)"/"$NF}' <<<"$v")"
+  fi
+  printf '%s' "$v"
+}
+
+target_is_upstream=0
+saw_repo_flag=0
+# Every selector in the command is considered, not just the first: a chained
+# string whose first PR targets somewhere harmless must not speak for a later
+# one that targets upstream.
+while IFS= read -r raw; do
+  [[ -n "$raw" ]] || continue
+  saw_repo_flag=1
+  [[ "$(norm_repo "$raw")" == "$UPSTREAM_REPO" ]] && target_is_upstream=1
+done < <(
+  grep -oE -- '(--repo|-R)[=[:space:]]+[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.-]+){1,2}' <<<"$cmd_flags" \
+    | sed -E 's/(--repo|-R)[=[:space:]]+//'
+  grep -oE 'GH_REPO=[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.-]+){1,2}' <<<"$cmd_flags" | sed -E 's/GH_REPO=//'
+)
+if (( ! saw_repo_flag )); then
+  for d in "${dirs[@]}"; do
+    remotes="$(git -C "$d" remote -v 2>/dev/null)" || continue
+    if grep -qE '(gastownhall|maphew)/beads' <<<"$remotes"; then target_is_upstream=1; break; fi
+  done
+fi
+(( target_is_upstream )) || exit 0
+
+# One PR per command. Flags cannot be attributed to the right invocation in a
+# chained string, and guessing there means guessing about a deletion-shaped
+# decision, so this asks for the two commands to be run separately instead.
+if [[ "$(grep -cE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]]|$)' <<<"$(tr ';&|' '\n\n\n' <<<"$cmd_code")")" -gt 1 ]]; then
+  echo "Blocked: more than one 'gh pr create' in a single command." >&2
+  echo "  Which --repo/--head/--base belongs to which invocation cannot be told" >&2
+  echo "  apart reliably, so the review check cannot be applied per PR." >&2
+  echo "  Run them as separate commands." >&2
+  exit 2
+fi
+
+# Which commit is actually being proposed? An explicit --head/-H names it, and
+# when it resolves it is the ONLY answer: falling back to the cwd's HEAD as well
+# would let a reviewed working checkout vouch for an unreviewed branch being
+# pushed past it.
+declare -a shas=()
+unresolved_head=""
+head_flag="$(grep -oE -- '(--head|-H)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--head|-H)[=[:space:]]+//')"
+if [[ -n "$head_flag" ]]; then
+  ref="${head_flag##*:}"
+  # Remote-tracking refs first: gh opens the PR from the branch as it exists on
+  # the fork, so a stale local branch of the same name is the wrong commit to
+  # check. If the local branch is ahead, the remote ref is what was reviewed
+  # only after a push — and gh could not open the PR before one anyway.
+  for d in "${dirs[@]}" "$ROOT/bd-main"; do
+    for candidate in "origin/$ref" "upstream/$ref" "$ref"; do
+      s="$(git -C "$d" rev-parse --verify --quiet "$candidate" 2>/dev/null)" || continue
+      [[ -n "$s" ]] && shas+=("$s") && break 2
+    done
+  done
+  # A head named but not found locally is the one case where falling back is
+  # worse than stopping: gh can open the PR from a branch that exists only on
+  # the remote, and the cwd's HEAD would then vouch for a commit nobody read.
+  [[ ${#shas[@]} -eq 0 ]] && unresolved_head="$head_flag"
+else
+  for d in "${dirs[@]}"; do
+    s="$(git -C "$d" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
+    [[ -n "$s" ]] && shas+=("$s")
+  done
+fi
+
+# The log has to cover the diff being proposed, which means the same base as
+# well as the same commit: a review taken against `release` says nothing about
+# the same sha opened against `main`.
+want_base="$(grep -oE -- '(--base|-B)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--base|-B)[=[:space:]]+//')"
+if [[ -z "$want_base" ]]; then
+  # With no --base, gh honours branch.<current>.gh-merge-base before falling
+  # back to the repo default, so assuming "main" outright could accept a main
+  # review for a PR GitHub opens against something else.
+  cur="$(git -C "$effective_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [[ -n "$cur" ]] && want_base="$(git -C "$effective_dir" config --get "branch.$cur.gh-merge-base" 2>/dev/null || true)"
+  want_base="${want_base:-main}"
+fi
+base_mismatch=""
+for s in ${shas[@]+"${shas[@]}"}; do
+  log="$REVIEW_DIR/$s.md"
+  [[ -s "$log" ]] || continue
+  logged_base="$(sed -nE 's/^- base: `(.*)`$/\1/p' "$log" | head -1)"
+  if [[ -z "$logged_base" ]]; then
+    # No base line means a truncated or hand-rolled log. It cannot say which
+    # diff was read, so it does not count as having read one.
+    base_mismatch="the log for ${s:0:12} records no base — treating it as incomplete"
+    continue
+  fi
+  [[ "$logged_base" == "$want_base" ]] && exit 0
+  base_mismatch="reviewed against \`$logged_base\`, but this PR targets \`$want_base\`"
+done
+
+reviewed_hint=""
+if [[ -d "$REVIEW_DIR" ]]; then
+  recent="$(ls -1t "$REVIEW_DIR"/*.md 2>/dev/null | head -3 | while read -r f; do
+    b="$(basename "$f" .md)"; printf '    %s\n' "${b:0:12}"; done)"
+  [[ -n "$recent" ]] && reviewed_hint=$'\n  Review logs exist, but for other commits:\n'"$recent"
+fi
+
+proposed="${shas[0]:-unknown}"
+headline="no cross-vendor review for the commit this PR would propose"
+[[ -n "$base_mismatch" ]] && headline="the review for this commit does not cover this PR — $base_mismatch"
+[[ -n "$unresolved_head" ]] && headline="--head names \`$unresolved_head\`, which does not resolve in $effective_dir, so the commit it would propose cannot be checked"
+cat >&2 <<EOF
+Blocked: $headline.
+
+  head:   ${proposed:0:12}
+  wanted: $REVIEW_DIR/${proposed:0:12}....md$reviewed_hint
+
+AGENTS.md requires a second model family on the diff before an upstream PR —
+an independent vendor catches what same-family agents miss, and this gate
+exists because the prose version of the rule was followed unevenly. Run:
+
+  scripts/pr-open -C <worktree> --base $want_base --search "<topic keywords>"
+
+then reconcile the findings and retry this command. If HEAD moved since the
+last review, that is the gate working: review the commit you are actually
+proposing.
+
+Deliberately skipping (codex down, trivial docs typo, owner said so): prefix
+this command with MYBD_SKIP_XVENDOR=1 and say why in the handoff.
+EOF
+exit 2

@@ -388,6 +388,92 @@ network) against a throwaway repo with a known culprit, and asserts the real
 `.beads` DB and `bd-main` clone are never touched. Re-run it after any change
 to the lane.
 
+## pr-open / pr-review-gate (cross-vendor review before a PR)
+
+```bash
+scripts/pr-open [-C <dir>] [--base main] [--repo owner/repo] [--search "<topic>"] \
+                [--prompt "<extra focus>"] [--skip-preflight] [--allow-dirty]
+scripts/pr-review-gate          # PreToolUse hook; reads hook JSON on stdin
+scripts/test-pr-review-gate     # smoke test, style of scripts/test-git-hooks
+```
+
+`pr-open` is the pre-PR verb: upstream preflight, a base-CI health check, then
+`codex-agent reviewer --diff` over the branch, then a review log at
+`.worktrees/.review-logs/<head-sha>.md`. It stops there.
+
+The base check is `pr-open`'s own, not preflight's: `pr-preflight.sh --search`
+returns after `gh pr list`, and its base-health logic lives only on the
+`<pr-number>` path — which does not exist for a PR nobody has opened yet. Without
+it, "preflight passed" would have quietly meant "nobody looked at the base" at
+exactly the moment stop-the-line matters. Red base warns, or exits 3 under
+`PR_PREFLIGHT_BLOCK_RED_BASE=1`, matching preflight's own rule. Reconciling findings is
+judgment — some are wrong, some describe behaviour the base already had — and a
+wrapper that opened the PR as soon as the review returned would be automating
+the one step that has to be thought about.
+
+`pr-review-gate` is the backstop, wired as a `PreToolUse` hook on `Bash` in
+`.claude/settings.json`. It blocks `gh pr create` (and its `gh pr new` alias)
+against `gastownhall/beads` unless a review log exists for the exact commit
+**and base** being proposed. Target repo: `--repo`/`-R`, then an inline
+`GH_REPO=`, then the checkout's remotes. Effective directory: the last `cd` in
+the command, else the session cwd. Proposed commit: `--head`/`-H` when given,
+else that directory's HEAD. Base: `--base`/`-B`, else
+`branch.<current>.gh-merge-base`, else `main`.
+
+Deliberately narrow — everything in the first block is an allow, so the gate
+cannot become a nuisance from a phone:
+
+| situation | gate |
+|---|---|
+| anything that is not `gh pr create` | passes |
+| `gh pr create` inside a quoted string (`printf 'gh pr create …'`) | passes |
+| `gh pr create` for another repo (incl. `maphew/mybd`) | passes |
+| `codex` not on PATH | passes, with no second vendor there is no path through |
+| `MYBD_SKIP_XVENDOR=1 gh pr create …` | passes |
+| review log exists for this commit and base | passes |
+| upstream PR, commit never reviewed | **blocked**, exit 2 |
+| upstream PR, reviewed then amended | **blocked** — the log vouches for a commit, not a branch |
+| reviewed against a different base than the PR targets | **blocked** — a different base is a different diff |
+| `-R gastownhall/beads` or `GH_REPO=…` from a non-beads checkout | **blocked** — the flag outranks remote inference |
+| `--head`/`-H` naming an unreviewed branch from a reviewed cwd | **blocked** — the named head is the proposal |
+| `--head` naming a branch that resolves nowhere locally | **blocked** — gh can open it from the remote; unverifiable is not approved |
+| `cd <unreviewed> && gh pr create` from a reviewed cwd | **blocked** — gh runs where the `cd` put it |
+| `gh pr new …` | gated identically — it is an alias, not a loophole |
+| review log that is empty or has no `- base:` line | **blocked** — it cannot say which diff was read |
+| `--repo github.com/gastownhall/beads` | **blocked** — gh takes `[HOST/]OWNER/REPO`; the host is not a disguise |
+| two `gh pr create` in one command | **blocked** — flags cannot be attributed per invocation; run them separately |
+| `--head owner:branch` where the local branch is stale | **blocked** — remote-tracking tip outranks a local namesake |
+
+Everything from "reviewed against a different base" down exists because the
+first two versions of this gate got each of those wrong, and the Codex review
+the gate exists to require is what found them — two rounds, ten findings, all
+confirmed against source. `scripts/test-pr-review-gate` pins every one (28
+cases; the round-1 and round-2 subsets were each verified to fail against the
+gate as it stood before that round).
+
+Two implementation notes worth keeping:
+
+- Quoting uses two views of the command — quoted spans blanked for "is this an
+  invocation?", quote characters stripped for reading flag values — so neither
+  `printf 'gh pr create …'` nor `--repo "gastownhall/beads"` is misread.
+- `pr-open` publishes its log by `mv`, so a run killed mid-write cannot leave a
+  truncated file sitting there satisfying the gate forever.
+
+The stopping point is deliberate. This is a backstop against forgetting, not a
+security boundary — `MYBD_SKIP_XVENDOR=1` is right there — so the bar is
+"closes the ways a session plausibly opens a PR", not "survives an adversary".
+
+The escape hatch is a command-line prefix rather than an exported env var on
+purpose: an export would silently disarm every later PR in the session, and
+would not appear in the transcript beside the PR it excused.
+
+Why a gate at all: the rule used to be prose ("one agent **may** shell out to
+`codex-agent reviewer`") and compliance tracked the session model instead of the
+policy. Measured across 168 transcripts on 2026-08-01, sessions that opened an
+upstream PR also ran a Codex review 47% of the time on `fable-5` and 23% on
+`opus-5`, and four Opus sessions on 07-31/08-01 opened 15 PRs between them with
+none. Bead `mybd-hc70v`.
+
 ## pr-babysit / pr-handoff (merge-tail patrol)
 
 ```bash
