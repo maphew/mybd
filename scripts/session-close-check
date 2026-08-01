@@ -15,11 +15,13 @@
 # In concurrent sessions sharing one checkout the single stamp is coarse; pass
 # --since for precise scoping (see session-start-stamp for the non-clobber rule).
 #
-# Three checks, each backing one judgment prompt from the close protocol:
+# Four checks, each backing one judgment prompt from the close protocol:
 #   1. Unreferenced reports - a new reports/*.md file referenced by no OPEN bead
 #      and no memory (learning stranded off the cold-start path).
 #   2. Thin new beads - a bead created this session with a near-empty description.
 #   3. Left in_progress - a bead still in_progress that this session started.
+#   4. Unreferenced branches - a branch this session advanced that is neither
+#      pushed nor named by an open bead or memory, in this repo or bd-main.
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
 tri_require bd jq git
@@ -158,6 +160,45 @@ if [[ "$bd_ok" == 1 ]]; then
       | "bead left in_progress (started this session): \(.id) \"\(.title)\" - close it or hand it off in an open bead"
     ' <<<"$beads_json" 2>/dev/null || true
   )
+
+  # --- Check 4: branches this session advanced that nothing points at --------
+  # Symmetric with check 1: a branch is a deliverable too. An unpushed branch
+  # named by no open bead is invisible to every tool the next agent reaches for,
+  # because `gh pr list` and pr-preflight --search only see OPEN PRs. On
+  # 2026-08-01 that gap cost a whole reimplementation: an earlier session's
+  # internal/config fix sat on an unpushed, bead-less local branch, and the
+  # session that duplicated it had run both searches and been told nothing.
+  #
+  # Two filters keep this signal rather than noise:
+  #   - Scoped to the session boundary. The standing backlog is large (72 of 73
+  #     local bd-main branches carry commits not on upstream/main), so warning
+  #     about all of them would train the reader to skip check 4 entirely.
+  #   - Published branches exempt. If the tip is on any remote-tracking ref it
+  #     is discoverable without a bead, which is the property we actually want.
+  #     This is deliberately a local test: no gh, no network, so the check stays
+  #     usable offline and cannot fail the close on a rate limit.
+  check_unreferenced_branches() {
+    local dir="$1" label="$2" br tip
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    while IFS=$'\t' read -r br tip; do
+      [[ -n "$br" ]] || continue
+      case "$br" in main|master) continue ;; esac
+      # On any remote already? Then it is findable without a bead.
+      if [[ -n "$(git -C "$dir" branch -r --contains "$tip" 2>/dev/null | head -1)" ]]; then
+        continue
+      fi
+      grep -qF "$br" <<<"$haystack" && continue
+      warn "branch not referenced by any open bead or memory: ${label}${br} - unpushed and unnamed, so 'gh pr list' and pr-preflight cannot see it either"
+    done < <(
+      git -C "$dir" for-each-ref \
+        --format='%(refname:short)%09%(objectname)%09%(committerdate:unix)' refs/heads/ 2>/dev/null \
+        | awk -F'\t' -v since="$since_epoch" '$3 >= since { print $1 "\t" $2 }'
+    )
+  }
+  check_unreferenced_branches "$root" ""
+  if [[ -d "$root/bd-main" ]]; then
+    check_unreferenced_branches "$root/bd-main" "bd-main:"
+  fi
 fi
 
 if [[ "$warns" -eq 0 ]]; then
