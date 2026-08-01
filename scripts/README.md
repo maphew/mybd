@@ -397,9 +397,16 @@ scripts/pr-review-gate          # PreToolUse hook; reads hook JSON on stdin
 scripts/test-pr-review-gate     # smoke test, style of scripts/test-git-hooks
 ```
 
-`pr-open` is the pre-PR verb: upstream preflight, then
+`pr-open` is the pre-PR verb: upstream preflight, a base-CI health check, then
 `codex-agent reviewer --diff` over the branch, then a review log at
-`.worktrees/.review-logs/<head-sha>.md`. It stops there. Reconciling findings is
+`.worktrees/.review-logs/<head-sha>.md`. It stops there.
+
+The base check is `pr-open`'s own, not preflight's: `pr-preflight.sh --search`
+returns after `gh pr list`, and its base-health logic lives only on the
+`<pr-number>` path — which does not exist for a PR nobody has opened yet. Without
+it, "preflight passed" would have quietly meant "nobody looked at the base" at
+exactly the moment stop-the-line matters. Red base warns, or exits 3 under
+`PR_PREFLIGHT_BLOCK_RED_BASE=1`, matching preflight's own rule. Reconciling findings is
 judgment — some are wrong, some describe behaviour the base already had — and a
 wrapper that opened the PR as soon as the review returned would be automating
 the one step that has to be thought about.
@@ -433,6 +440,9 @@ cannot become a nuisance from a phone:
 | `cd <unreviewed> && gh pr create` from a reviewed cwd | **blocked** — gh runs where the `cd` put it |
 | `gh pr new …` | gated identically — it is an alias, not a loophole |
 | review log that is empty or has no `- base:` line | **blocked** — it cannot say which diff was read |
+| `--repo github.com/gastownhall/beads` | **blocked** — gh takes `[HOST/]OWNER/REPO`; the host is not a disguise |
+| two `gh pr create` in one command | **blocked** — flags cannot be attributed per invocation; run them separately |
+| `--head owner:branch` where the local branch is stale | **blocked** — remote-tracking tip outranks a local namesake |
 
 Everything from "reviewed against a different base" down exists because the
 first two versions of this gate got each of those wrong, and the Codex review

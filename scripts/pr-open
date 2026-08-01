@@ -93,6 +93,33 @@ if (( ! skip_preflight )); then
   else
     echo "pr-open: $preflight not found or not executable; skipping preflight." >&2
   fi
+
+  # pr-preflight.sh --search returns after `gh pr list`; its base-CI check lives
+  # only on the <pr-number> path, which does not exist yet for a PR that has not
+  # been opened. So "preflight passed" would quietly mean "nobody checked the
+  # base" at exactly the moment stop-the-line matters. Same rule as there:
+  # newest decisive run per workflow, cancelled runs carry no signal.
+  echo "== base health: $repo@$base"
+  base_runs="$(gh run list --repo "$repo" --branch "$base" --status completed \
+    --limit 30 --json conclusion,workflowName,createdAt,url 2>/dev/null)" || base_runs=""
+  latest_per_wf="$(jq '[group_by(.workflowName)[]
+    | [.[] | select((.conclusion // "") == "success" or ((.conclusion // "") | test("^(failure|timed_out|action_required)$")))][0]
+    | select(. != null)]' <<<"${base_runs:-[]}" 2>/dev/null || echo '[]')"
+  red="$(jq '[.[] | select((.conclusion // "") | test("^(failure|timed_out|action_required)$"))]' <<<"$latest_per_wf")"
+  if [[ "$(jq 'length' <<<"$red")" -gt 0 ]]; then
+    echo "  RED: $(jq -r 'map("\(.workflowName) (\(.url))") | join("; ")' <<<"$red")" >&2
+    if [[ "${PR_PREFLIGHT_BLOCK_RED_BASE:-0}" == "1" ]]; then
+      echo "pr-open: $base is red and PR_PREFLIGHT_BLOCK_RED_BASE=1 — stop-the-line." >&2
+      echo "  While the base is red the only PR that should be opened is the fix for it." >&2
+      echo "  See PR_MAINTAINER_GUIDELINES.md \"Base-Branch Health\"." >&2
+      exit 3
+    fi
+    echo "  (warning only; export PR_PREFLIGHT_BLOCK_RED_BASE=1 to make this a stop)" >&2
+  elif [[ "$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$latest_per_wf")" -gt 0 ]]; then
+    echo "  green"
+  else
+    echo "  undetermined — check $base manually before opening" >&2
+  fi
 fi
 
 if ! command -v codex >/dev/null 2>&1; then

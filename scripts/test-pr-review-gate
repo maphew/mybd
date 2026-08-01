@@ -127,6 +127,18 @@ if (( have_codex )); then
   check "configured merge-base honored" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
   git -C "$tmp" config --unset "branch.$(git -C "$tmp" rev-parse --abbrev-ref HEAD).gh-merge-base"
 
+  # gh accepts [HOST/]OWNER/REPO; the host must not disguise the target.
+  check "host-qualified --repo"     2 "$(run 'gh pr create --repo github.com/gastownhall/beads --head me:other-work' "$other")"
+  check "host-qualified GH_REPO"    2 "$(run 'GH_REPO=github.com/gastownhall/beads gh pr create --title x' "$other")"
+
+  # Chained creations cannot have their flags attributed; ask for one per call.
+  check "chained creations blocked" 2 "$(run 'gh pr create --repo maphew/mybd; gh pr create --repo gastownhall/beads' "$tmp")"
+
+  # A stale local branch must not vouch for the remote tip gh would push from.
+  git -C "$tmp" update-ref "refs/remotes/origin/other-work" "$(git -C "$tmp" rev-parse other-work)"
+  git -C "$tmp" branch -qf other-work "$sha"
+  check "remote tip outranks local" 2 "$(run 'gh pr create --repo gastownhall/beads --head me:other-work' "$tmp")"
+
   # A moved HEAD must re-arm: the log vouches for a commit, not a branch.
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
   check "amended HEAD re-arms gate" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
