@@ -153,7 +153,7 @@ workspacegate writes `.beads.gate.lock` beside `.beads`, and `bd doctor` lists
 `*.gate.lock*` for that reason; this repo's `.gitignore` predates it, so the
 lock has sat untracked in `git status` since 2026-07-31.
 
-**gastownhall/beads — prepared-DML migration hygiene** (`mybd-p8i3`).
+**gastownhall/beads#5232 — prepared-DML migration hygiene** (`mybd-p8i3`).
 `cli_migrations.go` documented the Dolt CLI batch-path limitation as being about
 "some prepared ALTER TABLE statements"; per dolthub/dolt#11345 it applies to any
 prepared DML. Broadens the comment and adds Check E to
@@ -183,7 +183,13 @@ that way; the exemption is now restricted to `INSERT INTO`, whose target is
 always the token after `INTO`, and prepared `UPDATE`/`DELETE` are never
 exempted at all.
 
-Round 5 found two more of the same kind (`SET @sql := ...` never buffered; the
+Rounds 5-8 found six more, all real and all reproduced before fixing: `:=`
+assignment; a leading comment or CTE before the verb; `PREPARE` from a literal
+(single *and* double quoted); `REPLACE INTO` missing from the write-verb set
+entirely; an `INSERT` with `INTO` omitted going untallied so the exemption
+looked unanimous; and finally the two predicates spelling the verb boundary
+differently (`[[:space:]]` vs a token boundary), so `UPDATE/*x*/ issues` walked
+past. Round 5 found two of the same kind (`SET @sql := ...` never buffered; the
 DML verb required immediately after the opening quote, so a leading comment or
 CTE walked past), fixed the same way — match the verb as a token anywhere,
 mask `ON UPDATE` and `ON DUPLICATE KEY UPDATE` so a column attribute is not
@@ -193,6 +199,15 @@ The generalisable lesson is not "run more review rounds" — it is that when
 successive fixes to the same predicate keep failing on new inputs, the
 predicate is the wrong shape. A single review pass would have shipped a check
 that silently exempted real-table writes while appearing to work.
+
+**Eight rounds is the finding, not the diligence.** Every one was real, and the
+check is far better than it started — but rounds 3 through 8 were *all* false
+negatives introduced by round 1's fix. The two design changes that actually
+held were: never exempt `UPDATE`/`DELETE`/`REPLACE` at all, since only
+`INSERT INTO` has an unambiguous target; and make the exemption fail closed on
+any write verb it cannot classify. Both were reachable three rounds earlier.
+I kept adding position cases to a line-oriented matcher instead of asking why
+the predicate kept being wrong.
 
 **Where I stopped.** Round 5 also surfaced two bypasses I did *not* fix — a
 multi-variable `SET @guard = 1, @sql = '...'`, and a `PREPARE` split across
