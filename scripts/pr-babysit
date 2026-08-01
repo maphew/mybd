@@ -62,6 +62,10 @@ TRANSIENT_BLOCK_LIMIT=3   # patrol passes before a transient-only block escalate
 CHECKS_UNAVAILABLE_LIMIT=10  # passes with no readable checks before escalation
 REARM_LIMIT=2             # automatic re-arms per head before a human owns it
 CLOSE_RETRY_LIMIT=10      # consecutive unreadable/malformed close-when-quiet passes before escalation
+# Stale-green guard (mybd-uncb7).  0 disables it entirely and restores the
+# pre-2026-08-01 behaviour of merging on whatever green GitHub reports.
+FRESHEN_STALE_GREEN="${PR_BABYSIT_FRESHEN:-1}"
+FRESHEN_LIMIT="${PR_BABYSIT_FRESHEN_LIMIT:-3}"  # update-branch attempts per lane before a human owns it
 RED_BASE_ESCALATE_LIMIT="${PR_BABYSIT_RED_BASE_LIMIT:-5}"  # consecutive passes (~1h at 12m) on a red base before its bead is raised
 RED_BASE_NOTE_EVERY=10    # passes between follow-up notes on a standing red-base bead (~2h)
 RED_BASE_STATE="$STATE_DIR/red-base"
@@ -215,9 +219,9 @@ rearm_sweep() {
     fi
     (( eligible )) || continue
     # Reserve the re-arm budget before restoring the label: a crash after the
-    # reservation conservatively spends one re-arm for this head.  Both patrol
-    # retry counters reset so the re-armed head gets a fresh assessment.
-    if ! bd update "$bead" --set-metadata "pr_babysit_rearm=$head:$((n + 1))" --unset-metadata pr_babysit_transient --unset-metadata pr_babysit_checksun >/dev/null 2>&1; then
+    # reservation conservatively spends one re-arm for this head.  Every patrol
+    # retry counter resets so the re-armed head gets a fresh assessment.
+    if ! bd update "$bead" --set-metadata "pr_babysit_rearm=$head:$((n + 1))" --unset-metadata pr_babysit_transient --unset-metadata pr_babysit_checksun --unset-metadata pr_babysit_freshen >/dev/null 2>&1; then
       log "$bead: re-arm reservation failed"; continue
     fi
     # --claim keeps the tail out of bd ready: a re-armed bead is patrol-owned,
@@ -589,15 +593,71 @@ while read -r item; do
     fi
   fi
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
-  # Patrol-owned retry counters (checksun/transient/rearm) are excluded from
-  # the metadata comparison: the patrol legitimately clears them mid-pass, and
-  # they carry no merge-authorization meaning.
-  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'def scrub: (. // {}) | del(.pr_babysit_checksun, .pr_babysit_transient, .pr_babysit_rearm); length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and ((.[0].metadata | scrub) == ($queued.metadata | scrub))' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
+  # Patrol-owned retry counters (checksun/transient/rearm/freshen) are excluded
+  # from the metadata comparison: the patrol legitimately clears them mid-pass,
+  # and they carry no merge-authorization meaning.
+  if ! current_issue="$(bd show "$bead" --json 2>/dev/null)" || ! jq -e --argjson queued "$item" 'def scrub: (. // {}) | del(.pr_babysit_checksun, .pr_babysit_transient, .pr_babysit_rearm, .pr_babysit_freshen); length == 1 and .[0].id == $queued.id and (. [0].labels | index("merge-when-green")) != null and (. [0].status == $queued.status) and (. [0].assignee == $queued.assignee) and (. [0].external_ref == $queued.external_ref) and (. [0].notes == $queued.notes) and ((.[0].metadata | scrub) == ($queued.metadata | scrub))' >/dev/null 2>/dev/null <<<"${current_issue:-}"; then
     # Surface the skip on the bead (once per head): a persistent mismatch here
     # would otherwise livelock visibly only in the local patrol log.
     transition "$bead" "$metadata" "$notes" "authorization-mismatch:$head" "Bead changed between queue read and merge, or bd was unavailable; merge skipped; retained under patrol." || log "$bead: transition failed"
     log "$bead: merge authorization revoked or unavailable; skipping"
     continue
+  fi
+  # --- stale-green guard (mybd-uncb7) -----------------------------------------
+  # GitHub builds the merge ref a pull_request run tests when the run is
+  # CREATED, so "the branch is behind" is NOT by itself a stale verdict: a run
+  # created after the base moved tested today's base, behind_by or not.  What is
+  # stale is a green whose newest check STARTED before the base's tip commit —
+  # that verdict was earned against a base that no longer exists.  The signal is
+  # deliberately startedAt and not completedAt: a run that began before the base
+  # moved and finished after it still tested the old merge ref, and reading
+  # completion time would wave exactly that case through.
+  #
+  # Nothing else in the pipeline catches it.  Upstream branch protection does
+  # not require up-to-date branches, so mergeStateStatus never reports BEHIND
+  # (measured 2026-08-01: absent across all 100 open PRs) and pr-preflight's
+  # BEHIND arm can therefore never fire.  GitHub will merge the stale green
+  # without complaint.  Refresh the branch and let the new head's checks decide
+  # on a later pass; this lane is per-PR human opt-in via pr-handoff, so it
+  # already holds authority over exactly this PR — strictly less than the
+  # merge it is declining to perform.
+  #
+  # Deliberately skipped under the base-fix exception: that PR is the declared
+  # remedy for a red base, being behind that base is expected, and a full CI
+  # cycle of delay is precisely what stop-the-line cannot pay.
+  if (( base_fix_bypass == 0 )) && [[ "$FRESHEN_STALE_GREEN" == 1 ]]; then
+    guard_base="$(jq -r '.baseRefName // empty' <<<"$final_json")"
+    newest_check="$(jq -r '[.statusCheckRollup[]? | (.startedAt // .createdAt // .completedAt // empty)] | map(select(type == "string" and . != "")) | sort | last // empty' <<<"$final_json")"
+    behind=""; base_tip=""
+    if [[ -n "$guard_base" && -n "$newest_check" ]]; then
+      behind="$(gh api "repos/$repo/compare/$guard_base...$head" --jq '.behind_by' 2>>"$LOG")" || behind=""
+      base_tip="$(gh api "repos/$repo/commits/$guard_base" --jq '.commit.committer.date' 2>>"$LOG")" || base_tip=""
+    fi
+    if [[ ! "$behind" =~ ^[0-9]+$ || -z "$base_tip" || -z "$newest_check" ]]; then
+      # Same posture as every other unreadable pre-merge signal in this patrol:
+      # "could not ask" is not permission to merge.
+      transition "$bead" "$metadata" "$notes" "freshness-unavailable:$head" "Could not determine whether the green checks started before the base tip; retained under patrol." || log "$bead: transition failed"
+      continue
+    fi
+    if (( behind > 0 )) && [[ "$newest_check" < "$base_tip" ]]; then
+      freshen_n="$(jq -r '.pr_babysit_freshen // empty' <<<"$metadata")"
+      [[ "$freshen_n" =~ ^[0-9]+$ ]] || freshen_n=0
+      if (( freshen_n >= FRESHEN_LIMIT )); then
+        block "$bead" "$metadata" "$notes" "stale-green-persistent:$head" "Green checks still started before the base tip after $freshen_n update-branch attempt(s); the base may be moving faster than this PR's CI. Needs agent judgment."
+        continue
+      fi
+      # Reserved before calling GitHub, like the rerun budget: a crash after
+      # reservation conservatively spends one attempt rather than risking a
+      # loop that pushes a merge commit into the PR branch every pass.
+      if ! bd update "$bead" --set-metadata "pr_babysit_freshen=$((freshen_n + 1))" >/dev/null 2>&1; then log "$bead: freshen deferred (reservation failed)"; continue; fi
+      if gh pr update-branch "$pr" --repo "$repo" >>"$LOG" 2>&1; then
+        transition "$bead" "$metadata" "$notes" "stale-green-freshened:$head" "Green checks (newest start $newest_check) predated the base tip ($base_tip; branch was $behind commit(s) behind), so the verdict was earned against a base that no longer exists. Ran gh pr update-branch instead of merging; the new head's checks decide." || log "$bead: transition failed"
+        log "$bead: FRESHENED $repo#$pr — green predated base tip; not merging this pass"
+      else
+        block "$bead" "$metadata" "$notes" "stale-green-update-failed:$head" "Green checks started before the base tip and gh pr update-branch failed — likely a conflict with the base, or no write access to the head branch. Needs agent judgment."
+      fi
+      continue
+    fi
   fi
   if gh pr merge "$pr" --repo "$repo" "--$method" --match-head-commit "$head" >>"$LOG" 2>&1; then
     if ! after_json="$(gh pr view "$pr" --repo "$repo" --json state 2>>"$LOG")" || ! after_state="$(jq -er '.state | strings' <<<"${after_json:-}" 2>/dev/null)"; then
