@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# test-pr-review-gate - smoke-test the PreToolUse gate, in the style of
+# scripts/test-git-hooks.
+#
+# A hook that blocks `gh pr create` can stop real work from a phone, so the
+# allow cases matter at least as much as the deny case: everything that is not
+# an unreviewed upstream PR must pass through untouched.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GATE="$ROOT/scripts/pr-review-gate"
+# Resolve the log dir the way the gate does, so a run from a linked worktree
+# plants its fixture where the gate will actually look.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+
+pass=0; fail=0
+have_codex=1; command -v codex >/dev/null 2>&1 || have_codex=0
+
+# A throwaway repo with one commit, so HEAD is a real sha we control.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/prgate.XXXXXX")"
+trap 'rm -rf "$tmp"; [[ -n "${planted:-}" ]] && rm -f "$REVIEW_DIR/$planted.md"' EXIT
+git -C "$tmp" init -q
+git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$tmp" remote add origin git@github.com:maphew/beads.git
+sha="$(git -C "$tmp" rev-parse HEAD)"
+
+run() { # run <cmd> <cwd> -> exit code
+  jq -nc --arg c "$1" --arg d "$2" \
+    '{hook_event_name:"PreToolUse",tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' \
+    | "$GATE" >/dev/null 2>&1
+  echo $?
+}
+
+check() { # check <label> <expected> <actual>
+  if [[ "$2" == "$3" ]]; then
+    printf '  ok    %s\n' "$1"; pass=$((pass+1))
+  else
+    printf '  FAIL  %s (want exit %s, got %s)\n' "$1" "$2" "$3"; fail=$((fail+1))
+  fi
+}
+
+echo "pr-review-gate:"
+
+# Pass-through: things the gate must never touch.
+check "unrelated command"        0 "$(run 'ls -la' "$tmp")"
+check "gh pr view"               0 "$(run 'gh pr view 123 --repo gastownhall/beads' "$tmp")"
+check "gh pr create, other repo" 0 "$(run 'gh pr create --repo maphew/mybd --title x' "$tmp")"
+check "substring, not a command" 0 "$(run 'echo "how to gh pr create"' "$tmp")"
+check "escape hatch honored"     0 "$(run 'MYBD_SKIP_XVENDOR=1 gh pr create --repo gastownhall/beads' "$tmp")"
+
+if (( have_codex )); then
+  # Deny: upstream PR, no review log for HEAD.
+  check "unreviewed, --repo named"  2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "unreviewed, inferred repo" 2 "$(run 'gh pr create --title x' "$tmp")"
+  check "unreviewed, cd prefix"     2 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
+
+  # Allow: a review log for exactly this HEAD.
+  mkdir -p "$REVIEW_DIR"
+  planted="$sha"
+  printf '# test fixture\n' > "$REVIEW_DIR/$sha.md"
+  check "reviewed HEAD passes"      0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "reviewed via cd prefix"    0 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
+
+  # A moved HEAD must re-arm: the log vouches for a commit, not a branch.
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
+  check "amended HEAD re-arms gate" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+else
+  echo "  skip  deny cases (codex not on PATH; the gate stands down by design)"
+  check "no codex means no block"   0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+fi
+
+echo
+echo "$pass passed, $fail failed"
+[[ "$fail" -eq 0 ]]

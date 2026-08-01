@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# pr-open - upstream preflight + cross-vendor review, before a PR exists.
+#
+# The two things that must happen before `gh pr create` against
+# gastownhall/beads, in one verb:
+#
+#   1. bd-main/scripts/pr-preflight.sh --search "<topic>"   (is someone already
+#      doing this? is the base green?)
+#   2. scripts/codex-agent reviewer --diff --base <base>    (a second model
+#      family on the diff, per AGENTS.md "Second opinion across model vendors")
+#
+# The review is written to a log keyed by the HEAD sha. scripts/pr-review-gate
+# reads that log: `gh pr create` is blocked until one exists for the exact
+# commit being proposed, so amending after a review re-arms the gate rather
+# than riding the old verdict.
+#
+# This deliberately stops before creating the PR. Reconciling findings is
+# judgment - some are wrong, some are pre-existing rather than regressions (bd
+# memory dual-vendor-review-disagreement), and a wrapper that opened the PR the
+# moment the review returned would be automating the one step that has to be
+# thought about.
+#
+# Usage:
+#   scripts/pr-open [-C <dir>] [--base <branch>] [--repo owner/repo]
+#                   [--search "<topic keywords>"] [--skip-preflight]
+#                   [--allow-dirty] [--prompt "<extra review focus>"]
+#
+# Exit codes: 0 review written · 1 error · 2 usage · 3 preflight objected.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Anchor on the MAIN checkout: a copy of this script running from a linked
+# worktree must still write where scripts/pr-review-gate reads, or a review
+# would be invisible to the gate that asked for it.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+
+workdir="$PWD"
+base="main"
+repo="gastownhall/beads"
+search=""
+prompt=""
+skip_preflight=0
+allow_dirty=0
+
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C|--cd)   [[ $# -ge 2 ]] || { usage; exit 2; }; workdir="$2"; shift 2 ;;
+    --base)    [[ $# -ge 2 ]] || { usage; exit 2; }; base="$2"; shift 2 ;;
+    --repo)    [[ $# -ge 2 ]] || { usage; exit 2; }; repo="$2"; shift 2 ;;
+    --search)  [[ $# -ge 2 ]] || { usage; exit 2; }; search="$2"; shift 2 ;;
+    --prompt)  [[ $# -ge 2 ]] || { usage; exit 2; }; prompt="$2"; shift 2 ;;
+    --skip-preflight) skip_preflight=1; shift ;;
+    --allow-dirty)    allow_dirty=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "pr-open: unexpected argument '$1'" >&2; usage; exit 2 ;;
+  esac
+done
+
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "pr-open: bad --repo '$repo'" >&2; exit 2; }
+
+workdir="$(cd "$workdir" 2>/dev/null && pwd)" || { echo "pr-open: no such directory: $workdir" >&2; exit 1; }
+git -C "$workdir" rev-parse --git-dir >/dev/null 2>&1 || { echo "pr-open: not a git checkout: $workdir" >&2; exit 1; }
+
+# The log is keyed by sha, so the tree must actually BE that sha. A dirty tree
+# would produce a review of code the sha does not contain, and the gate would
+# then wave through a commit nothing reviewed.
+if (( ! allow_dirty )) && [[ -n "$(git -C "$workdir" status --porcelain)" ]]; then
+  echo "pr-open: working tree is dirty in $workdir." >&2
+  echo "  Commit first — the review log is keyed to HEAD, and a review of" >&2
+  echo "  uncommitted work would vouch for a commit that does not contain it." >&2
+  echo "  (--allow-dirty to override deliberately.)" >&2
+  exit 1
+fi
+
+head_sha="$(git -C "$workdir" rev-parse HEAD)"
+branch="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+
+if (( ! skip_preflight )); then
+  preflight="$ROOT/bd-main/scripts/pr-preflight.sh"
+  if [[ -x "$preflight" ]]; then
+    if [[ -n "$search" ]]; then
+      echo "== preflight: $search"
+      "$preflight" --search "$search" --repo "$repo" || { echo "pr-open: preflight objected." >&2; exit 3; }
+    else
+      echo "pr-open: no --search given; skipping the duplicate-topic check." >&2
+      echo "  Pass --search \"<topic keywords>\" so a competing PR is found before you open one." >&2
+    fi
+  else
+    echo "pr-open: $preflight not found or not executable; skipping preflight." >&2
+  fi
+fi
+
+if ! command -v codex >/dev/null 2>&1; then
+  echo "pr-open: codex CLI not on PATH — cannot run the cross-vendor review." >&2
+  echo "  Install/authenticate codex, or open the PR with an explicit" >&2
+  echo "  MYBD_SKIP_XVENDOR=1 prefix and say why in the PR body." >&2
+  exit 1
+fi
+
+mkdir -p "$REVIEW_DIR"
+log="$REVIEW_DIR/$head_sha.md"
+tmp="$(mktemp "${TMPDIR:-/tmp}/pr-open.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+echo "== codex reviewer (gpt-5.6-sol, high) on $branch @ ${head_sha:0:12} vs $base"
+set +e
+if [[ -n "$prompt" ]]; then
+  "$ROOT/scripts/codex-agent" reviewer --diff -C "$workdir" --base "$base" "$prompt" </dev/null 2>&1 | tee "$tmp"
+else
+  "$ROOT/scripts/codex-agent" reviewer --diff -C "$workdir" --base "$base" </dev/null 2>&1 | tee "$tmp"
+fi
+rc=${PIPESTATUS[0]}
+set -e
+
+if (( rc != 0 )); then
+  echo "pr-open: codex review exited $rc; no review log written." >&2
+  exit 1
+fi
+
+{
+  echo "# Cross-vendor pre-PR review"
+  echo
+  echo "- repo: \`$repo\`"
+  echo "- branch: \`$branch\`"
+  echo "- head: \`$head_sha\`"
+  echo "- base: \`$base\`"
+  echo "- reviewer: codex \`gpt-5.6-sol\`, high reasoning (\`codex review --base $base\`)"
+  echo "- worktree: \`$workdir\`"
+  echo
+  echo '## Findings as returned'
+  echo
+  cat "$tmp"
+} > "$log"
+
+cat <<EOF
+
+review log: $log
+
+Next: reconcile every finding against the source before posting — a single
+reviewer's severity ranking is not a maintainer decision, and "pre-existing,
+not a regression" is the most decision-relevant question you can ask of one
+(bd memory dual-vendor-review-disagreement). Then:
+
+  gh pr create --repo $repo --base $base --body-file <file>
+
+If you amend or add commits, HEAD moves and the gate re-arms: run pr-open again
+on the final commit.
+EOF

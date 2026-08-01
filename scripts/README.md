@@ -388,6 +388,52 @@ network) against a throwaway repo with a known culprit, and asserts the real
 `.beads` DB and `bd-main` clone are never touched. Re-run it after any change
 to the lane.
 
+## pr-open / pr-review-gate (cross-vendor review before a PR)
+
+```bash
+scripts/pr-open [-C <dir>] [--base main] [--repo owner/repo] [--search "<topic>"] \
+                [--prompt "<extra focus>"] [--skip-preflight] [--allow-dirty]
+scripts/pr-review-gate          # PreToolUse hook; reads hook JSON on stdin
+scripts/test-pr-review-gate     # smoke test, style of scripts/test-git-hooks
+```
+
+`pr-open` is the pre-PR verb: upstream preflight, then
+`codex-agent reviewer --diff` over the branch, then a review log at
+`.worktrees/.review-logs/<head-sha>.md`. It stops there. Reconciling findings is
+judgment — some are wrong, some describe behaviour the base already had — and a
+wrapper that opened the PR as soon as the review returned would be automating
+the one step that has to be thought about.
+
+`pr-review-gate` is the backstop, wired as a `PreToolUse` hook on `Bash` in
+`.claude/settings.json`. It blocks `gh pr create` against `gastownhall/beads`
+unless a review log exists for the exact HEAD being proposed. It resolves that
+HEAD from a leading `cd X &&`, a `git -C X`, an explicit `--head owner:branch`,
+or the session cwd, and passes if **any** of them is reviewed.
+
+Deliberately narrow — everything below is an allow, so the gate cannot become a
+nuisance from a phone:
+
+| situation | gate |
+|---|---|
+| anything that is not `gh pr create` | passes |
+| `gh pr create` for another repo (incl. `maphew/mybd`) | passes |
+| `codex` not on PATH | passes, with no second vendor there is no path through |
+| `MYBD_SKIP_XVENDOR=1 gh pr create …` | passes |
+| review log exists for this HEAD | passes |
+| upstream PR, HEAD never reviewed | **blocked**, exit 2 |
+| upstream PR, reviewed then amended | **blocked** — the log vouches for a commit, not a branch |
+
+The escape hatch is a command-line prefix rather than an exported env var on
+purpose: an export would silently disarm every later PR in the session, and
+would not appear in the transcript beside the PR it excused.
+
+Why a gate at all: the rule used to be prose ("one agent **may** shell out to
+`codex-agent reviewer`") and compliance tracked the session model instead of the
+policy. Measured across 168 transcripts on 2026-08-01, sessions that opened an
+upstream PR also ran a Codex review 47% of the time on `fable-5` and 23% on
+`opus-5`, and four Opus sessions on 07-31/08-01 opened 15 PRs between them with
+none. Bead `mybd-hc70v`.
+
 ## pr-babysit / pr-handoff (merge-tail patrol)
 
 ```bash

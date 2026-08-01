@@ -174,12 +174,21 @@ scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.6-sol, high,
 scripts/codex-agent reviewer --diff --base main             # structured `codex review` of a branch diff
 ```
 
+**A session instruction restricting subagents or workflows does not restrict
+`scripts/codex-agent`.** It is a shell call billed to a separate pool, not the
+Agent tool and not a Workflow. Honour an explicit "no codex" or "keep it cheap"
+for the turn; do not infer one from a restriction on Claude subagents. Written
+down 2026-08-01 because a session read "do not call the AgentTool unless the
+user requested it" as covering Codex too and skipped a required review.
+
 When to route to Codex instead of a Claude subagent:
 
 - **Second opinion across model vendors** - reviews, design assessments, and
   bug hunts where an independent model family catches what same-family
   agents miss. This is the highest-value use: pair `codex-agent reviewer`
-  with the Claude `reviewer` agent on the same diff and compare.
+  with the Claude `reviewer` agent on the same diff and compare. Before an
+  upstream PR this is **required**, not advisory - see "Cross-vendor review
+  before an upstream PR" below.
 - **Quota relief** - Codex bills to the ChatGPT plan, a separate pool from
   Claude. Its tokens do NOT count toward workflow `budget.spent()` or a
   "+Nk" directive, so `log()` Codex delegations in workflows instead of
@@ -267,7 +276,10 @@ a prompt.
 - For verify/judge stages that benefit from vendor diversity, one agent may
   shell out to `scripts/codex-agent reviewer ... </dev/null` (see
   Cross-runtime delegation above). Codex tokens bypass `budget.spent()`,
-  so `log()` each Codex call and keep such runs serial in this repo.
+  so `log()` each Codex call and keep such runs serial in this repo. This
+  "may" is about workflow internals only - before an upstream PR the
+  cross-vendor pass is required and gated, see "Cross-vendor review before an
+  upstream PR".
 - Run bd/dolt operations serially inside workflows - parallel bd commands
   can leave Git helper processes or embedded-Dolt locks behind.
 - A *current* prompt saying "no workflow" / "keep it cheap" wins for that
@@ -311,6 +323,43 @@ on an unpushed local branch with no bead and no PR. Both `gh pr list` and
 neither can see an unpushed branch. `scripts/session-close-check` now warns at
 the producing end (see "Cold-start handoff"); this is the receiving end, and it
 works even when the other session skipped everything.
+
+### Cross-vendor review before an upstream PR
+
+**Run a second model family over the diff before `gh pr create` against
+`gastownhall/beads`.** Both steps in one verb:
+
+```bash
+scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
+```
+
+It runs the preflight above, then `codex-agent reviewer --diff` on the branch,
+and writes the findings to `.worktrees/.review-logs/<head-sha>.md`.
+
+Then **reconcile the findings before posting** - that part is yours, not the
+script's. A single reviewer's severity ranking is not a maintainer decision:
+ask of each finding "is this a regression or pre-existing?" and prefer
+approve-with-followups over request-changes (bd memory
+`dual-vendor-review-disagreement`, where all three of Codex's High findings
+turned out to describe behaviour current main already had). Note the pass in
+the PR body.
+
+`scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json`) blocks
+`gh pr create` until a review log exists for the **exact commit** being
+proposed. Amending re-arms it, which is the point: the log vouches for a commit,
+not for a branch. It stands down when codex is not on PATH. To skip
+deliberately, prefix the command with `MYBD_SKIP_XVENDOR=1` and say why in the
+handoff - in the command line, so the excuse sits next to the PR it excused
+instead of silently disarming the rest of the session. Smoke-test with
+`scripts/test-pr-review-gate`.
+
+Why this is a gate and not a sentence (2026-08-01): it *was* a sentence - "one
+agent **may** shell out to `codex-agent reviewer`" - and compliance tracked the
+session model rather than the policy. Across 168 transcripts, sessions that
+opened an upstream PR also ran a Codex review 47% of the time on `fable-5` and
+23% on `opus-5`; four Opus sessions on 07-31/08-01 opened 15 PRs between them
+with none at all. Every other non-negotiable here (preflight, `verify-enqueue`,
+`agent-sig.sh`) is an imperative with a script behind it. This one now is too.
 
 Autonomous agents export `PR_PREFLIGHT_BLOCK_RED_BASE=1` so preflight
 hard-blocks (rather than warns) when the base branch is red. While upstream

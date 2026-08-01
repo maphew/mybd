@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# pr-review-gate - PreToolUse hook: no `gh pr create` upstream without a
+# cross-vendor review of the exact commit being proposed.
+#
+# Why this is a hook and not a sentence in AGENTS.md: it was a sentence in
+# AGENTS.md, and compliance turned out to track the session model rather than
+# the policy. Measured across 168 transcripts on 2026-08-01, sessions that
+# opened an upstream PR also ran `codex-agent reviewer` 47% of the time on
+# fable-5 and 23% on opus-5; four Opus sessions on 07-31/08-01 opened 15 PRs
+# between them with no cross-vendor review at all. Every other non-negotiable
+# in this repo (pr-preflight, verify-enqueue, agent-sig) is an imperative with
+# a script behind it. This one was a "may". Now it is a gate.
+#
+# Reads the PreToolUse JSON on stdin. Exit 0 allows the command; exit 2 blocks
+# it and hands the message to the model.
+#
+# Blocks only when all of these hold:
+#   - the command runs `gh pr create`
+#   - it targets gastownhall/beads (named with --repo, or inferred from the
+#     remotes of the checkout it runs in)
+#   - no review log exists for the HEAD sha of any checkout the command
+#     plausibly runs in
+#   - codex is on PATH (no codex, no gate — it degrades instead of deadlocking)
+#
+# Escape hatch: prefix the command with MYBD_SKIP_XVENDOR=1. It lives in the
+# command line on purpose. An env var exported earlier in the session would
+# silently disarm every later PR too, and would not show up in the transcript
+# next to the PR it excused.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Same main-checkout anchoring as scripts/pr-open, for the same reason.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+UPSTREAM_REPO="gastownhall/beads"
+
+input="$(cat)"
+command -v jq >/dev/null 2>&1 || exit 0
+
+cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
+hook_cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
+[[ -n "$cmd" ]] || exit 0
+
+# Not a PR creation, or deliberately excused.
+grep -qE '(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' <<<"$cmd" || exit 0
+grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd" && exit 0
+
+# Without codex there is no second vendor to consult, so the gate stands down
+# rather than blocking work it cannot offer a path through.
+command -v codex >/dev/null 2>&1 || exit 0
+
+# Which checkouts might this run in? A leading `cd X &&`, an explicit `git -C X`,
+# and the session cwd. Any of them having a reviewed HEAD is enough.
+declare -a dirs=()
+[[ -n "$hook_cwd" ]] && dirs+=("$hook_cwd")
+while IFS= read -r d; do [[ -n "$d" ]] && dirs+=("$d"); done < <(
+  grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd" \
+    | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//; s/^"//; s/"$//'
+  grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+' <<<"$cmd" \
+    | sed -E 's/.*-C[[:space:]]+//'
+)
+
+# --repo decides the target when present; otherwise infer from the remotes.
+target_is_upstream=0
+repo_flag="$(grep -oE -- '--repo[=[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' <<<"$cmd" | head -1 | sed -E 's/--repo[=[:space:]]+//')"
+if [[ -n "$repo_flag" ]]; then
+  [[ "$repo_flag" == "$UPSTREAM_REPO" ]] && target_is_upstream=1
+else
+  for d in "${dirs[@]}"; do
+    remotes="$(git -C "$d" remote -v 2>/dev/null)" || continue
+    if grep -qE '(gastownhall|maphew)/beads' <<<"$remotes"; then target_is_upstream=1; break; fi
+  done
+fi
+(( target_is_upstream )) || exit 0
+
+# An explicit --head owner:branch names the commit more precisely than any cwd.
+declare -a shas=()
+head_flag="$(grep -oE -- '--head[=[:space:]]+[^[:space:];&|]+' <<<"$cmd" | head -1 | sed -E 's/--head[=[:space:]]+//')"
+if [[ -n "$head_flag" ]]; then
+  ref="${head_flag##*:}"
+  for d in "${dirs[@]}" "$ROOT/bd-main"; do
+    s="$(git -C "$d" rev-parse --verify --quiet "$ref" 2>/dev/null)" || continue
+    [[ -n "$s" ]] && shas+=("$s") && break
+  done
+fi
+for d in "${dirs[@]}"; do
+  s="$(git -C "$d" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
+  [[ -n "$s" ]] && shas+=("$s")
+done
+
+for s in ${shas[@]+"${shas[@]}"}; do
+  [[ -f "$REVIEW_DIR/$s.md" ]] && exit 0
+done
+
+reviewed_hint=""
+if [[ -d "$REVIEW_DIR" ]]; then
+  recent="$(ls -1t "$REVIEW_DIR"/*.md 2>/dev/null | head -3 | while read -r f; do
+    b="$(basename "$f" .md)"; printf '    %s\n' "${b:0:12}"; done)"
+  [[ -n "$recent" ]] && reviewed_hint=$'\n  Review logs exist, but for other commits:\n'"$recent"
+fi
+
+proposed="${shas[0]:-unknown}"
+cat >&2 <<EOF
+Blocked: no cross-vendor review for the commit this PR would propose.
+
+  head:   ${proposed:0:12}
+  wanted: $REVIEW_DIR/${proposed:0:12}....md$reviewed_hint
+
+AGENTS.md requires a second model family on the diff before an upstream PR —
+an independent vendor catches what same-family agents miss, and this gate
+exists because the prose version of the rule was followed unevenly. Run:
+
+  scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
+
+then reconcile the findings and retry this command. If HEAD moved since the
+last review, that is the gate working: review the commit you are actually
+proposing.
+
+Deliberately skipping (codex down, trivial docs typo, owner said so): prefix
+this command with MYBD_SKIP_XVENDOR=1 and say why in the handoff.
+EOF
+exit 2
