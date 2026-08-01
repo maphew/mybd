@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+# Hermetic behavioural tests for reap-test-debris.
+#
+# The interesting behaviour is "which processes does it decide to kill", so the
+# tests drive the selection with REAP_PROC_SOURCE fixtures and use REAL
+# short-lived processes as the targets. That way the kill path is exercised for
+# what it is rather than through a fake `kill` (which cannot be shadowed on PATH
+# anyway - it is a shell builtin), and a case that asserts "must NOT be reaped"
+# is proved by the process still being alive afterwards.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="$ROOT/scripts/reap-test-debris"
+[[ -x "$SCRIPT" ]] || { echo "not executable: $SCRIPT" >&2; exit 1; }
+
+TMP="$(mktemp -d)"
+VICTIMS=()
+cleanup() {
+    local pid
+    for pid in "${VICTIMS[@]:-}"; do
+        [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
+    done
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+
+pass=0
+fail=0
+
+ok()   { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
+bad()  { printf '  FAIL %s\n' "$1" >&2; fail=$((fail + 1)); }
+check(){ if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; fi; }
+
+# spawn_victim -> prints a pid of a live process we are allowed to kill.
+#
+# The victim's argv is set with `exec -a` so that /proc/<pid>/cmdline really
+# does read as a dolt sql-server. That matters: the script re-reads /proc
+# immediately before signalling (so a recycled PID is never killed), and a bare
+# `sleep` victim would be correctly refused, making every reap case pass for the
+# wrong reason. Only is_dolt_server is re-checked at that point, so one generic
+# server-shaped argv serves every case; the per-case path evidence lives in the
+# REAP_PROC_SOURCE fixture, which is what selection actually reads.
+#
+# The child's stdout MUST be redirected: spawn_victim is called inside a command
+# substitution, and a background child that inherits the substitution's pipe
+# keeps it open, so $(spawn_victim) would block for the child's whole lifetime.
+spawn_victim() {
+    bash -c 'exec -a "dolt sql-server --config /reap-test-placeholder.yaml" sleep 300' >/dev/null 2>&1 &
+    local pid=$!
+    VICTIMS+=("$pid")
+    printf '%s' "$pid"
+}
+
+alive() { kill -0 "$1" 2>/dev/null; }
+
+# run_reap FIXTURE [extra args...] — run the script against a fixture, with the
+# temp sweep disabled (it is clean-test-tmp.sh's job and is tested there).
+run_reap() {
+    local fixture="$1"; shift
+    REAP_PROC_SOURCE="$fixture" \
+    REAP_TMPDIR="$TMPROOT" \
+    REAP_STATE_DIR="$TMP/state" \
+    REAP_SKIP_TMP_SWEEP=1 \
+        "$SCRIPT" "$@" >"$TMP/out" 2>"$TMP/err" || return $?
+}
+
+TMPROOT="$TMP/tmproot"
+mkdir -p "$TMPROOT"
+
+OLD=99999   # comfortably past the 4h default
+YOUNG=60
+
+echo "== selection =="
+
+# 1. The observed real case: a dolt sql-server whose ONLY evidence of being test
+#    debris is the --config path. cwd is empty (the dir was already swept).
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-20298966/.beads/shared-server/dolt-server-config.yaml" "" \
+    >"$TMP/f1"
+run_reap "$TMP/f1"
+alive "$pid" && bad "reaps an old server rooted in a test temp dir" || ok "reaps an old server rooted in a test temp dir"
+
+# 2. Same shape, but young: this is a test run in flight and must be left alone.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$YOUNG" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-777/.beads/shared-server/dolt-server-config.yaml" "" \
+    >"$TMP/f2"
+run_reap "$TMP/f2"
+alive "$pid" && ok "leaves a young server alone (test run in flight)" || bad "leaves a young server alone (test run in flight)"
+
+# 3. A real project's server. Old, but not under a test root: never touch it.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config /home/matt/dev/mybd/.beads/shared-server/dolt-server-config.yaml" \
+    "/home/matt/dev/mybd" >"$TMP/f3"
+run_reap "$TMP/f3"
+alive "$pid" && ok "leaves a real project server alone" || bad "leaves a real project server alone"
+
+# 4. Not a dolt server at all, even though it sits in a test root.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "postgres --config $TMPROOT/beads-bd-tests-1/x.yaml" "$TMPROOT/beads-bd-tests-1" >"$TMP/f4"
+run_reap "$TMP/f4"
+alive "$pid" && ok "leaves a non-dolt process alone" || bad "leaves a non-dolt process alone"
+
+# 5. Evidence via cwd rather than --config.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" "dolt sql-server" \
+    "$TMPROOT/beads-shared-server-bd-42/data" >"$TMP/f5"
+run_reap "$TMP/f5"
+alive "$pid" && bad "reaps on cwd evidence when there is no --config" || ok "reaps on cwd evidence when there is no --config"
+
+# 6. Deleted cwd: the signature of a SIGKILLed run whose TempDir cleanup ran on
+#    top of a still-live server. /proc appends " (deleted)".
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" "dolt sql-server" \
+    "$TMPROOT/beads-bd-tests-9/data (deleted)" >"$TMP/f6"
+run_reap "$TMP/f6"
+alive "$pid" && bad "reaps a server whose cwd was deleted" || ok "reaps a server whose cwd was deleted"
+
+echo "== the match is anchored, not a substring =="
+
+# 7. A test-looking name NESTED under something else is not a test root. This is
+#    the case that separates "vouching for a root" from "grepping for a name".
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/someones-project/beads-bd-tests-1/x.yaml" "" >"$TMP/f7"
+run_reap "$TMP/f7"
+alive "$pid" && ok "does not match a test pattern nested below the temp root" || bad "does not match a test pattern nested below the temp root"
+
+# 8. Traversal out of the temp root must not qualify.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/../beads-bd-tests-1/x.yaml" "" >"$TMP/f8"
+run_reap "$TMP/f8"
+alive "$pid" && ok "rejects a path that traverses out of the temp root" || bad "rejects a path that traverses out of the temp root"
+
+# 9. A path that merely has the temp root as a string prefix (sibling dir).
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config ${TMPROOT}-other/beads-bd-tests-1/x.yaml" "" >"$TMP/f9"
+run_reap "$TMP/f9"
+alive "$pid" && ok "rejects a sibling directory sharing the temp-root prefix" || bad "rejects a sibling directory sharing the temp-root prefix"
+
+# 10. The temp root ITSELF is not a test root - a bare $TMPDIR match would make
+#     every server under /tmp eligible, which is exactly the cross-suite killer
+#     internal/doltserver/sweep.go warns about.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" "dolt sql-server --config $TMPROOT/x.yaml" "$TMPROOT" >"$TMP/f10"
+run_reap "$TMP/f10"
+alive "$pid" && ok "does not treat the temp root itself as a test root" || bad "does not treat the temp root itself as a test root"
+
+# 10b. Traversal DEEPER than the first component. The first component matches a
+#      test pattern, but the path actually resolves to a real project under
+#      $HOME. Rejecting only a leading ".." is not enough.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-1/../../etc/beads/dolt-server-config.yaml" "" >"$TMP/f10b"
+run_reap "$TMP/f10b"
+alive "$pid" && ok "rejects traversal below a matching first component" || bad "rejects traversal below a matching first component"
+
+echo "== the cmdline is untrusted input =="
+
+# 10c. A glob metacharacter in another process's argv must not be expanded
+#      against our cwd. Unquoted \$cmdline splitting would rewrite the token
+#      stream so the token after --config is a local filename, not the path.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server -H [::1] --config *" "" >"$TMP/f10c"
+(cd "$TMPROOT" && run_reap "$TMP/f10c")
+alive "$pid" && ok "does not glob-expand a wildcard in the cmdline" || bad "does not glob-expand a wildcard in the cmdline"
+
+# 10d. An empty cmdline field must not shift cwd into the cmdline slot. With a
+#      tab separator (IFS whitespace) consecutive separators collapse and the
+#      cwd evidence is silently destroyed; this row is only reapable via cwd.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" "dolt sql-server" \
+    "$TMPROOT/beads-bd-tests-11/data" >"$TMP/f10d"
+run_reap "$TMP/f10d"
+alive "$pid" && bad "empty/short fields do not destroy cwd evidence" || ok "empty/short fields do not destroy cwd evidence"
+
+# 10e. A malformed age must skip that row, not abort the run. Under set -u an
+#      arithmetic comparison against a non-numeric string is shell-fatal, which
+#      would leave the run half-applied with no summary line.
+pid="$(spawn_victim)"
+{ printf '%s\x1f%s\x1f%s\x1f%s\n' "999999" "notanumber" "dolt sql-server --config $TMPROOT/beads-bd-tests-12/x.yaml" ""
+  printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" "dolt sql-server --config $TMPROOT/beads-bd-tests-13/x.yaml" ""; } >"$TMP/f10e"
+set +e; run_reap "$TMP/f10e"; rc=$?; set -e
+check "a malformed age row does not abort the run" "$rc" "0"
+alive "$pid" && bad "the run continues past a malformed row" || ok "the run continues past a malformed row"
+grep -q 'servers:' "$TMP/out" && ok "the summary line still prints after a malformed row" || bad "the summary line still prints after a malformed row"
+
+echo "== multiple temp roots =="
+
+# 10f. verify-next redirects the suite's TMPDIR to $VERIFY_GOTMPDIR, so the
+#      host's main unattended producer of this debris leaks OUTSIDE /tmp.
+ALTROOT="$TMP/altroot"; mkdir -p "$ALTROOT"
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $ALTROOT/beads-bd-tests-14/x.yaml" "" >"$TMP/f10f"
+REAP_PROC_SOURCE="$TMP/f10f" REAP_TMPDIR="$TMPROOT:$ALTROOT" REAP_STATE_DIR="$TMP/state" \
+    REAP_SKIP_TMP_SWEEP=1 "$SCRIPT" >"$TMP/out" 2>"$TMP/err"
+alive "$pid" && bad "scans every configured temp root" || ok "scans every configured temp root"
+
+echo "== flags and knobs =="
+
+# 11. --dry-run reports but does not kill.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-5/x.yaml" "" >"$TMP/f11"
+run_reap "$TMP/f11" --dry-run
+alive "$pid" && ok "--dry-run leaves the process alive" || bad "--dry-run leaves the process alive"
+grep -q 'would reap' "$TMP/out" && ok "--dry-run says what it would have done" || bad "--dry-run says what it would have done"
+
+# 12. --config=VALUE spelling is read too.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config=$TMPROOT/beads-bd-tests-6/x.yaml" "" >"$TMP/f12"
+run_reap "$TMP/f12"
+alive "$pid" && bad "reads the --config=VALUE spelling" || ok "reads the --config=VALUE spelling"
+
+# 13. A raised minimum age re-protects a process that would otherwise qualify.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-7/x.yaml" "" >"$TMP/f13"
+REAP_MIN_AGE_SEC=$((OLD + 1)) run_reap "$TMP/f13"
+alive "$pid" && ok "REAP_MIN_AGE_SEC raises the bar" || bad "REAP_MIN_AGE_SEC raises the bar"
+
+# 14. A non-integer age knob is a usage error, not a silently-zero threshold.
+set +e
+REAP_MIN_AGE_SEC=abc REAP_PROC_SOURCE=/dev/null REAP_STATE_DIR="$TMP/state" \
+    REAP_SKIP_TMP_SWEEP=1 "$SCRIPT" >/dev/null 2>&1
+rc=$?
+set -e
+check "rejects a non-integer REAP_MIN_AGE_SEC" "$rc" "2"
+
+# 15. An unknown flag is a usage error rather than being ignored.
+set +e
+REAP_PROC_SOURCE=/dev/null REAP_STATE_DIR="$TMP/state" "$SCRIPT" --wat >/dev/null 2>&1
+rc=$?
+set -e
+check "rejects an unknown flag" "$rc" "2"
+
+echo "== routine outcomes exit 0 =="
+
+# 16. Nothing to do is success, so the timer does not accumulate failures.
+: >"$TMP/empty"
+set +e
+run_reap "$TMP/empty"
+rc=$?
+set -e
+check "empty candidate list exits 0" "$rc" "0"
+
+# 17. A candidate that vanished between the scan and the kill is routine.
+pid="$(spawn_victim)"
+kill -KILL "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$OLD" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-8/x.yaml" "" >"$TMP/f17"
+set +e
+run_reap "$TMP/f17"
+rc=$?
+set -e
+check "an already-dead candidate exits 0" "$rc" "0"
+
+echo "== the temp sweep obeys the same floor as the process reap =="
+
+# The sweep half is where this lane can do irreversible damage, and
+# clean-test-tmp.sh's own default floor is 30 minutes - 8x looser than the 4h
+# process floor. A stand-in sweep records how it was invoked.
+SWEEPLOG="$TMP/sweep.log"
+cat >"$TMP/fake-sweep" <<'EOF'
+#!/usr/bin/env bash
+printf 'TMPDIR=%s MIN_AGE=%s\n' "${TMPDIR:-}" "${BEADS_CLEAN_TEST_TMP_MIN_AGE:-unset}" >>"$FAKE_SWEEP_LOG"
+echo "Removed 0 orphaned dir(s), reclaimed ~0 MB. Skipped 0."
+EOF
+chmod +x "$TMP/fake-sweep"
+
+run_with_sweep() {
+    local fixture="$1"; shift
+    : >"$SWEEPLOG"
+    REAP_PROC_SOURCE="$fixture" REAP_TMPDIR="$TMPROOT" REAP_STATE_DIR="$TMP/state" \
+    REAP_SWEEP_SCRIPT="$TMP/fake-sweep" FAKE_SWEEP_LOG="$SWEEPLOG" \
+        "$SCRIPT" "$@" >"$TMP/out" 2>"$TMP/err"
+}
+
+# 18. The floor is passed down, not left at clean-test-tmp.sh's 30m default.
+: >"$TMP/empty"
+run_with_sweep "$TMP/empty"
+if grep -q "MIN_AGE=240" "$SWEEPLOG"; then
+    ok "passes its own 4h floor down to the temp sweep (240 minutes)"
+else
+    bad "passes its own 4h floor down to the temp sweep (got: $(cat "$SWEEPLOG"))"
+fi
+
+# 19. THE BLOCKER CASE. A young (in-flight) test server means a suite is
+#     running; its HOME and testTempRoot are the very dirs the sweep would
+#     delete. Sparing the process and then deleting its tree is worse than
+#     doing nothing at all.
+pid="$(spawn_victim)"
+printf '%s\x1f%s\x1f%s\x1f%s\n' "$pid" "$YOUNG" \
+    "dolt sql-server --config $TMPROOT/beads-bd-tests-99/x.yaml" "" >"$TMP/f19"
+run_with_sweep "$TMP/f19"
+if [[ ! -s "$SWEEPLOG" ]]; then
+    ok "skips the temp sweep entirely while a test run is in flight"
+else
+    bad "skips the temp sweep entirely while a test run is in flight (sweep ran: $(cat "$SWEEPLOG"))"
+fi
+alive "$pid" && ok "the in-flight server itself is still alive" || bad "the in-flight server itself is still alive"
+
+# 20. --dry-run must PREVIEW the sweep, not omit it: the rm -rf is the more
+#     destructive half, so omitting it understates the blast radius to exactly
+#     the person trying to measure it.
+mkdir -p "$TMPROOT/beads-bd-tests-preview"
+touch -d '10 hours ago' "$TMPROOT/beads-bd-tests-preview"
+run_with_sweep "$TMP/empty" --dry-run
+grep -q 'would sweep .*beads-bd-tests-preview' "$TMP/out" \
+    && ok "--dry-run previews the directories the sweep would delete" \
+    || bad "--dry-run previews the directories the sweep would delete"
+[[ -d "$TMPROOT/beads-bd-tests-preview" ]] && ok "--dry-run deletes nothing" || bad "--dry-run deletes nothing"
+grep -q 'DRY RUN' "$TMP/out" && ok "the summary line is marked as a dry run" || bad "the summary line is marked as a dry run"
+rmdir "$TMPROOT/beads-bd-tests-preview" 2>/dev/null || true
+
+echo "== help renders =="
+if "$SCRIPT" --help 2>/dev/null | grep -q 'REAP_MIN_AGE_SEC'; then
+    ok "--help documents the env knobs"
+else
+    bad "--help documents the env knobs"
+fi
+
+printf '\n%d passed, %d failed\n' "$pass" "$fail"
+[[ "$fail" -eq 0 ]]

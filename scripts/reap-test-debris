@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# reap-test-debris — zero-token host hygiene lane for beads test leftovers.
+#
+# The beads test suite spawns `dolt sql-server` processes rooted in temp
+# directories under $TMPDIR. Two in-tree mechanisms are supposed to clean them
+# up and neither can do it across runs:
+#
+#   - internal/doltserver's parent-death guard is armed by BEADS_TEST_PDEATHSIG,
+#     which the cmd/bd suites do not set (deliberately: cmd/bd legitimately
+#     spawns detached servers that must outlive the process that started them);
+#   - SweepOrphanedTestServers runs after m.Run() returns, so a SIGKILLed or
+#     OOMed run never reaches it, and selectOrphanTestServerPIDs only reaps a
+#     live server whose cwd sits under a root the CALLER vouches for. A later
+#     run gets a fresh random root, so a previous run's leftovers match nothing.
+#
+# The consequence, observed twice on this host (mybd-avwqg): four ~10h-old dolt
+# servers holding ~4 GB of tmpfs, which on this machine is RAM. Nothing on the
+# host could ever have reaped them.
+#
+# This lane is the mop, not the fix. It vouches for a root the test suite alone
+# creates — <temp root>/<one of the suite's own mkdtemp patterns> — which is the
+# piece the in-process sweeper structurally cannot assume. It is deliberately
+# conservative: same user only, test-pattern roots only, and a minimum age far
+# above the longest suite runtime, so a mid-flight test run is never touched.
+#
+# ONE FLOOR, BOTH HALVES. The process half and the temp-tree half use the SAME
+# minimum age. That is the whole safety argument: sparing a live run's server
+# and then deleting that run's temp tree out from under it would be worse than
+# doing nothing, and clean-test-tmp.sh's own default floor is 30 minutes — 8x
+# looser than this lane's — so the floor is passed down explicitly rather than
+# inherited. The sweep is also skipped outright while any in-flight run is
+# detected.
+#
+# Prevention (arming a parent-death guard for the cmd/bd suites) is mybd-avwqg
+# part (a) and needs design — see gastownhall/beads#4592's review thread for why
+# the naive version is unsafe.
+#
+# Usage:
+#   scripts/reap-test-debris [--dry-run] [--help]
+#
+# Env:
+#   REAP_MIN_AGE_SEC   minimum age to consider debris (default 14400 = 4h).
+#                      Applies to BOTH processes and temp trees.
+#   REAP_TMPDIR        colon-separated temp roots to scan. Default is $TMPDIR
+#                      (else /tmp) plus the verify lane's redirected scratch
+#                      root, $VERIFY_GOTMPDIR (default /var/tmp/verify-gotmp) —
+#                      verify-next points the suite's TMPDIR there, so it is
+#                      the host's main unattended producer of this debris.
+#   REAP_STATE_DIR     log location (default $XDG_STATE_HOME/mybd/reap-test-debris)
+#   REAP_SKIP_TMP_SWEEP=1  reap servers but skip the temp-tree sweep
+#   REAP_SWEEP_SCRIPT  override the path to clean-test-tmp.sh
+#   REAP_PROC_SOURCE   test hook: read candidates from a fixture instead of
+#                      /proc. One record per line, fields separated by US
+#                      (0x1f): pid, age_seconds, cmdline, cwd.
+#
+# Exit status is 0 for any routine outcome, including "nothing to do", so the
+# systemd timer does not accumulate failed activations.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The beads clone (bd-main/) is gitignored and therefore exists only in the main
+# checkout, never in a linked worktree. Resolve the main checkout so a run from
+# .worktrees/mybd/<x> still finds clean-test-tmp.sh instead of silently skipping
+# half the job.
+STABLE_ROOT="$ROOT"
+if common_dir="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+    [[ "$common_dir" = /* ]] || common_dir="$ROOT/$common_dir"
+    if resolved="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd)"; then
+        STABLE_ROOT="$resolved"
+    fi
+fi
+
+DRY_RUN=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1; shift ;;
+        -h|--help) sed -n '2,58p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) printf 'reap-test-debris: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
+
+MIN_AGE="${REAP_MIN_AGE_SEC:-14400}"
+[[ "$MIN_AGE" =~ ^[0-9]+$ ]] || { printf 'reap-test-debris: REAP_MIN_AGE_SEC must be an integer: %s\n' "$MIN_AGE" >&2; exit 2; }
+
+# Temp roots. Default: the ambient temp dir plus the verify lane's redirected
+# scratch root — verify-next exports TMPDIR=$VERIFY_GOTMPDIR into the suite, so
+# a SIGKILLed verify run leaks its server there and nowhere near /tmp.
+if [[ -n "${REAP_TMPDIR:-}" ]]; then
+    IFS=':' read -r -a RAW_ROOTS <<<"$REAP_TMPDIR"
+else
+    RAW_ROOTS=("${TMPDIR:-/tmp}" "${VERIFY_GOTMPDIR:-/var/tmp/verify-gotmp}")
+fi
+
+# Normalise, drop empties, and keep both the literal and realpath spellings: a
+# path recorded in another process's argv may use either, and /tmp is a symlink
+# on some hosts. A root that normalises away entirely is dropped rather than
+# collapsing into "/" and matching the whole filesystem.
+ROOTS=()
+for r in "${RAW_ROOTS[@]}"; do
+    r="${r%/}"
+    [[ -n "$r" && "$r" != "/" ]] || continue
+    ROOTS+=("$r")
+    rp="$(realpath -m "$r" 2>/dev/null || printf '%s' "$r")"
+    rp="${rp%/}"
+    [[ -n "$rp" && "$rp" != "/" && "$rp" != "$r" ]] && ROOTS+=("$rp")
+done
+[[ ${#ROOTS[@]} -gt 0 ]] || { printf 'reap-test-debris: no usable temp root\n' >&2; exit 2; }
+
+STATE_DIR="${REAP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/mybd/reap-test-debris}"
+mkdir -p "$STATE_DIR"
+LOG="$STATE_DIR/reap.log"
+
+log() {
+    local stamp
+    stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s %s\n' "[$stamp]" "$*" | tee -a "$LOG"
+}
+
+# Only one reaper at a time. The systemd oneshot will not overlap itself, but a
+# manual run alongside a timer firing would otherwise race on the same PIDs —
+# and on the log rotation below, which is why the lock is taken before it.
+LOCK="$STATE_DIR/reap.lock"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+    printf 'another reap-test-debris run holds the lock; exiting\n' >&2
+    exit 0
+fi
+
+# Keep the log from growing without bound. Inside the lock, and via mktemp, so
+# two runs cannot shred each other's forensic record through a shared temp path.
+if [[ -f "$LOG" ]] && [[ "$(wc -c <"$LOG")" -gt 1048576 ]]; then
+    log_tmp="$(mktemp "$LOG.XXXXXX")"
+    if tail -c 524288 "$LOG" >"$log_tmp" 2>/dev/null; then
+        mv -f "$log_tmp" "$LOG"
+    else
+        rm -f "$log_tmp"
+    fi
+fi
+
+# Directory-name patterns created by the beads test helpers. These must stay in
+# sync with bd-main/scripts/clean-test-tmp.sh; every one of them is produced by
+# MkdirTemp inside a test and by nothing else, which is what makes it safe to
+# vouch for the root without a live caller.
+TEST_DIR_PATTERNS=(
+    'beads-bd-tests-*'
+    'beads-shared-server-bd-*'
+    'bd-testbin-*'
+    'bd-init-test-*'
+    'bd-init-permissions-test-*'
+    'bd-embedded-init-test-*'
+)
+
+# under_test_root PATH -> 0 when PATH is <a temp root>/<test-pattern>[/...]
+#
+# The match is anchored: the pattern must be the FIRST path component beneath a
+# temp root, never a substring somewhere deeper. Any ".." component anywhere in
+# the remainder disqualifies the path, so a first component that matches cannot
+# be used to smuggle the real target outside the vouched root.
+under_test_root() {
+    local path="$1" rest="" root
+    [[ -n "$path" ]] || return 1
+    path="${path%% (deleted)}"
+    for root in "${ROOTS[@]}"; do
+        if [[ "$path" == "$root"/* ]]; then
+            rest="${path#"$root"/}"
+            break
+        fi
+    done
+    [[ -n "$rest" ]] || return 1
+    # No traversal anywhere in the remainder, not merely at the front.
+    [[ "/$rest/" != */../* ]] || return 1
+    local first="${rest%%/*}"
+    [[ -n "$first" && "$first" != "." ]] || return 1
+    local pat
+    for pat in "${TEST_DIR_PATTERNS[@]}"; do
+        # shellcheck disable=SC2053  # glob match against the pattern is intended
+        [[ "$first" == $pat ]] && return 0
+    done
+    return 1
+}
+
+# is_dolt_server CMDLINE — mirrors internal/doltserver's isDoltServerCmdline:
+# both tokens must appear, because debug mode inserts flags between the binary
+# name and the subcommand.
+is_dolt_server() {
+    [[ "$1" == *dolt* && "$1" == *sql-server* ]]
+}
+
+# config_path_from CMDLINE — the argument to --config, in either spelling,
+# resolved. The observed orphans carried the temp root only here, not in cwd.
+#
+# The token scan disables pathname expansion: the cmdline is another process's
+# argv, and an unquoted split would glob any `*`, `?` or `[...]` in it against
+# the current directory, silently rewriting the token stream so that the token
+# after --config is not the config path at all.
+config_path_from() {
+    local cmdline="$1" tok next=0 out="" restore
+    restore="$(shopt -po noglob)"
+    set -f
+    # shellcheck disable=SC2086  # deliberate split on IFS with globbing disabled
+    for tok in $cmdline; do
+        if [[ "$next" == 1 ]]; then out="$tok"; break; fi
+        case "$tok" in
+            --config) next=1 ;;
+            --config=*) out="${tok#--config=}"; break ;;
+        esac
+    done
+    eval "$restore"
+    # Only absolute paths carry usable evidence; a relative one would resolve
+    # against OUR cwd, which is not the server's.
+    [[ "$out" == /* ]] || return 1
+    printf '%s' "$(realpath -m "${out%% (deleted)}" 2>/dev/null || printf '%s' "$out")"
+}
+
+# emit_candidates — one record per live dolt sql-server owned by this user:
+#   pid US age_seconds US cmdline US cwd        (US = 0x1f)
+#
+# US rather than tab because tab is IFS whitespace: consecutive tabs collapse,
+# so an empty cmdline (a process that execs between the scan and the read — a
+# normal race) would silently shift cwd into the cmdline field and blank the
+# cwd evidence. Overridable via REAP_PROC_SOURCE so selection can be tested
+# without spawning real servers.
+US=$'\x1f'
+emit_candidates() {
+    if [[ -n "${REAP_PROC_SOURCE:-}" ]]; then
+        cat "$REAP_PROC_SOURCE"
+        return 0
+    fi
+    local pid cmdline age cwd
+    while read -r pid; do
+        [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] || continue
+        # Squash anything that could break the record framing.
+        cmdline="$(tr '\0\t\n\x1f' '    ' <"/proc/$pid/cmdline" 2>/dev/null)" || continue
+        age="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')" || continue
+        [[ "$age" =~ ^[0-9]+$ ]] || continue
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || printf '')"
+        printf '%s%s%s%s%s%s%s\n' "$pid" "$US" "$age" "$US" "$cmdline" "$US" "$cwd"
+    done < <(pgrep -u "$(id -u)" -f 'sql-server' 2>/dev/null || true)
+}
+
+# still_a_test_server PID — re-read /proc immediately before signalling. The
+# candidate list is a snapshot, and a stubborn target costs 10s of sleeping, so
+# by the time we reach the tail of the list it is stale. Cheap insurance
+# against signalling a recycled PID.
+still_a_test_server() {
+    local pid="$1" cmdline
+    [[ -r "/proc/$pid/cmdline" ]] || return 1
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" || return 1
+    is_dolt_server "$cmdline"
+}
+
+reaped=0
+would_reap=0
+skipped_young=0
+skipped_foreign=0
+in_flight=0
+
+while IFS="$US" read -r pid age cmdline cwd; do
+    [[ -n "${pid:-}" ]] || continue
+    # Validate here too, not only in the /proc producer: a malformed fixture row
+    # would otherwise hit arithmetic evaluation of a non-numeric string, which
+    # under `set -u` is a shell-fatal error that no `if` can contain — aborting
+    # the run half-applied, after some targets have already been killed.
+    [[ "${age:-}" =~ ^[0-9]+$ ]] || { log "skip pid=$pid malformed age=${age:-}"; continue; }
+    is_dolt_server "$cmdline" || continue
+
+    cfg="$(config_path_from "$cmdline" || printf '')"
+    if under_test_root "$cfg" || under_test_root "$cwd"; then
+        :
+    else
+        skipped_foreign=$((skipped_foreign + 1))
+        continue
+    fi
+
+    if [[ "$age" -lt "$MIN_AGE" ]]; then
+        # A beads test run is in flight. Never touch it — and remember, because
+        # the temp sweep below must not delete this run's tree either.
+        skipped_young=$((skipped_young + 1))
+        in_flight=1
+        log "skip pid=$pid age=${age}s (< ${MIN_AGE}s) root=${cfg:-$cwd}"
+        continue
+    fi
+
+    if [[ "$DRY_RUN" == 1 ]]; then
+        log "would reap pid=$pid age=${age}s root=${cfg:-$cwd}"
+        would_reap=$((would_reap + 1))
+        continue
+    fi
+
+    if ! still_a_test_server "$pid"; then
+        log "skip pid=$pid no longer a dolt sql-server (exited or PID reused)"
+        continue
+    fi
+
+    log "reaping pid=$pid age=${age}s root=${cfg:-$cwd}"
+    if ! kill -TERM "$pid" 2>/dev/null; then
+        log "  pid=$pid already gone"
+        continue
+    fi
+    # Give it a graceful window; every orphan seen so far exited in under 5s.
+    for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        if still_a_test_server "$pid"; then
+            log "  pid=$pid ignored SIGTERM after 10s; sending SIGKILL"
+            kill -KILL "$pid" 2>/dev/null || true
+        else
+            log "  pid=$pid no longer a dolt sql-server; not escalating"
+        fi
+    fi
+    reaped=$((reaped + 1))
+done < <(emit_candidates)
+
+summary="servers: reaped=$reaped skipped_young=$skipped_young skipped_non_test=$skipped_foreign"
+[[ "$DRY_RUN" == 1 ]] && summary="servers: would_reap=$would_reap skipped_young=$skipped_young skipped_non_test=$skipped_foreign (DRY RUN, nothing killed)"
+log "$summary (min_age=${MIN_AGE}s roots=$(IFS=,; printf '%s' "${ROOTS[*]}"))"
+
+# ---------------------------------------------------------------------------
+# Second half: the temp trees themselves.
+#
+# clean-test-tmp.sh carries the same pattern list, but its own default floor is
+# 30 minutes. Left alone that would gut the safety argument above: this lane
+# spares a live run's SERVER at 4h and would then rm -rf that same run's HOME
+# and testTempRoot at 30 minutes. So the floor is passed down explicitly, and
+# the sweep is skipped entirely whenever an in-flight run was detected.
+# ---------------------------------------------------------------------------
+SWEEP="${REAP_SWEEP_SCRIPT:-$STABLE_ROOT/bd-main/scripts/clean-test-tmp.sh}"
+sweep_min_min=$((MIN_AGE / 60))
+
+if [[ "${REAP_SKIP_TMP_SWEEP:-0}" == 1 ]]; then
+    log "temp sweep: skipped (REAP_SKIP_TMP_SWEEP=1)"
+elif [[ "$in_flight" == 1 ]]; then
+    log "temp sweep: skipped — a beads test run is in flight (see skipped_young above)"
+elif [[ ! -x "$SWEEP" ]]; then
+    log "temp sweep: skipped (no executable $SWEEP)"
+elif [[ "$DRY_RUN" == 1 ]]; then
+    # Preview it. The rm -rf is the more destructive of this lane's two halves,
+    # so a dry run that silently omitted it would understate the blast radius
+    # to exactly the person trying to measure it.
+    for root in "${ROOTS[@]}"; do
+        [[ -d "$root" ]] || continue
+        for pat in "${TEST_DIR_PATTERNS[@]}"; do
+            while IFS= read -r d; do
+                [[ -n "$d" ]] && log "would sweep $d"
+            done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -name "$pat" -mmin "+$sweep_min_min" 2>/dev/null)
+        done
+    done
+    log "temp sweep: preview only (--dry-run), floor=${sweep_min_min}m"
+else
+    for root in "${ROOTS[@]}"; do
+        [[ -d "$root" ]] || continue
+        if out="$(TMPDIR="$root" BEADS_CLEAN_TEST_TMP_MIN_AGE="$sweep_min_min" "$SWEEP" 2>&1)"; then
+            log "temp sweep [$root]: $(printf '%s' "$out" | tail -1)"
+        else
+            rc=$?
+            log "temp sweep [$root] FAILED (exit $rc): $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+        fi
+    done
+fi
+
+exit 0

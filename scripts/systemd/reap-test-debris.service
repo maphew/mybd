@@ -1,0 +1,20 @@
+[Unit]
+Description=Reap dolt sql-server processes and temp trees leaked by the beads test suite
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+# The script resolves bd-main/ (for clean-test-tmp.sh) relative to this root.
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/scripts/reap-test-debris
+# Sized by the SWEEP, not by the reap. Killing servers is seconds of work (a
+# 10s SIGTERM grace per stubborn target); clean-test-tmp.sh is the slow half —
+# per matched directory it does a recursive du, a recursive chmod, then rm -rf,
+# and the incident this lane exists for involved ~4 GB across four trees, with
+# leaked GOMODCACHE-populated HOMEs able to make it larger. A timeout here
+# lands SIGTERM in the middle of an rm -rf and leaves a half-deleted tree, so
+# the ceiling is generous on purpose.
+TimeoutStartSec=60min
+# Never compete with an interactive session or a running suite.
+Nice=10
+IOSchedulingClass=idle
