@@ -5,13 +5,44 @@ check every candidate against existing branches/PRs before claiming; worktree +
 branch + tests + PR per task; do not merge, do not decide product questions, do
 not touch history.
 
-The queue did not go dry and could not have. It held **100 ready beads**. What
-follows is what the 100 actually turned out to be, what was done, and what the
-remainder is waiting on.
+The queue did not go dry and could not have.
 
-## The queue is not 100 items of work
+## Correction, added before this report landed: I surveyed a truncated queue
 
-Triaged all 100 across eight parallel agents, each required to check for
+I wrote most of this having triaged "the 100 ready beads." **`bd ready` silently
+caps its output at 100.** The real figure is 362:
+
+| command | result |
+|---|---:|
+| `bd ready --json` | 100 |
+| `bd ready --limit 0 --json` | **362** (P1: 61, P2: 203, P3: 95, P4: 3) |
+
+I found this only because a parallel session hit it independently today, opened
+maphew/mybd#27, and I read their report while checking whether our PR titles
+collided. They had already filed it upstream as gastownhall/beads#5102, and
+`mybd-5vf6r` records two earlier sessions making the same mistake on 07-26/27.
+That makes at least four of us, which is the actual argument for the fix: the
+cap is invisible to exactly the consumers who cannot notice it, since #3243's
+prior art is tty-gated and every agent reads the piped or `--json` path.
+
+What this does and does not invalidate:
+
+- **The 97 verdicts below stand.** Those beads were triaged on their merits.
+- **The framing does not.** The first 100 rows are essentially the whole P1
+  band, and P1 in this repo is overwhelmingly owner-decision work, upstream
+  campaigns, and PR-shepherding tails. So "three quarters of the queue is not
+  actionable" is a true statement about *P1*, not about the queue.
+- **203 P2 beads were never surveyed by me at all** — and per the parallel
+  session, that band is where the contained, self-contained code tasks live;
+  two of their three tasks came from beyond row 100.
+
+I have left the original section below as written, retitled, rather than
+quietly restating it — the mistake is the more useful artifact.
+
+## The P1 band is not 100 items of work
+
+Triaged all 100 rows that `bd ready` returned — which, per the correction
+above, is the P1 band and not the queue — across eight parallel agents, each required to check for
 covering work by path (`git log --all --since=5.days -- <path>`), by branch
 subject, and by upstream PR state before calling anything actionable. 97
 verdicts came back (three agents dropped one bead each — `mybd-lfos`,
@@ -25,12 +56,17 @@ verdicts came back (three agents dropped one bead each — `mybd-lfos`,
 | STALE | 9 | premise claimed already resolved; needs closing, not doing |
 | ACTIONABLE | 6 | self-contained change implementable in one sitting |
 
-**Roughly three quarters of `bd ready` is not ready in the sense a fresh agent
-assumes.** That is the headline finding, and it is a queue-shape problem rather
-than a backlog-size problem: an agent told to "work the queue" will spend most
-of its budget rediscovering that most items are parked. The
-`bd ready` → `ready-lanes` split already addresses volume; this is a different
-axis — *disposition* — and 45 of the 100 are waiting on one person.
+**Roughly three quarters of the P1 band is not ready in the sense a fresh agent
+assumes**, and 45 of the 100 are waiting on one person. That is a queue-shape
+problem rather than a backlog-size problem: an agent that surveys P1 and
+concludes "there is no actionable autonomous work here" is drawing a locally
+correct conclusion. Combined with the truncation above, the two failures
+compound — the cap hands you the band least likely to contain actionable work,
+and then tells you it is the whole queue.
+
+The `ready-lanes` split already addresses volume; this is a different axis —
+*disposition*. `mybd-e9ipq` (in progress) converts prose/label human-gating into
+first-class gates, which would take these out of `bd ready` entirely.
 
 ## Adversarial verification changed 5 of 9 answers
 
@@ -146,6 +182,9 @@ question ("then why don't the existing ones fail?") has no answer in the tree.
 
 ## Loose ends for the next session
 
+0. **Survey the P2 band.** 203 ready P2 beads have had no triage pass from this
+   session, and the parallel session's evidence is that this is where the
+   actionable code work is. Use `bd ready --limit 0`, never a bare `bd ready`.
 1. `mybd-p9a1o` (P1) is the most valuable thing this session produced and no PR
    exists for it. It is root-caused to a specific line with byte-for-byte error
    reconstruction; the only open question is a semantics call between two fix
