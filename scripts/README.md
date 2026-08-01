@@ -359,15 +359,33 @@ was false in production for a purely deployment reason (mybd-ks4vq, mybd-fbr7z).
 The check renders each template with this machine's `@ROOT@` and diffs it
 against the installed unit, ignoring comments and blank lines. Per unit:
 
-| status   | meaning | exit contribution |
-|----------|---------|-------------------|
-| `ok`     | in sync | 0 |
-| `local`  | installed unit is a **superset** — every template directive is present, plus extra lines. Expected for `solo-sweep`, whose installer injects `Environment=` lines from its arming flags (`--model`, `--max-runs`, …). | 0 |
-| `absent` | no installed counterpart; that lane simply is not installed here | 0 |
-| `DRIFT`  | a template directive is missing from or differs in the installed unit | 1 |
+| status | meaning | exit contribution |
+|---|---|---|
+| `ok` | in sync | 0 |
+| `local` | installed unit adds **only** known installer injections — `Environment=SOLO_SWEEP_*`, which `install-solo-sweep` writes from its arming flags (`--model`, `--max-runs`, …) | 0 |
+| `absent` | neither half of the lane is installed here | 0 |
+| `DRIFT` | a template directive is missing or changed, **or** the installed unit carries an addition that is not a known injection | 1 |
+| `DRIFT` (half-installed) | this unit is missing while its `.service`/`.timer` sibling is installed | 1 |
+| `DRIFT` (error) | the template or installed unit could not be read | 1 |
 
 Only `DRIFT` is a finding, and the output names the installer to re-run (with
 `--days N` noted for `solo-sweep`, which refuses to arm without a window).
+
+Three of those rows exist because a dual-vendor review of the first version
+found them, and each was a **false green** — the one failure direction this tool
+must not have:
+
+- An *addition* is drift, not a benign superset. A directive deleted from the
+  template still runs on the machine, and an added `ExecStart=` in a
+  `Type=oneshot` runs in addition to the tracked ones. The first version
+  classified any superset as `local` and exited 0, so a hand-edit adding
+  `ExecStart=/bin/false` reported clean.
+- A **half-installed lane** is worse than an uninstalled one: a service whose
+  timer is missing never fires, yet inspecting the service alone looks fine.
+- An **unreadable** template or unit is an error, not an `ok`. The first version
+  had no `errexit` and no `mktemp` guard, so a failed `mktemp -d` made every
+  `diff` compare two nonexistent files and print
+  `installed units match their templates` against a genuinely drifted machine.
 
 It is **read-only on purpose**: it never reinstalls. A deliberate hand-edit of
 an installed unit is legitimate, and clobbering it silently would be the same
