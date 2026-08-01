@@ -183,10 +183,36 @@ that way; the exemption is now restricted to `INSERT INTO`, whose target is
 always the token after `INTO`, and prepared `UPDATE`/`DELETE` are never
 exempted at all.
 
+Round 5 found two more of the same kind (`SET @sql := ...` never buffered; the
+DML verb required immediately after the opening quote, so a leading comment or
+CTE walked past), fixed the same way — match the verb as a token anywhere,
+mask `ON UPDATE` and `ON DUPLICATE KEY UPDATE` so a column attribute is not
+read as a write.
+
 The generalisable lesson is not "run more review rounds" — it is that when
 successive fixes to the same predicate keep failing on new inputs, the
 predicate is the wrong shape. A single review pass would have shipped a check
 that silently exempted real-table writes while appearing to work.
+
+**Where I stopped.** Round 5 also surfaced two bypasses I did *not* fix — a
+multi-variable `SET @guard = 1, @sql = '...'`, and a `PREPARE` split across
+lines. Both are real. The stopping rule I applied, decided before seeing them:
+further *detection* bypasses (as opposed to false positives or regressions on
+real migrations) get documented and deferred, because
+
+- neither form occurs anywhere in the migration tree — verified, the only
+  `PREPARE`-without-`FROM` hits are comments;
+- the check is advisory hygiene on new files a human reviews anyway;
+- the convergent fix is statement-level scanning, which subsumes all three
+  known bypasses at once, and attempting that rewrite at round 5 with no
+  review budget left to validate it would have shipped an unvalidated parser.
+
+So the script's header now carries a `KNOWN LIMITS` block naming all three
+shapes and telling a reviewer not to trust a green check when they see one
+(`mybd-q8hy2` tracks the rewrite). A check that overstates its coverage is
+worse than one that admits where it stops — and "five review rounds" is not
+itself evidence of quality, only of how long I let a wrong-shaped predicate
+survive.
 
 One further correction, mine rather than the reviewer's: seven shipped migrations
 already use the flagged idiom. That is not a latent bug and the docs now say why
@@ -219,7 +245,9 @@ question ("then why don't the existing ones fail?") has no answer in the tree.
    reconstruction; the only open question is a semantics call between two fix
    shapes, recorded in the bead's design field.
 2. `mybd-lfos`, `mybd-l60g`, `mybd-ae0n` were dropped by the triage fan-out and
-   have no verdict.
+   have no verdict (`mybd-ph099`).
+2b. `mybd-q8hy2` — the three documented Check E bypasses, and the
+   statement-level rewrite that would close all of them.
 3. `feat/lane-unit-drift` (another session's, bead `mybd-fbr7z`, pushed) is
    still unlanded. Checked for interaction with the new lane: its detector
    reports an uninstalled opt-in unit as `absent`, not drift, so
