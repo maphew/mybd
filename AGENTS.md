@@ -580,8 +580,8 @@ bead to work on it, **claim it first** — the sweep never touches claimed
 beads, so the claim is what keeps the patrol out of your lane.
 
 Since 2026-08-01 the patrol also refuses to merge a **stale green**: if the
-branch is behind its base *and* its newest check started before the base's
-tip commit, that verdict was earned against a base that no longer exists, so
+branch is behind its base *and* its oldest check started before the base last
+moved, that verdict was earned against a base that no longer exists, so
 the patrol runs `gh pr update-branch` and judges the new head next pass instead
 (budgeted, merge-lane only, skipped under `--base-fix`). Being merely behind is
 not stale — PR checks test head merged into the base as of run time. This is

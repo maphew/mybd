@@ -49,6 +49,8 @@ case "${1:-} ${2:-}" in
   "pr update-branch")
     [[ "${FAKE_UPDATE_BRANCH_EXIT:-0}" == 0 ]] || exit "$FAKE_UPDATE_BRANCH_EXIT"
     ;;
+  "api "*/activity*)
+    printf '%s\n' "${FAKE_BASE_TIP:-2000-01-01T00:00:00Z}"; exit "${FAKE_BASE_ACTIVITY_EXIT:-0}" ;;
   "api "*/compare/*)
     # Default 0: existing cases describe an up-to-date branch and must merge.
     printf '%s\n' "${FAKE_BEHIND:-0}"; exit "${FAKE_COMPARE_EXIT:-0}" ;;
@@ -200,7 +202,7 @@ reset() {
   unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
   unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT FAKE_CHECKS_STDERR FAKE_ACTION_REQUIRED FAKE_ACTION_REQUIRED_EXIT
   unset FAKE_PREFLIGHT_TRUNCATED FAKE_BASE_REF FAKE_HEAD_BRANCH
-  unset FAKE_BEHIND FAKE_BASE_TIP FAKE_CHECK_STARTED FAKE_CHECK_COMPLETED FAKE_COMPARE_EXIT FAKE_BASE_TIP_EXIT FAKE_UPDATE_BRANCH_EXIT
+  unset FAKE_BEHIND FAKE_BASE_TIP FAKE_CHECK_STARTED FAKE_CHECK_COMPLETED FAKE_COMPARE_EXIT FAKE_BASE_TIP_EXIT FAKE_UPDATE_BRANCH_EXIT FAKE_BASE_ACTIVITY_EXIT
   unset PR_BABYSIT_FRESHEN PR_BABYSIT_FRESHEN_LIMIT
   export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
@@ -448,6 +450,33 @@ run_patrol
 [[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "a run that straddled the base move was not refreshed"
 unset FAKE_CHECK_COMPLETED
 
+# One late rollup entry must not certify the whole verdict: a single rerun job,
+# or a check added after the base moved, leaves the jobs that did NOT rerun
+# holding a result from the old base.  The oldest start decides, not the newest.
+reset oldest-decides "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_BASE_TIP=2026-08-01T09:00:00Z
+export FAKE_ROLLUP='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-08-01T08:00:00Z","completedAt":"2026-08-01T08:30:00Z"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-08-01T10:00:00Z","completedAt":"2026-08-01T10:30:00Z"}]'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "a late rerun certified an otherwise stale rollup"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "mixed-age rollup was not refreshed"
+
+# The base-update time comes from the ref's activity, not the tip commit's date:
+# a pre-existing commit fast-forwarded onto the base carries its original
+# committer date, which would read as fresh against a base it never saw.
+reset base-activity-preferred "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T09:30:00Z FAKE_BASE_TIP=2026-08-01T10:00:00Z
+run_patrol
+grep -q 'activity?ref=refs/heads/main' "$FAKE_GH_LOG" || fail "base freshness did not consult the ref activity API"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "activity-reported base update did not mark the green stale"
+
+# Losing that endpoint falls back to the weaker signal rather than losing the
+# guard: a narrow hole beats no guard at all, and the fallback is logged.
+reset base-activity-fallback "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T09:30:00Z FAKE_BASE_TIP=2026-08-01T10:00:00Z FAKE_BASE_ACTIVITY_EXIT=1
+run_patrol
+grep -q 'falling back to the tip commit' "$CASE/state/pr-babysit/patrol.log" || fail "activity fallback was silent"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "fallback path did not evaluate freshness"
+
 # An up-to-date branch is never refreshed, however old its green.
 reset not-behind "$policy"
 export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=0 FAKE_CHECK_STARTED=2020-01-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
@@ -461,7 +490,7 @@ for probe in compare base-tip rollup; do
   export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5
   case "$probe" in
     compare)   export FAKE_COMPARE_EXIT=1 ;;
-    base-tip)  export FAKE_BASE_TIP_EXIT=1 ;;
+    base-tip)  export FAKE_BASE_ACTIVITY_EXIT=1 FAKE_BASE_TIP_EXIT=1 ;;  # both base-freshness sources
     rollup)    export FAKE_ROLLUP='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]' ;;
   esac
   run_patrol
@@ -469,6 +498,24 @@ for probe in compare base-tip rollup; do
   [[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 0 ]] || fail "refreshed on unreadable freshness ($probe)"
   grep -q 'freshness-unavailable:' "$FAKE_BD_LOG" || fail "unreadable freshness was not surfaced on the bead ($probe)"
 done
+
+# Unreadable forever is not "retained forever": a claimed bead nobody can see is
+# how a lane disappears.  Bounded like every other persistent unreadable state.
+# The rollup probe is the one that genuinely cannot recover on its own — a
+# rollup carrying no timestamps at all (e.g. StatusContext-only) never will.
+reset freshness-escalates "$policy"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5
+export FAKE_ROLLUP='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]'
+for _ in 1 2 3 4 5 6 7 8 9 10; do run_patrol; done
+grep -q 'freshness-unavailable-persistent:' "$FAKE_BD_LOG" || fail "permanently unreadable freshness never escalated"
+[[ "$(jq -r '.[0].labels | index("merge-blocked")' "$FAKE_QUEUE")" != "null" ]] || fail "escalated freshness left the lane armed"
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "escalation path merged"
+
+# A readable pass clears the counter: it tracks consecutive unreadable passes.
+reset freshness-counter-resets '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_freshun":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:4"}'
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=0
+run_patrol
+[[ "$(jq -r '.[0].metadata.pr_babysit_freshun // "cleared"' "$FAKE_QUEUE")" == "cleared" ]] || fail "readable freshness did not clear the counter"
 
 # The refresh budget is per lane, not per head — update-branch moves the head
 # itself, so a head-scoped counter would never bind.
