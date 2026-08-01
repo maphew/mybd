@@ -291,6 +291,35 @@ Two smaller things, neither filed because I did not confirm the mechanism:
   onto the PRs and decisions each item is actually waiting for — not another
   sweep.
 
+## Postscript — the two merges happened (same session, 08:39Z)
+
+maphew merged **#5210** (`fabac4e3c`) and **#5220** (`491d8872d`). The Handoff
+item above asking for them is discharged; leaving it uncorrected would have been
+the first thing a next agent acted on.
+
+What followed is worth recording because it is the automation working exactly as
+designed, with no session involvement:
+
+- `pr-babysit` observed both merges and closed **mybd-sb0sl** and **mybd-2sh9j**
+  itself ("PR ... merged (observed by pr-babysit)"). Neither needed a human,
+  including mybd-sb0sl whose lease had been expired for hours.
+- **mybd-zbsg4 remains open on purpose.** It self-closes on the first patrol pass
+  that observes `main` green, and at the time of writing the `Main` run for
+  `491d8872d` is still queued — the macOS job takes ~23 minutes. Merging the fixes
+  is not the same event as observing green, and the bead correctly waits for the
+  second one.
+- **mybd-a3905 is still blocked**, confirmed via `bd blocked`. The `blocked-by`
+  edge onto mybd-zbsg4 is doing its job: the follow-up that newly enables two
+  never-run macOS assertions cannot be picked up until green is *observed*, not
+  merely expected. It will appear in `bd ready` on its own.
+
+One thing did need doing by hand: **#5222 was updated onto the new base**
+(`gh pr update-branch`). Its checks were green, but green against `ed8526721` —
+a red base. This is the case mybd-sb0sl's own note flagged: after the fix lands,
+any PR whose green checks predate it needs re-basing before its result means
+anything. Worth generalising — every PR open across a red-base recovery is
+carrying a verdict from the wrong base, and nothing in the lanes re-bases them.
+
 ---
 
 _claude-opus-5-high on behalf of maphew_
