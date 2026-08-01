@@ -404,6 +404,40 @@ Why: on 2026-05-29 two agents shared the root checkout (no worktree); one ran
 `git checkout` to a new branch mid-session, racing the other's commits. Working
 from a per-task worktree keeps each agent's index and HEAD isolated.
 
+##### Landing a coordination-repo branch
+
+Finish the job: a topic branch is a workspace, not a deliverable. **Merge it to
+`main` locally and push — do not open a PR against `maphew/mybd`.**
+
+```bash
+git -C <mybd-root> merge --no-ff <branch>   # from the root checkout
+git -C <mybd-root> push
+git worktree remove .worktrees/mybd/<short-purpose>
+git branch -d <branch>
+```
+
+This is a single-owner repo: a PR here has no reviewer, so it is a queue with
+nobody serving it. Reports in particular go straight to `main` — 110 of the 112
+files in `reports/` arrived that way, and the last report-only PR was
+maphew/mybd#15 on 2026-07-07. PRs remain right for `gastownhall/beads`, where
+there genuinely is review.
+
+Why this is written down (2026-07-31): two sessions each left a session report
+in an open PR (maphew/mybd#24, #25). One report's central claim was wrong, the
+other session found the error, and the correction then had to be coordinated
+*between two open branches* — the second report contains the sentence "whose PR
+is still open, so it can be fixed before it lands." Direct-to-`main` makes that
+an ordinary follow-up commit. Both were closed unmerged and landed by direct
+commit. Three further report branches (`report/oldest-first-sweep`,
+`report/oldest-sweep-2026-07-31`, `feat/ci-lane-gaps`) were unlanded at the same
+moment, which is the same drift without the PR ceremony on top.
+
+If you genuinely cannot land — dirty tree, a decision you need the owner to
+make, work another session must finish — say so in the handoff **and** file a
+bead naming the branch. An unlanded branch that nothing points at is invisible
+to the cold-start path (`bd ready`), which is exactly the failure the
+"Cold-start handoff" section below is about.
+
 Worktrees do NOT isolate `git stash`: the stash stack is shared repo-wide
 across all linked worktrees. On 2026-07-24 two parallel builders each ran bare
 `git stash`/`git stash pop` and popped each other's entries, cross-contaminating
