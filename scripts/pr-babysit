@@ -282,10 +282,19 @@ green_base_note() {
 # nothing, so it cannot become a standing merge licence.
 BASE_FIX_KEY=""
 base_fix_authorized() {
-  local bead="$1" metadata="$2" repo="$3" blocks="$4" claim branch other
+  local bead="$1" metadata="$2" repo="$3" blocks="$4" out="$5" status="$6" claim branch other
   BASE_FIX_KEY=""
   claim="$(jq -r '.pr_babysit_base_fix // empty' <<<"$metadata")"
   [[ -n "$claim" ]] || return 1
+  # Preflight prints base health early and keeps working (status rollup, closing
+  # issues, GraphQL).  If it died after printing the red-base block, the block
+  # list is a partial verdict and "the red base is the sole objection" is
+  # unproven.  Its final line, printed only on a completed blocked run, is the
+  # completion marker; exit 1 is the blocked status (2 is usage/early failure).
+  if (( status != 1 )) || ! grep -qE '^Result: BLOCKED' <<<"$out"; then
+    log "$bead: base-fix flag set but preflight did not run to a complete verdict; exception withheld"
+    return 1
+  fi
   other="$(grep -vE "$RED_BASE_BLOCK_RE" <<<"$blocks" || true)"
   if [[ -n "$other" ]]; then
     log "$bead: base-fix flag set but preflight objects to more than the red base; exception withheld"
@@ -492,7 +501,7 @@ while read -r item; do
     continue
   fi
 
-  settle_attempted=0; base_fix_bypass=0
+  settle_attempted=0; base_fix_bypass=0; BASE_FIX_KEY=""
   while :; do
     preflight_out="$(PR_PREFLIGHT_BLOCK_RED_BASE=1 "$PREFLIGHT" "$pr" --repo "$repo" 2>&1)"; preflight_status=$?
     [[ -n "$preflight_out" ]] && sed "s|^|$(date -u +%FT%TZ) [preflight $repo#$pr] |" <<<"$preflight_out" >>"$LOG"
@@ -515,13 +524,15 @@ while read -r item; do
       # their own schedule and must not convert waiting tails into blocks.
       # It is escalated globally instead — see red_base_escalate.
       red_base_note "$repo" "$blocks"
-      if base_fix_authorized "$bead" "$metadata" "$repo" "$blocks"; then
+      if base_fix_authorized "$bead" "$metadata" "$repo" "$blocks" "$preflight_out" "$preflight_status"; then
         # The one case where merging onto a red base is the correct move: this
         # PR is the declared remedy for that base.  Loud on purpose — it is the
         # only path in the patrol that merges without a green base.
+        # Log now, write to the bead only AFTER the merge: the pre-merge
+        # authorization check compares the bead against the queued snapshot
+        # (notes included), so mutating notes here would revoke this pass's own
+        # authorization and the exception could never actually merge.
         log "$bead: BASE-FIX exception — $repo#$pr merges onto RED base $BASE_FIX_KEY on its own green checks"
-        bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] Merging onto RED base $BASE_FIX_KEY under the base-fix exception: this PR is the declared remedy for that base, its own checks are green, and the red base was preflight's only objection." >/dev/null 2>&1 \
-          || log "$bead: base-fix note append failed"
         base_fix_bypass=1
       else
         transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
@@ -561,11 +572,22 @@ while read -r item; do
     bd update "$bead" --unset-metadata pr_babysit_transient >/dev/null 2>&1 || log "$bead: transient counter clear failed"
   fi
   # Checks and preflight may take time; re-read head and rollup atomically.
-  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
+  if ! final_json="$(gh pr view "$pr" --repo "$repo" --json state,headRefOid,baseRefName,statusCheckRollup 2>>"$LOG")" || ! jq -e 'type == "object" and .state == "OPEN" and (.headRefOid | type == "string") and (.statusCheckRollup | type == "array") and (.statusCheckRollup | length > 0) and all(.statusCheckRollup[]; ((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")) or (.__typename == "StatusContext" and .state == "SUCCESS")))' >/dev/null 2>/dev/null <<<"${final_json:-}"; then
     transition "$bead" "$metadata" "$notes" "premerge-pr-unavailable:$head" "Could not revalidate PR before merge; retained under patrol." || log "$bead: transition failed"
     continue
   fi
   final_head="$(jq -r .headRefOid <<<"$final_json")"
+  # `gh pr merge --match-head-commit` pins the head but not the target.  A PR
+  # retargeted between preflight and merge keeps its head SHA, so a base-fix
+  # authorization for one base could land the PR on another.
+  if (( base_fix_bypass )); then
+    final_base="$(jq -r '.baseRefName // empty' <<<"$final_json")"
+    if [[ -z "$final_base" || "$repo@$final_base" != "$BASE_FIX_KEY" ]]; then
+      transition "$bead" "$metadata" "$notes" "base-retargeted:$head" "PR base changed to ${final_base:-unknown} after the base-fix authorization for $BASE_FIX_KEY; retained under patrol." || log "$bead: transition failed"
+      log "$bead: base-fix withdrawn — PR retargeted to ${final_base:-unknown}, authorized base was $BASE_FIX_KEY"
+      continue
+    fi
+  fi
   if [[ "$final_head" != "$head" ]]; then transition "$bead" "$metadata" "$notes" "head-changed:$head" "PR head changed after checks/preflight; retained under patrol." || log "$bead: transition failed"; continue; fi
   # Patrol-owned retry counters (checksun/transient/rearm) are excluded from
   # the metadata comparison: the patrol legitimately clears them mid-pass, and
@@ -581,7 +603,13 @@ while read -r item; do
     if ! after_json="$(gh pr view "$pr" --repo "$repo" --json state 2>>"$LOG")" || ! after_state="$(jq -er '.state | strings' <<<"${after_json:-}" 2>/dev/null)"; then
       transition "$bead" "$metadata" "$notes" "postmerge-unavailable:$head" "Merge returned success but state confirmation failed; retained under patrol." || log "$bead: transition failed"
     elif [[ "$after_state" == MERGED ]]; then
-      if bd close "$bead" --reason "PR $repo#$pr merged by pr-babysit ($method)." >/dev/null 2>&1; then log "$bead: MERGED $repo#$pr ($method); bead closed"; else log "$bead: merged PR close failed"; fi
+      if (( base_fix_bypass )); then
+        # Durable record of the one merge the patrol makes without a green base.
+        bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] Merged onto RED base $BASE_FIX_KEY under the base-fix exception: this PR was the declared remedy for that base, its own checks were green, and the red base was preflight's only objection." >/dev/null 2>&1 \
+          || log "$bead: base-fix note append failed"
+      fi
+      close_extra=""; (( base_fix_bypass )) && close_extra=" under the base-fix exception for $BASE_FIX_KEY"
+      if bd close "$bead" --reason "PR $repo#$pr merged by pr-babysit ($method)${close_extra}." >/dev/null 2>&1; then log "$bead: MERGED $repo#$pr ($method); bead closed"; else log "$bead: merged PR close failed"; fi
     else
       transition "$bead" "$metadata" "$notes" "merge-queued:$head" "Merge command succeeded but PR remains $after_state; retained under patrol." || log "$bead: transition failed"
     fi
@@ -636,7 +664,11 @@ red_base_beads_load() {
 red_base_existing_bead() {
   local key="$1"
   (( RED_BASE_BEADS_OK )) || return 1
-  jq -r --arg k "$key" 'map(select(.status == "open" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$RED_BASE_BEADS"
+  # NOT status == "open": `bd update --claim` moves a bead to in_progress, and
+  # an agent picking up the base-red bead is the expected case.  Reading that as
+  # "no bead exists" would mint a duplicate P0 next escalation window, or drop
+  # the state record on recovery and orphan the claimed bead.
+  jq -r --arg k "$key" 'map(select(.status != "closed" and (.metadata.pr_babysit_red_base // "") == $k)) | (.[0].id // empty)' <<<"$RED_BASE_BEADS"
 }
 
 # Second opinion on a remembered bead id when the metadata lookup does not find
@@ -649,7 +681,7 @@ red_base_bead_open() {
   out="$(bd show "$id" --json 2>/dev/null)" || return 2
   jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$out" || return 2
   [[ "$(jq -r 'length' <<<"$out")" != 0 ]] || return 1
-  [[ "$(jq -r '.[0].status // empty' <<<"$out")" == "open" ]]
+  [[ "$(jq -r '.[0].status // empty' <<<"$out")" != "closed" ]]
 }
 
 base_is_watched() {

@@ -29,7 +29,7 @@ case "${1:-} ${2:-}" in
     [[ -f "$FAKE_MERGE_MARK" ]] && state="${FAKE_POST_MERGE_STATE:-MERGED}"
     rollup="${FAKE_ROLLUP:-}"
     [[ -n "$rollup" ]] || rollup='[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]'
-    jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --arg hb "${FAKE_HEAD_BRANCH:-feature}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, headRefName:$hb, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
+    jq -cn --arg state "$state" --arg head "$head" --arg mss "${FAKE_MSS:-CLEAN}" --arg hb "${FAKE_HEAD_BRANCH:-feature}" --arg bb "${FAKE_BASE_REF:-main}" --argjson rollup "$rollup" '{title:"Example PR", state:$state, headRefOid:$head, headRefName:$hb, baseRefName:$bb, mergeStateStatus:$mss, statusCheckRollup:$rollup}'
     [[ -f "$FAKE_MERGE_MARK" ]] && exit "${FAKE_POST_PR_EXIT:-0}"
     exit "${FAKE_PR_EXIT:-0}"
     ;;
@@ -111,7 +111,15 @@ case "${1:-}" in
           value="$2"; qtmp="$FAKE_QUEUE.tmp"; jq --arg id "$bead" --arg value "$value" 'map(if .id == $id then .labels = ((.labels // []) - [$value]) else . end)' "$FAKE_QUEUE" >"$qtmp"; mv -f "$qtmp" "$FAKE_QUEUE"; shift 2 ;;
         --add-label)
           value="$2"; qtmp="$FAKE_QUEUE.tmp"; jq --arg id "$bead" --arg value "$value" 'map(if .id == $id then .labels = (((.labels // []) + [$value]) | unique) else . end)' "$FAKE_QUEUE" >"$qtmp"; mv -f "$qtmp" "$FAKE_QUEUE"; shift 2 ;;
-        --append-notes) shift 2 ;;
+        --append-notes)
+          # Really append: the patrol's pre-merge authorization check compares
+          # the bead's notes against the queued snapshot, so a no-op stub here
+          # hides any path that mutates notes before merging.
+          value="$2"; qtmp="$FAKE_QUEUE.tmp"
+          jq --arg id "$bead" --arg v "$value" \
+            'map(if .id == $id then .notes = ((.notes // "") + (if (.notes // "") == "" then "" else "\n" end) + $v) else . end)' \
+            "$FAKE_QUEUE" >"$qtmp"
+          mv -f "$qtmp" "$FAKE_QUEUE"; shift 2 ;;
         *) shift ;;
       esac
     done
@@ -135,6 +143,15 @@ if [[ "${FAKE_REVOKE_LABEL:-0}" == 1 ]]; then
 fi
 [[ -n "${FAKE_PREFLIGHT_OUTPUT:-}" ]] || printf '%s\n' '[pass] Base branch main CI is green (required checks passed)'
 [[ -z "${FAKE_PREFLIGHT_OUTPUT:-}" ]] || printf '%s\n' "$FAKE_PREFLIGHT_OUTPUT"
+# The real script prints exactly one of these as its last line; a run that dies
+# partway prints neither, which is what FAKE_PREFLIGHT_TRUNCATED simulates.
+if [[ "${FAKE_PREFLIGHT_TRUNCATED:-0}" != 1 ]]; then
+  if [[ "${FAKE_PREFLIGHT_EXIT:-0}" != 0 ]]; then
+    printf '%s\n' 'Result: BLOCKED for autonomous merge/close/replacement until addressed.'
+  else
+    printf '%s\n' 'Result: preflight passed. Continue with code review and local validation.'
+  fi
+fi
 exit "${FAKE_PREFLIGHT_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/systemctl" <<'EOF'
@@ -171,6 +188,7 @@ reset() {
   unset FAKE_PR_BODY FAKE_PR_EXIT FAKE_POST_PR_EXIT FAKE_CHECKS_EXIT FAKE_MERGE_EXIT FAKE_RERUN_EXIT FAKE_PREFLIGHT_EXIT FAKE_PREFLIGHT_OUTPUT FAKE_POST_MERGE_STATE FAKE_HEAD_AFTER_PREFLIGHT FAKE_BD_FAIL_ON FAKE_BD_FAIL_MATCH FAKE_ROLLUP FAKE_REVOKE_LABEL FAKE_MSS FAKE_PREFLIGHT_SETTLES
   unset FAKE_PR_LIST FAKE_PR_LIST_EXIT FAKE_PR_ACTIVITY FAKE_ACTIVITY_EXIT PR_BABYSIT_REVIEW_CREATE_LIMIT PR_BABYSIT_SELF_LOGINS
   unset FAKE_BASE_RUNS FAKE_BASE_RUNS_EXIT FAKE_CHECKS_STDERR FAKE_ACTION_REQUIRED FAKE_ACTION_REQUIRED_EXIT
+  unset FAKE_PREFLIGHT_TRUNCATED FAKE_BASE_REF FAKE_HEAD_BRANCH
   export PR_BABYSIT_REVIEW=0 PR_BABYSIT_WATCH_BASES=
   rm -f "$FAKE_PREFLIGHT_MARK" "$FAKE_PREFLIGHT_MARK.settled"
   export FAKE_PR_STATE=OPEN FAKE_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -423,6 +441,25 @@ run_patrol
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix flag licensed a merge onto a different base"
 grep -q 'names gastownhall/beads@release-1.2 but the red base is' "$CASE/state/pr-babysit/patrol.log" || fail "base mismatch was not explained"
 
+# Preflight prints base health early and keeps working. A run that dies after
+# printing the red-base block yields a PARTIAL block list, so "the red base is
+# the only objection" is unproven and the exception must not fire.
+reset base-fix-truncated-preflight "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 \
+  FAKE_PREFLIGHT_OUTPUT="$redonly" FAKE_PREFLIGHT_TRUNCATED=1
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix merged on an incomplete preflight verdict"
+grep -q 'did not run to a complete verdict' "$CASE/state/pr-babysit/patrol.log" || fail "incomplete preflight was not called out"
+
+# --match-head-commit pins the head but not the target: a PR retargeted between
+# authorization and merge keeps its head SHA, so the base is pinned separately.
+reset base-fix-retargeted "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 \
+  FAKE_PREFLIGHT_OUTPUT="$redonly" FAKE_BASE_REF=release-1.2
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix merged onto a retargeted base"
+grep -q 'base-fix withdrawn — PR retargeted' "$CASE/state/pr-babysit/patrol.log" || fail "retarget was not called out"
+
 # On a green base the flag is inert: the ordinary path runs, including the green
 # sighting that withdraws a standing escalation.
 reset base-fix-green-inert "$basefix_policy"
@@ -508,6 +545,20 @@ printf '[]\n' >"$FAKE_QUEUE"
 export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' FAKE_BASE_RUNS="$green_runs"
 run_patrol; run_patrol
 [[ "$(count 'red-base:' "$CASE/state/pr-babysit/patrol.log")" == 0 ]] || fail "a healthy base produced red-base chatter"
+
+# A claimed base-red bead is in_progress, not open: reading that as "no bead"
+# would mint a duplicate P0 the moment an agent picks the outage up.
+reset base-watch-claimed "$policy"
+printf '[]\n' >"$FAKE_QUEUE"
+export PR_BABYSIT_WATCH_BASES='gastownhall/beads@main' PR_BABYSIT_RED_BASE_LIMIT=2 FAKE_BASE_RUNS="$red_runs"
+run_patrol; run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "watch did not escalate"
+jq 'map(if .id == "mybd-created" then .status = "in_progress" | .assignee = "maphew" else . end)' "$FAKE_QUEUE" >"$FAKE_QUEUE.t" && mv -f "$FAKE_QUEUE.t" "$FAKE_QUEUE"
+rm -f "$CASE/state/pr-babysit/red-base"    # force reconciliation to be the only source
+run_patrol
+[[ "$(count '^create ' "$FAKE_BD_LOG")" == 1 ]] || fail "a claimed base-red bead was read as absent and duplicated"
+grep -q 'adopting open bead mybd-created' "$CASE/state/pr-babysit/patrol.log" || fail "claimed bead was not adopted"
+export PR_BABYSIT_WATCH_BASES= ; unset PR_BABYSIT_RED_BASE_LIMIT
 
 # A malformed watch spec is reported and skipped, not fatal.
 reset base-watch-malformed "$policy"

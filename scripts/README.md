@@ -425,6 +425,29 @@ transient merge state alongside it still holds the lane), and the PR's own
 checks were already required green to reach preflight at all. On a green base
 the flag does nothing, so it cannot decay into a standing merge licence, and
 the patrol never sets the key itself — writing it is a reviewed act at handoff.
+
+Three further guards came out of cross-vendor review, each closing a way the
+exception could have merged something it should not:
+
+- **The preflight verdict must be complete.** Preflight prints base health early
+  and keeps working (status rollup, closing-issue GraphQL). A run that died
+  after printing the red-base block would present a *partial* block list, making
+  "the red base is the only objection" unproven. The exception requires exit 1
+  plus preflight's terminal `Result: BLOCKED` line.
+- **The base is pinned across the merge.** `gh pr merge --match-head-commit`
+  pins the head but not the target, so a PR retargeted between authorization and
+  merge keeps its head SHA. The final re-read compares `baseRefName` against the
+  authorized key and withdraws the exception if it moved.
+- **The audit note is written after the merge, never before.** The pre-merge
+  authorization check compares the bead against the queue snapshot, notes
+  included — appending first would revoke this pass's own authorization and the
+  exception could never fire at all. The test harness's fake `bd` really appends
+  notes now, so that failure mode cannot hide again.
+
+Provenance is procedural, not enforced: the patrol trusts a matching metadata
+key without proving `pr-handoff` wrote it. No other automation in this repo
+writes that key and upstream PR content cannot inject it, but anyone with raw
+`bd update` or import access could pre-seed one.
 A base-fix merge does not record a green sighting: the base is still red, and
 claiming otherwise would withdraw the very `base-red` escalation the PR is
 trying to resolve.
