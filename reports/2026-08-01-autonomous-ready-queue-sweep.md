@@ -168,12 +168,25 @@ not, and all three were real:
    embedded into the bundle).
 3. The resulting stand-in exemption then checked only the *first* DML target, so
    `SET @sql = IF(cond, '<stand-in write>', '<real write>')` was waved through
-   on the strength of the branch that was not the problem. Reproduced before
-   fixing.
+   on the strength of the branch that was not the problem.
+4. Checking *every* target still was not enough:
+   `UPDATE __stage s JOIN issues i ON i.id = s.id SET i.priority = 0` writes to
+   `issues`, and no pattern-match finds that reliably. Separately,
+   `ON DUPLICATE KEY UPDATE v = 2` read as a second write verb and rejected a
+   safe stand-in upsert.
 
-Round 3 is the one worth remembering: it is a false negative *created by* the
-fix for round 1, in a shape reachable by combining the recommended pattern with
-an ordinary one. A single review pass would have shipped it.
+Each was reproduced before fixing. Rounds 3 and 4 are both false negatives
+*created by* the fix for round 1 — and round 4 is the one that should have
+changed the design two rounds earlier. Three attempts to identify a SQL write
+target with a regex is enough evidence that the target cannot be identified
+that way; the exemption is now restricted to `INSERT INTO`, whose target is
+always the token after `INTO`, and prepared `UPDATE`/`DELETE` are never
+exempted at all.
+
+The generalisable lesson is not "run more review rounds" — it is that when
+successive fixes to the same predicate keep failing on new inputs, the
+predicate is the wrong shape. A single review pass would have shipped a check
+that silently exempted real-table writes while appearing to work.
 
 One further correction, mine rather than the reviewer's: seven shipped migrations
 already use the flagged idiom. That is not a latent bug and the docs now say why
