@@ -170,6 +170,13 @@ too small.
 now-disproven claim and whose PR (maphew/mybd#24) is *still open* — so it can be
 fixed before it lands.
 
+> **Update (2026-07-31).** Both PRs were closed unmerged and their reports
+> landed on `main` by direct commit, which is how the other 110 reports in this
+> directory arrived; the audit's §3.6 carries the correction inline. See the
+> AGENTS.md "Landing a coordination-repo branch" note added at the same time —
+> the two open report-PRs were the reason a correction had to be coordinated
+> across branches at all.
+
 ## 4. `conditional-blocks` is a synonym for `blocks` — verified, escalated
 
 **mybd-jrbuu**: the failure branch of a molecule goes ready on the success path.
@@ -204,6 +211,38 @@ was told not to make: introduce a terminal outcome on close? make
 it as a distinct type? Those are different products, not different
 implementations. Bead labelled **`human-decision`** and returned to `open`/
 unassigned so it surfaces for the owner rather than looking claimed.
+
+> **Correction (2026-07-31, review of maphew/mybd#25).** "Root of the root" is
+> wrong, and it is the strongest-worded claim in this report — which is the
+> lesson. The outcome mechanism exists:
+>
+> ```go
+> // internal/types/types.go
+> var FailureCloseKeywords = []string{"failed", …, "won't fix", "canceled",
+>                                     "abandoned", "error", "timeout", "aborted"}
+>
+> // IsFailureClose returns true if the close reason indicates the issue failed.
+> // This is used by conditional-blocks dependencies: B runs only if A fails.
+> func IsFailureClose(closeReason string) bool { … }
+> ```
+>
+> The outcome lives on `close_reason`, not on `status` — so the status
+> enumeration above is accurate but answers the wrong question. `IsFailureClose`
+> has **zero production callers** (`grep` finds only `types_test.go`), so the
+> observed behaviour and the CLI repro in this section stand unchanged. What
+> changes is the disposition: the "different products" framing assumed the
+> semantics had never been chosen. They were chosen, encoded as a keyword list,
+> documented against `conditional-blocks` by name, and then not wired into arm
+> A. **mybd-jrbuu's `human-decision` label should be re-examined** — "wire the
+> existing helper or delete it" is a narrower question than the three-way
+> product fork above.
+>
+> Why the sweep missed it: §4's search was token-based — every
+> `conditional-blocks` / `DepConditionalBlocks` reference, enumerated by file.
+> `IsFailureClose` carries neither token in its name, only in its doc comment.
+> The section's confidence ("No code path anywhere reads an outcome") outran the
+> search that backed it, which is the same failure this report diagnoses in
+> other agents' beads two sections below.
 
 ## 5. `bd admin reset` — hypothesis converted to verified root cause
 

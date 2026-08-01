@@ -108,11 +108,40 @@ arm, it is a dimension the column cannot hold.
 I did not find an existing upstream issue for this. It should be filed
 regardless of how the larger question is decided.
 
+> **Correction (2026-07-31, review of maphew/mybd#24).** The paragraph above
+> overstates the gap, and it matters for how mybd-jrbuu should be routed. The
+> *bit* cannot hold the outcome, but the outcome itself is already stored and
+> already has a reader:
+>
+> ```go
+> // internal/types/types.go — FailureCloseKeywords, IsFailureClose
+> // IsFailureClose returns true if the close reason indicates the issue failed.
+> // This is used by conditional-blocks dependencies: B runs only if A fails.
+> func IsFailureClose(closeReason string) bool { … }
+> ```
+>
+> `FailureCloseKeywords` is a keyword list (`failed`, `won't fix`, `canceled`,
+> `abandoned`, `error`, `timeout`, `aborted`, …) matched case-insensitively
+> against `close_reason`, and the doc comment names `conditional-blocks`
+> explicitly. `grep` across the tree finds **zero production callers** — only
+> `internal/types/types_test.go`.
+>
+> So the intended semantics were designed and half-built, then never wired into
+> arm A. The accurate statement is not "there is nowhere to put the outcome" but
+> "the outcome has a home and the recompute does not read it". Under the
+> denormalized bit the fix is arm A joining `close_reason` through
+> `IsFailureClose`; under a live join it falls out for free. Either way this is
+> a narrower question than §5(1) implies — closer to "wire it or delete it" than
+> to a product fork.
+
 ### 3.2 The hierarchy arm propagates the wrong predicate (gh 5036)
 
 Arm B keys on `p.is_blocked = 1`. It propagates the parent's *blocked flag*, so
 a child of an **open, unblocked, incomplete** parent is ready. Meanwhile
-`cmd/bd/dep.go:197` refuses an explicit blocking edge to your own dotted parent:
+`cmd/bd/dep.go:198` refuses an explicit blocking edge to your own dotted parent
+— and so do five sibling call sites (`dep.go:383`, `link.go`,
+`link_proxied_server.go`, `dep_proxied_server.go` ×2), so the refusal is
+systematic across every entry path rather than one command's quirk:
 
 > `cannot add dependency: %s is already a child of %s. Children inherit
 > dependency on parent completion via hierarchy. Adding an explicit dependency
@@ -173,6 +202,37 @@ materially different change, and the same mechanism explains gh 4138 (rows
 migration left at `is_blocked=0` self-heal only if something later happens to
 recompute them).
 
+> **Correction (2026-07-31, review of maphew/mybd#24) — the prescription above
+> is wrong, and was already wrong at this report's own base commit.**
+>
+> The mechanism analysis holds: `RecomputeIsBlockedInTx` does iterate to a
+> fixpoint, and batch membership is the real constraint. But "close the ID set
+> over descendants before recomputing" is not a fix to be written — it is
+> **already implemented**. `expandByParentChildDescendantsInTx`
+> (`internal/storage/issueops/blocked_state.go`) is a batched breadth-first
+> descendant closure and is the tail call of every affected-set builder in that
+> file. It landed in `ff8a2e8cd`, which `git merge-base --is-ancestor` confirms
+> is an ancestor of `8bb0d36be` — the commit this audit read. This was not
+> drift; the function was in the tree while §3.6 was being written.
+>
+> The 2026-07-31 newest-first sweep
+> ([report](2026-07-31-newest-first-ready-sweep.md) §3) verified this
+> behaviourally: it built `bd` at `9973e9628` and ran gh 3887's own repro plus
+> two harder ordering cases (a great-grandchild created *after* the blocking
+> dep; closing a parent and its children), all of which pass. It walked every
+> `RecomputeIsBlockedInTx` call site and found none passing a raw, unclosed set.
+> gh 3887 was recommended upstream for close as fixed
+> ([issuecomment-5148007828](https://github.com/gastownhall/beads/issues/3887#issuecomment-5148007828)),
+> with the caveat that only the embedded/`issueops` path was exercised.
+>
+> gh 4138 is **not** explained by the same mechanism after all. Its shape is
+> rows that never enter a recompute batch at all (e.g. left behind by a
+> migration) — a set that is never built, not a set that is too small.
+>
+> Kept rather than deleted because the failure mode is the transferable part:
+> this section was written by reading code without running it, and it would have
+> sent an implementer to write a closure that already existed.
+
 ## 4. Four hardcoded blocking-type lists that can drift
 
 The set "which types block" is written out independently in at least four
@@ -223,4 +283,20 @@ and the drift doctor check — be written without guessing.
 - mybd-0zfum — correction to gh 3887's stated mechanism (§3.6); should be posted
   upstream so the eventual fix targets batch closure, not a transitive walk.
 
+**Status of these follow-ups as of 2026-07-31, after review:**
+
+- **mybd-0zfum — closed, and its premise was disproven.** The correction was
+  posted upstream, but with the opposite conclusion to the one written above:
+  the batch-closure fix already exists, so gh 3887 was recommended for close as
+  fixed rather than re-targeted. See the §3.6 correction.
+- **mybd-jrbuu — re-check the `human-decision` label.** The newest-first sweep
+  escalated it on the premise that no outcome mechanism exists anywhere.
+  `IsFailureClose` is that mechanism, unwired (§3.1 correction), which narrows
+  the decision considerably.
+- mybd-zg2dj — still open and still a genuine ruling. Cheaper than §3.4 implies:
+  `WellKnownDependencyTypes()` and `IsWellKnown()` already exist in `types.go`,
+  so fail-loud is a call at the write path, not new machinery.
+- mybd-exkxx — unchanged.
+
 _claude-opus-5-medium on behalf of maphew_
+_§3.1, §3.6 and §6 corrections: claude-opus-5-high on behalf of maphew_
