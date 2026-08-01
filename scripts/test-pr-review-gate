@@ -29,10 +29,15 @@ sha="$(git -C "$tmp" rev-parse HEAD)"
 
 # A second checkout with nothing to do with beads, for the case where only an
 # explicit -R/--repo reveals that the PR targets upstream.
+#
+# Its commit message must differ from the first repo's. Two empty-tree,
+# no-parent commits made in the same second by the same author hash
+# identically, and an $other whose HEAD collided with the reviewed $sha
+# silently turned every deny case here into an allow.
 other="$tmp-other"
 mkdir -p "$other"
 git -C "$other" init -q
-git -C "$other" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$other" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init-unrelated
 git -C "$other" remote add origin git@github.com:someone/unrelated.git
 
 run() { # run <cmd> <cwd> -> exit code
@@ -91,6 +96,36 @@ if (( have_codex )); then
   git -C "$tmp" reset -q --hard "$sha"
   check "--head outvotes cwd HEAD"  2 "$(run 'gh pr create --repo gastownhall/beads --head me:other-work' "$tmp")"
   check "-H outvotes cwd HEAD"      2 "$(run 'gh pr create --repo gastownhall/beads -H me:other-work' "$tmp")"
+
+  # `gh pr new` is an alias for `gh pr create`; the gate must know both.
+  check "gh pr new is gated"        2 "$(run 'gh pr new --repo gastownhall/beads --head me:other-work' "$tmp")"
+  check "gh pr new, reviewed head"  0 "$(run 'gh pr new --repo gastownhall/beads --title x' "$tmp")"
+
+  # gh takes its target from GH_REPO too, so an unrelated checkout plus that
+  # assignment is still an upstream PR.
+  check "GH_REPO from elsewhere"    2 "$(run 'GH_REPO=gastownhall/beads gh pr create --title x' "$other")"
+
+  # An explicit head that resolves nowhere locally cannot be checked, and gh
+  # can still open the PR from the remote branch — so stop rather than fall
+  # back to the cwd's (reviewed) HEAD.
+  check "unresolvable --head blocks" 2 "$(run 'gh pr create --repo gastownhall/beads --head me:only-on-github' "$tmp")"
+
+  # `cd` names where gh actually runs; the directory it started in must not
+  # vouch for the one it moved to.
+  check "cd into unreviewed blocks" 2 "$(run "cd $other && gh pr create --repo gastownhall/beads" "$tmp")"
+
+  # A log with no base line records nothing about which diff was read.
+  printf '' > "$REVIEW_DIR/$sha.md"
+  check "empty log rejected"        2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  printf '# truncated\n' > "$REVIEW_DIR/$sha.md"
+  check "log without base rejected" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  printf '# fixture\n\n- base: `main`\n' > "$REVIEW_DIR/$sha.md"
+
+  # gh honours branch.<current>.gh-merge-base when --base is omitted.
+  git -C "$tmp" config branch.master.gh-merge-base release 2>/dev/null
+  git -C "$tmp" config "branch.$(git -C "$tmp" rev-parse --abbrev-ref HEAD).gh-merge-base" release
+  check "configured merge-base honored" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  git -C "$tmp" config --unset "branch.$(git -C "$tmp" rev-parse --abbrev-ref HEAD).gh-merge-base"
 
   # A moved HEAD must re-arm: the log vouches for a commit, not a branch.
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second

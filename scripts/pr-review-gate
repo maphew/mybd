@@ -51,8 +51,10 @@ hook_cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
 cmd_code="$(sed -E "s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd")"
 cmd_flags="$(tr -d "'\\\"" <<<"$cmd")"
 
-# Not a PR creation, or deliberately excused.
-grep -qE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' <<<"$cmd_code" || exit 0
+# Not a PR creation, or deliberately excused. `gh pr new` is an official alias
+# for `gh pr create`, so gating only the latter leaves the rule one word away
+# from being bypassed.
+grep -qE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]]|$)' <<<"$cmd_code" || exit 0
 grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd_code" && exit 0
 
 # Without codex there is no second vendor to consult, so the gate stands down
@@ -61,20 +63,26 @@ command -v codex >/dev/null 2>&1 || exit 0
 
 # Which checkouts might this run in? A leading `cd X &&`, an explicit `git -C X`,
 # and the session cwd. Any of them having a reviewed HEAD is enough.
-declare -a dirs=()
-[[ -n "$hook_cwd" ]] && dirs+=("$hook_cwd")
-while IFS= read -r d; do [[ -n "$d" ]] && dirs+=("$d"); done < <(
-  grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd_flags" \
-    | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//'
-  grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" \
-    | sed -E 's/.*-C[[:space:]]+//'
-)
+# ONE effective directory, not a set of candidates. `gh` runs where the command
+# put it: the last `cd` in the command if there is one, else the session cwd.
+# Treating every mentioned directory as interchangeable meant
+# `cd <unreviewed> && gh pr create` could be satisfied by the reviewed cwd it
+# started from. (A `git -C X` says nothing about where gh runs, so it is not a
+# candidate at all.)
+effective_dir="$hook_cwd"
+last_cd="$(grep -oE '(^|&&[[:space:]]*|;[[:space:]]*)cd[[:space:]]+[^;&|]+' <<<"$cmd_flags" \
+  | sed -E 's/.*cd[[:space:]]+//; s/[[:space:]]+$//' | tail -1)"
+[[ -n "$last_cd" ]] && effective_dir="$last_cd"
+[[ -n "$effective_dir" ]] || effective_dir="$PWD"
+declare -a dirs=("$effective_dir")
 
 # --repo / -R decides the target when present; otherwise infer from the remotes.
 # Both spellings must be read: `gh pr create -R gastownhall/beads` from the
 # coordination checkout would otherwise infer maphew/mybd and skip the gate.
+# An inline GH_REPO= assignment does the same job for gh, so it counts too.
 target_is_upstream=0
 repo_flag="$(grep -oE -- '(--repo|-R)[=[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--repo|-R)[=[:space:]]+//')"
+[[ -z "$repo_flag" ]] && repo_flag="$(grep -oE 'GH_REPO=[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' <<<"$cmd_flags" | head -1 | sed -E 's/GH_REPO=//')"
 if [[ -n "$repo_flag" ]]; then
   [[ "$repo_flag" == "$UPSTREAM_REPO" ]] && target_is_upstream=1
 else
@@ -90,6 +98,7 @@ fi
 # would let a reviewed working checkout vouch for an unreviewed branch being
 # pushed past it.
 declare -a shas=()
+unresolved_head=""
 head_flag="$(grep -oE -- '(--head|-H)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--head|-H)[=[:space:]]+//')"
 if [[ -n "$head_flag" ]]; then
   ref="${head_flag##*:}"
@@ -99,9 +108,11 @@ if [[ -n "$head_flag" ]]; then
       [[ -n "$s" ]] && shas+=("$s") && break 2
     done
   done
-fi
-# Only when no explicit head resolved do the checkout HEADs stand in for it.
-if [[ ${#shas[@]} -eq 0 ]]; then
+  # A head named but not found locally is the one case where falling back is
+  # worse than stopping: gh can open the PR from a branch that exists only on
+  # the remote, and the cwd's HEAD would then vouch for a commit nobody read.
+  [[ ${#shas[@]} -eq 0 ]] && unresolved_head="$head_flag"
+else
   for d in "${dirs[@]}"; do
     s="$(git -C "$d" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
     [[ -n "$s" ]] && shas+=("$s")
@@ -112,15 +123,26 @@ fi
 # well as the same commit: a review taken against `release` says nothing about
 # the same sha opened against `main`.
 want_base="$(grep -oE -- '(--base|-B)[=[:space:]]+[^[:space:];&|]+' <<<"$cmd_flags" | head -1 | sed -E 's/(--base|-B)[=[:space:]]+//')"
-want_base="${want_base:-main}"
+if [[ -z "$want_base" ]]; then
+  # With no --base, gh honours branch.<current>.gh-merge-base before falling
+  # back to the repo default, so assuming "main" outright could accept a main
+  # review for a PR GitHub opens against something else.
+  cur="$(git -C "$effective_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [[ -n "$cur" ]] && want_base="$(git -C "$effective_dir" config --get "branch.$cur.gh-merge-base" 2>/dev/null || true)"
+  want_base="${want_base:-main}"
+fi
 base_mismatch=""
 for s in ${shas[@]+"${shas[@]}"}; do
   log="$REVIEW_DIR/$s.md"
-  [[ -f "$log" ]] || continue
+  [[ -s "$log" ]] || continue
   logged_base="$(sed -nE 's/^- base: `(.*)`$/\1/p' "$log" | head -1)"
-  if [[ -z "$logged_base" || "$logged_base" == "$want_base" ]]; then
-    exit 0
+  if [[ -z "$logged_base" ]]; then
+    # No base line means a truncated or hand-rolled log. It cannot say which
+    # diff was read, so it does not count as having read one.
+    base_mismatch="the log for ${s:0:12} records no base — treating it as incomplete"
+    continue
   fi
+  [[ "$logged_base" == "$want_base" ]] && exit 0
   base_mismatch="reviewed against \`$logged_base\`, but this PR targets \`$want_base\`"
 done
 
@@ -133,7 +155,8 @@ fi
 
 proposed="${shas[0]:-unknown}"
 headline="no cross-vendor review for the commit this PR would propose"
-[[ -n "$base_mismatch" ]] && headline="the review for this commit does not cover this base — $base_mismatch"
+[[ -n "$base_mismatch" ]] && headline="the review for this commit does not cover this PR — $base_mismatch"
+[[ -n "$unresolved_head" ]] && headline="--head names \`$unresolved_head\`, which does not resolve in $effective_dir, so the commit it would propose cannot be checked"
 cat >&2 <<EOF
 Blocked: $headline.
 

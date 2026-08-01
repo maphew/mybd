@@ -405,11 +405,13 @@ wrapper that opened the PR as soon as the review returned would be automating
 the one step that has to be thought about.
 
 `pr-review-gate` is the backstop, wired as a `PreToolUse` hook on `Bash` in
-`.claude/settings.json`. It blocks `gh pr create` against `gastownhall/beads`
-unless a review log exists for the exact commit **and base** being proposed.
-The target repo comes from `--repo`/`-R`, falling back to the checkout's
-remotes; the proposed commit from `--head`/`-H` when given, otherwise from a
-leading `cd X &&`, a `git -C X`, or the session cwd.
+`.claude/settings.json`. It blocks `gh pr create` (and its `gh pr new` alias)
+against `gastownhall/beads` unless a review log exists for the exact commit
+**and base** being proposed. Target repo: `--repo`/`-R`, then an inline
+`GH_REPO=`, then the checkout's remotes. Effective directory: the last `cd` in
+the command, else the session cwd. Proposed commit: `--head`/`-H` when given,
+else that directory's HEAD. Base: `--base`/`-B`, else
+`branch.<current>.gh-merge-base`, else `main`.
 
 Deliberately narrow — everything in the first block is an allow, so the gate
 cannot become a nuisance from a phone:
@@ -425,16 +427,31 @@ cannot become a nuisance from a phone:
 | upstream PR, commit never reviewed | **blocked**, exit 2 |
 | upstream PR, reviewed then amended | **blocked** — the log vouches for a commit, not a branch |
 | reviewed against a different base than the PR targets | **blocked** — a different base is a different diff |
-| `-R gastownhall/beads` run from a non-beads checkout | **blocked** — the flag outranks remote inference |
+| `-R gastownhall/beads` or `GH_REPO=…` from a non-beads checkout | **blocked** — the flag outranks remote inference |
 | `--head`/`-H` naming an unreviewed branch from a reviewed cwd | **blocked** — the named head is the proposal |
+| `--head` naming a branch that resolves nowhere locally | **blocked** — gh can open it from the remote; unverifiable is not approved |
+| `cd <unreviewed> && gh pr create` from a reviewed cwd | **blocked** — gh runs where the `cd` put it |
+| `gh pr new …` | gated identically — it is an alias, not a loophole |
+| review log that is empty or has no `- base:` line | **blocked** — it cannot say which diff was read |
 
-The last four rows are there because the first version of this gate got all
-four wrong, and the Codex review it exists to require is what found them
-(`scripts/test-pr-review-gate` pins each; all four fail against the pre-fix
-gate). Quoting is handled with two views of the command — quoted spans blanked
-for "is this an invocation?", quote characters stripped for reading flag
-values — so neither `printf 'gh pr create …'` nor `--repo "gastownhall/beads"`
-is misread.
+Everything from "reviewed against a different base" down exists because the
+first two versions of this gate got each of those wrong, and the Codex review
+the gate exists to require is what found them — two rounds, ten findings, all
+confirmed against source. `scripts/test-pr-review-gate` pins every one (28
+cases; the round-1 and round-2 subsets were each verified to fail against the
+gate as it stood before that round).
+
+Two implementation notes worth keeping:
+
+- Quoting uses two views of the command — quoted spans blanked for "is this an
+  invocation?", quote characters stripped for reading flag values — so neither
+  `printf 'gh pr create …'` nor `--repo "gastownhall/beads"` is misread.
+- `pr-open` publishes its log by `mv`, so a run killed mid-write cannot leave a
+  truncated file sitting there satisfying the gate forever.
+
+The stopping point is deliberate. This is a backstop against forgetting, not a
+security boundary — `MYBD_SKIP_XVENDOR=1` is right there — so the bar is
+"closes the ways a session plausibly opens a PR", not "survives an adversary".
 
 The escape hatch is a command-line prefix rather than an exported env var on
 purpose: an export would silently disarm every later PR in the session, and
