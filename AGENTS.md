@@ -92,6 +92,7 @@ checks, spend one pass on general hygiene and use judgment about what else
 looks crufty. Examples (not exhaustive):
 
 ```bash
+scripts/check-lane-units          # installed systemd lane units vs tracked templates
 git worktree list                 # stale/abandoned worktrees (both repos: root and bd-main)
 git branch --merged main          # local branches already merged
 git branch -vv | grep ': gone'    # local branches whose upstream was deleted
@@ -771,9 +772,10 @@ these three (answer in the handoff, do not just tick them):
    as a `bd dep` edge or the cold agent will pick blocked work.
 
 A warn-only mechanical backstop catches the cheap omissions (unreferenced new
-reports, thin new beads, beads left `in_progress`, and branches this session
+reports, thin new beads, beads left `in_progress`, branches this session
 advanced that are neither pushed nor named by an open bead - in this repo or in
-`bd-main`). It never blocks a close:
+`bd-main` - and lane units whose installed copy no longer matches its tracked
+template). It never blocks a close:
 
 ```bash
 scripts/session-close-check            # warn, exit 0 (Windows: scripts/session-close-check.ps1)
@@ -781,9 +783,19 @@ scripts/session-close-check --strict   # exit non-zero if any warning fired
 scripts/session-close-check --since <git-ref|RFC3339>   # explicit boundary
 ```
 
+The lane-unit check is `scripts/check-lane-units`, runnable on its own. Editing
+a `scripts/systemd/*.service` template does **not** change the machine - a
+`scripts/install-*` script has to re-render it - so a lane change can look
+landed in git while the old unit keeps running. That cost the bisect lane days
+of silent non-execution (mybd-ks4vq). The check is read-only and never
+reinstalls; re-run the installer it names, or leave a deliberate hand-edit
+alone.
+
 The session boundary comes from `.beads/.session-start` (written at open by the
 `bd prime` SessionStart hook) or `--since`; with neither, the session-scoped
-checks are skipped with a warning rather than passing silently. The stamp is a
+checks are skipped with a warning rather than passing silently. The lane-unit
+check is machine state, not session state, so it runs regardless of the
+boundary and regardless of whether `bd` is reachable. The stamp is a
 single file, so concurrent sessions in one checkout share a coarse boundary (the
 writer keeps the earlier one within a TTL, erring toward more warnings); pass
 `--since <git-ref|RFC3339>` when you need precise scoping. If bd is unavailable

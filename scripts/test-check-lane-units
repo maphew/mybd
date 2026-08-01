@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# test-check-lane-units - exercise the lane unit-drift check against a synthetic
+# unit directory, without touching the real ~/.config/systemd/user or systemd.
+#
+# Usage: bash scripts/test-check-lane-units
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+check="$root/scripts/check-lane-units"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+[[ -x "$check" ]] || { echo "test-check-lane-units: missing $check" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "test-check-lane-units: jq is required" >&2; exit 2; }
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# A throwaway checkout: real check, fake templates, fake unit directory. It must
+# be a git repo because the check derives @ROOT@ from the git common dir and
+# refuses to guess when rev-parse fails.
+fixture="$tmp/repo"
+mkdir -p "$fixture/scripts/systemd"
+git -C "$fixture" init -q 2>/dev/null || { echo "test-check-lane-units: git init failed" >&2; exit 2; }
+git -C "$fixture" config user.email t@example.invalid
+git -C "$fixture" config user.name t
+cp "$check" "$fixture/scripts/check-lane-units"
+chmod +x "$fixture/scripts/check-lane-units"
+
+# The template deliberately contains a double quote, a backslash and a literal
+# tab, so the --json assertions below cannot pass on a broken escaper. An
+# earlier revision hand-rolled JSON escaping that handled only \ and " and
+# emitted output jq refused to parse; the fixture had none of those characters,
+# so the test passed anyway.
+printf '%s\n' \
+  '[Unit]' \
+  'Description=Demo lane "quoted" and back\slashed' \
+  '' \
+  '[Service]' \
+  'Type=oneshot' \
+  '# a comment that carries no runtime behaviour' \
+  'WorkingDirectory=@ROOT@' \
+  'ExecStart=-@ROOT@/scripts/demo-next' \
+  'ExecStart=-@ROOT@/scripts/demo-bisect' \
+  'ExecStart=/bin/sh -c '"'"'journalctl | grep foo'"'"'' \
+  "Environment=DEMO_TABBED=a	b" \
+  > "$fixture/scripts/systemd/demo-lane.service"
+
+printf '%s\n' '[Timer]' 'OnUnitActiveSec=15min' > "$fixture/scripts/systemd/demo-lane.timer"
+
+printf '#!/usr/bin/env bash\ntrue\n' > "$fixture/scripts/install-demo-lane"
+chmod +x "$fixture/scripts/install-demo-lane"
+
+unitdir="$tmp/units/systemd/user"
+mkdir -p "$unitdir"
+export XDG_CONFIG_HOME="$tmp/units"
+
+render() { sed "s|@ROOT@|$fixture|g" "$fixture/scripts/systemd/demo-lane.service"; }
+install_timer() { cp -f "$fixture/scripts/systemd/demo-lane.timer" "$unitdir/demo-lane.timer"; }
+run() { ( cd "$fixture" && ./scripts/check-lane-units "$@" ) ; }
+
+install_timer
+
+# --- 1. in sync -> no drift, exit 0 ------------------------------------------
+render >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 0 ]] && ! grep -q DRIFT <<<"$out"; then
+  pass "in-sync unit reports no drift (exit 0)"
+else
+  fail "in-sync unit should be clean, got rc=$rc: $out"
+fi
+
+# Comments and blank lines must not count as drift, or every template edit that
+# only touches the rationale would cry wolf.
+render | grep -v '^#' | grep -v '^$' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] && pass "comment/blank-line differences are not drift" \
+  || fail "comment-only difference flagged as drift: $out"
+
+# A missing final newline is a legitimate hand-edit artifact, not drift.
+render | head -c -1 >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] && pass "missing final newline is not drift" \
+  || fail "no-trailing-newline flagged as drift: $out"
+
+# --- 2. the real failure mode: template directives missing from the unit -----
+# This is the mybd-ks4vq shape - verify-babysit.service grew a second ExecStart
+# in git and the machine never got it.
+render | grep -v 'demo-bisect' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q 'DRIFT.*demo-lane.service' <<<"$out" \
+  && grep -q 'missing:.*demo-bisect' <<<"$out"; then
+  pass "missing ExecStart reported as drift, naming the unit and the line"
+else
+  fail "missing ExecStart not reported correctly (rc=$rc): $out"
+fi
+grep -q 'scripts/install-demo-lane' <<<"$out" \
+  && pass "drift output names the installer to re-run" \
+  || fail "drift output does not name the installer: $out"
+
+# TWO missing directives must both be reported. The first implementation packed
+# each unit into one '|'-delimited string and unpacked it with `read`, which
+# stops at the first newline: only the first missing line survived, and the
+# extras field was silently emptied. Every fixture then had exactly one missing
+# line, so the suite passed on the broken code.
+render | grep -v 'demo-bisect' | grep -v 'DEMO_TABBED' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q 'missing:.*demo-bisect' <<<"$out" \
+  && grep -q 'missing:.*DEMO_TABBED' <<<"$out"; then
+  pass "BOTH missing directives reported, not just the first"
+else
+  fail "multi-line missing list truncated (rc=$rc): $out"
+fi
+
+# A directive containing a pipe must not be split across missing/extra.
+render | grep -v 'journalctl' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q "missing:.*journalctl | grep foo" <<<"$out" \
+  && ! grep -q 'extra:' <<<"$out"; then
+  pass "a '|' inside a directive does not fabricate an extra line"
+else
+  fail "pipe in directive mis-parsed (rc=$rc): $out"
+fi
+
+# --- 3. a changed value is drift too (not just a deleted line) ---------------
+render | sed 's|WorkingDirectory=.*|WorkingDirectory=/somewhere/else|' >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 1 ]] && grep -q 'missing:.*WorkingDirectory' <<<"$out" \
+  && pass "changed directive reported as drift" \
+  || fail "changed directive not reported (rc=$rc): $out"
+
+# --- 4. extras: only the known installer injections are benign ---------------
+# install-solo-sweep injects Environment=SOLO_SWEEP_* from its arming flags; if
+# those counted as drift the check would be permanently red on a real machine
+# and would get ignored.
+{ render; echo 'Environment=SOLO_SWEEP_MAX_RUNS=16'; } >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] && grep -q 'local .*demo-lane.service' <<<"$out" \
+  && pass "installer-injected SOLO_SWEEP Environment lines classified local" \
+  || fail "benign extra misclassified (rc=$rc): $out"
+
+# But any OTHER addition is drift. A directive deleted from the template still
+# runs on the machine, and an added ExecStart= in a Type=oneshot runs too - the
+# same stale-behaviour bug pointing the other way.
+{ render; echo 'ExecStart=/bin/false'; } >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q 'extra:.*bin/false' <<<"$out"; then
+  pass "an unexpected added directive is drift, not local"
+else
+  fail "unexpected extra not flagged (rc=$rc): $out"
+fi
+
+# The shadowing case the superset rule used to hide: template directive still
+# present, but overridden by a later assignment.
+{ render; echo 'WorkingDirectory=/tmp/elsewhere'; } >"$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 1 ]] && pass "a shadowing duplicate directive is drift" \
+  || fail "shadowing duplicate not flagged (rc=$rc): $out"
+
+# --- 5. lane halves ----------------------------------------------------------
+render >"$unitdir/demo-lane.service"
+rm -f "$unitdir/demo-lane.timer"
+out="$(run 2>&1)"; rc=$?
+if [[ "$rc" -eq 1 ]] && grep -q 'DRIFT.*demo-lane.timer' <<<"$out" \
+  && grep -q 'half-installed' <<<"$out"; then
+  pass "half-installed lane (service without timer) is drift"
+else
+  fail "half-installed lane not flagged (rc=$rc): $out"
+fi
+
+# A wholly uninstalled lane is informational, not a failure.
+rm -f "$unitdir/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] && grep -q 'absent .*demo-lane.service' <<<"$out" \
+  && pass "wholly uninstalled lane reported absent without failing" \
+  || fail "uninstalled lane mishandled (rc=$rc): $out"
+
+install_timer
+render >"$unitdir/demo-lane.service"
+
+# --- 6. no unit directory at all (non-Linux / never installed) ---------------
+out="$( XDG_CONFIG_HOME="$tmp/nonexistent" run 2>&1 )"; rc=$?
+[[ "$rc" -eq 0 ]] && grep -q 'no systemd user unit directory' <<<"$out" \
+  && pass "missing unit directory skips cleanly" \
+  || fail "missing unit directory not handled (rc=$rc): $out"
+
+# --- 7. JSON output ----------------------------------------------------------
+render | grep -v 'demo-bisect' | grep -v 'DEMO_TABBED' >"$unitdir/demo-lane.service"
+out="$(run --json 2>/dev/null)"; rc=$?
+if jq -e . >/dev/null 2>&1 <<<"$out"; then
+  pass "--json emits valid JSON (fixture contains a quote, backslash and tab)"
+else
+  fail "--json emitted invalid JSON: $out"
+fi
+if [[ "$rc" -eq 1 ]] && [[ "$(jq -r '.drifted' <<<"$out")" == "1" ]] \
+  && [[ "$(jq -r '.units[] | select(.unit=="demo-lane.service") | .status' <<<"$out")" == "drift" ]] \
+  && [[ "$(jq -r '.units[] | select(.unit=="demo-lane.service") | .missing | length' <<<"$out")" == "2" ]]; then
+  pass "--json reports the drifted unit and BOTH missing lines"
+else
+  fail "--json verdict wrong (rc=$rc): $out"
+fi
+# Round-trip the tabbed directive: a broken escaper corrupts it rather than
+# failing outright.
+{ render; printf 'Environment=X=a\tb\n'; } >"$unitdir/demo-lane.service"
+out="$(run --json 2>/dev/null)"
+if [[ "$(jq -r '.units[] | select(.unit=="demo-lane.service") | .extra[0]' <<<"$out")" == "$(printf 'Environment=X=a\tb')" ]]; then
+  pass "--json round-trips a directive containing a tab"
+else
+  fail "--json mangled a tabbed directive: $out"
+fi
+
+# --- 8. read-only: the check must never repair what it found ------------------
+render | grep -v 'demo-bisect' >"$unitdir/demo-lane.service"
+before="$(cat "$unitdir/demo-lane.service")"
+run >/dev/null 2>&1
+[[ "$before" == "$(cat "$unitdir/demo-lane.service")" ]] \
+  && pass "check does not rewrite the installed unit" \
+  || fail "check modified the installed unit"
+
+# --- 9. @ROOT@ derivation, the design's load-bearing property -----------------
+# Units must point at the STABLE checkout, not at whichever worktree the check
+# runs from, or running it from a linked worktree reports every unit as drifted.
+# Without this case the whole derivation could be deleted and the suite stays
+# green, because in a main checkout STABLE_ROOT == ROOT trivially.
+git -C "$fixture" add -A >/dev/null 2>&1
+git -C "$fixture" commit -qm base >/dev/null 2>&1
+if git -C "$fixture" worktree add -q "$tmp/wt" -b topic >/dev/null 2>&1; then
+  render >"$unitdir/demo-lane.service"   # rendered with the STABLE root
+  out="$( cd "$tmp/wt" && ./scripts/check-lane-units --json 2>/dev/null )"; rc=$?
+  if [[ "$rc" -eq 0 ]] && [[ "$(jq -r '.stable_root' <<<"$out")" == "$fixture" ]]; then
+    pass "run from a linked worktree, @ROOT@ still resolves to the stable checkout"
+  else
+    fail "worktree @ROOT@ derivation wrong (rc=$rc): $out"
+  fi
+else
+  fail "could not create a linked worktree for the @ROOT@ test"
+fi
+
+# --- 10. infrastructure failure must not render as a green --------------------
+# An unreadable template previously fell through to local/ok with exit 0 - a
+# confident green against a genuinely drifted unit.
+render >"$unitdir/demo-lane.service"
+chmod 000 "$fixture/scripts/systemd/demo-lane.service"
+out="$(run 2>&1)"; rc=$?
+chmod 644 "$fixture/scripts/systemd/demo-lane.service"
+if [[ "$rc" -ne 0 ]] && ! grep -q '^ok     demo-lane.service' <<<"$out"; then
+  pass "an unreadable template fails loudly instead of reporting ok"
+else
+  fail "unreadable template produced a green (rc=$rc): $out"
+fi
+
+if [[ "$fails" -eq 0 ]]; then
+  echo "test-check-lane-units: all checks passed"
+  exit 0
+fi
+echo "test-check-lane-units: $fails failure(s)" >&2
+exit 1

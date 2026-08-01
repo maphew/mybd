@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# check-lane-units - report drift between tracked systemd unit templates and the
+# units actually installed under ~/.config/systemd/user.
+#
+# Usage:
+#   scripts/check-lane-units [--json] [--quiet]
+#
+# Why this exists: every lane in this repo (verify-babysit, pr-babysit,
+# solo-sweep, tri-daily) is a tracked template in scripts/systemd/ rendered into
+# the user unit directory by a scripts/install-* script, and NOTHING reconciles
+# the two afterwards. Edit a template, commit it, and git now says the feature
+# exists while the machine keeps running the old unit. That is not theoretical:
+# on 2026-07-31 verify-babysit.service had carried a second ExecStart
+# (scripts/bisect-next) in git for days while the installed unit still had only
+# verify-next, so the zero-token bisect lane had never fired once (mybd-ks4vq).
+# The failure is invisible precisely because the tracked file looks right.
+#
+# This check is read-only and zero-token. It deliberately does NOT reinstall
+# anything: a hand-edit of an installed unit is legitimate, and silently
+# clobbering it would be the same class of bug in the other direction.
+#
+# Classification, per unit:
+#   drift          - the installed unit does not match the tracked template: a
+#                    template directive is missing or changed, OR the installed
+#                    unit carries an addition that is not a known installer
+#                    injection. A DELETED template directive still running on
+#                    the machine is the same stale-behaviour bug in reverse, so
+#                    unexpected additions count.
+#   half-installed - this unit is absent while its sibling (the other half of
+#                    the .service/.timer pair) is installed. A service whose
+#                    timer is missing never fires, and inspecting the installed
+#                    half alone looks clean. Counted as drift.
+#   local          - installed unit adds ONLY known installer-injected lines
+#                    (install-solo-sweep writes Environment=SOLO_SWEEP_* from
+#                    its arming flags). Informational.
+#   absent         - neither half of the lane is installed here. Informational.
+#   error          - the template or installed unit could not be read. Counted
+#                    as drift: an unreadable input must never render as "ok".
+#   ok             - in sync.
+#
+# Exit: 0 when nothing is drift/half-installed/error, 1 when something is,
+# 2 on usage or environment failure. Callers wanting warn-only behaviour (see
+# session-close-check) ignore the status and relay the output.
+#
+# All human output goes to stdout, findings included: this tool's entire value
+# is the finding, so `check-lane-units > report.txt` must capture it.
+
+set -uo pipefail
+
+die() { printf 'check-lane-units: %s\n' "$*" >&2; exit 2; }
+
+json_out=0
+quiet=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) json_out=1; shift ;;
+    --quiet) quiet=1; shift ;;
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: scripts/check-lane-units [--json] [--quiet]" >&2; exit 2 ;;
+  esac
+done
+
+command -v diff >/dev/null 2>&1 || die "diff not on PATH"
+[[ "$json_out" -eq 0 ]] || command -v jq >/dev/null 2>&1 || die "--json needs jq on PATH"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || die "cannot resolve repo root"
+
+# @ROOT@ resolution must match the installers exactly, or the check invents
+# drift for every unit. They point the unit at the STABLE checkout (the main
+# working tree), not at whichever worktree the installer happened to run from:
+# a unit whose WorkingDirectory is a throwaway worktree breaks when it is
+# removed. Templates, in contrast, come from the checkout this script lives in,
+# so running the check from a branch that edits a template correctly reports
+# "the machine does not have your change yet".
+#
+# The installers run this same rev-parse under `set -e` and abort on failure.
+# Failing loudly matters here too: silently falling back to $ROOT would, from a
+# linked worktree, render every @ROOT@ to the worktree path and report EVERY
+# unit as drifted.
+common_dir="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" \
+  || die "cannot determine the stable checkout (git rev-parse failed in $ROOT); refusing to guess @ROOT@"
+[[ "$common_dir" = /* ]] || common_dir="$ROOT/$common_dir"
+STABLE_ROOT="$(cd "$(dirname "$common_dir")" && pwd)" || die "stable checkout path is unusable: $common_dir"
+
+TEMPLATE_DIR="$ROOT/scripts/systemd"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+
+emit_nothing_to_do() {
+  local reason="$1"
+  if [[ "$json_out" -eq 1 ]]; then
+    jq -n --arg r "$reason" '{skipped:$r, drifted:0, units:[]}'
+  elif [[ "$quiet" -eq 0 ]]; then
+    echo "check-lane-units: $reason"
+  fi
+  exit 0
+}
+
+[[ -d "$TEMPLATE_DIR" ]] || emit_nothing_to_do "no unit templates at $TEMPLATE_DIR"
+[[ -d "$UNIT_DIR" ]] || emit_nothing_to_do "no systemd user unit directory ($UNIT_DIR); nothing installed here"
+
+# Comments and blank lines carry no runtime behaviour, and the templates are
+# heavily commented, so comparing them raw would drown the real signal. Trailing
+# whitespace is normalised for the same reason. `awk 1` guarantees a final
+# newline, so a hand-edited unit that is byte-identical except for a missing
+# trailing newline does not report as both missing AND extra.
+significant() { sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1" | awk 1; }
+
+tmp="$(mktemp -d)" || die "mktemp failed; refusing to report a green that means nothing"
+trap 'rm -rf "$tmp"' EXIT
+
+root_escaped="$(printf '%s' "$STABLE_ROOT" | sed 's/[\\&|]/\\&/g')"
+
+drifted=0
+
+# Parallel arrays rather than one delimiter-packed string per unit. A packed
+# record cannot survive `read`: the missing/extra fields are multi-line, and a
+# single `read` consumes only the first physical line, so a unit with two
+# missing directives silently reported one and fabricated an empty extras list.
+# (That bug shipped past the first test suite because every fixture had exactly
+# one missing line.) Parallel arrays also make a `|` inside a unit directive --
+# `ExecStart=/bin/sh -c 'journalctl | grep foo'` is stock systemd -- a non-issue.
+rec_unit=(); rec_status=(); rec_installer=(); rec_note=(); rec_missing=(); rec_extra=()
+
+# The only additions an installed unit may legitimately carry. install-solo-sweep
+# injects these from its arming flags (--allow-write-token, --model,
+# --fallback-model, --max-runs) with `sed -i "/^\[Service\]/a Environment=..."`.
+# Anything else present in the installed unit but not the template is drift.
+BENIGN_EXTRA_RE='^Environment=SOLO_SWEEP_[A-Z0-9_]+='
+
+shopt -s nullglob
+templates=("$TEMPLATE_DIR"/*.service "$TEMPLATE_DIR"/*.timer)
+shopt -u nullglob
+
+[[ "${#templates[@]}" -gt 0 ]] || emit_nothing_to_do "no *.service or *.timer templates in $TEMPLATE_DIR"
+
+# A lane is a (.service, .timer) pair sharing a stem. Half of one installed is
+# worse than neither, so "absent" is only benign when the whole lane is absent.
+declare -A stem_installed=()
+for tpl in "${templates[@]}"; do
+  unit="$(basename "$tpl")"
+  [[ -f "$UNIT_DIR/$unit" ]] && stem_installed["${unit%.*}"]=1
+done
+
+for tpl in "${templates[@]}"; do
+  unit="$(basename "$tpl")"
+  base="${unit%.*}"
+  installed="$UNIT_DIR/$unit"
+
+  installer=""
+  installer_note=""
+  if [[ -x "$ROOT/scripts/install-$base" ]]; then
+    installer="scripts/install-$base"
+    # solo-sweep's installer refuses to arm without a window; saying "re-run the
+    # installer" without that is advice that fails on contact.
+    if grep -q -- '--days' "$ROOT/scripts/install-$base" 2>/dev/null; then
+      installer_note=" (needs --days N to re-arm)"
+    fi
+  fi
+
+  missing=""; extra=""; status=""
+  if [[ ! -f "$installed" ]]; then
+    if [[ -n "${stem_installed[$base]:-}" ]]; then
+      status="half-installed"; drifted=$((drifted + 1))
+    else
+      status="absent"
+    fi
+  elif ! sed "s|@ROOT@|$root_escaped|g" "$tpl" >"$tmp/rendered" 2>/dev/null \
+    || ! significant "$tmp/rendered" >"$tmp/tpl.norm" 2>/dev/null \
+    || ! significant "$installed" >"$tmp/inst.norm" 2>/dev/null; then
+    # An unreadable template or unit must never fall through to ok/local: that
+    # is how an infrastructure failure becomes a confident green.
+    status="error"; drifted=$((drifted + 1))
+    missing="could not read the template or the installed unit"
+  else
+    # Ordered diff, not a set comparison: multiple ExecStart= lines run in the
+    # order they appear, so a reordering is real drift.
+    missing="$(diff "$tmp/tpl.norm" "$tmp/inst.norm" | sed -n 's/^< //p')"
+    extra="$(diff "$tmp/tpl.norm" "$tmp/inst.norm" | sed -n 's/^> //p')"
+
+    unexpected=""
+    [[ -z "$extra" ]] || unexpected="$(grep -Ev "$BENIGN_EXTRA_RE" <<<"$extra")"
+
+    if [[ -n "$missing" || -n "$unexpected" ]]; then
+      status="drift"; drifted=$((drifted + 1))
+    elif [[ -n "$extra" ]]; then
+      status="local"
+    else
+      status="ok"
+    fi
+  fi
+
+  rec_unit+=("$unit"); rec_status+=("$status"); rec_installer+=("$installer")
+  rec_note+=("$installer_note"); rec_missing+=("$missing"); rec_extra+=("$extra")
+done
+
+if [[ "$json_out" -eq 1 ]]; then
+  # Built by jq, not by hand: a tab is legal leading whitespace in a unit file
+  # and legal inside Environment=, and a hand-rolled escaper that only handles
+  # \ and " emits JSON that jq itself refuses to parse.
+  for i in "${!rec_unit[@]}"; do
+    jq -n --arg unit "${rec_unit[$i]}" --arg status "${rec_status[$i]}" \
+          --arg installer "${rec_installer[$i]}" \
+          --arg missing "${rec_missing[$i]}" --arg extra "${rec_extra[$i]}" \
+      '{unit:$unit, status:$status, installer:$installer,
+        missing: ($missing | if . == "" then [] else rtrimstr("\n") | split("\n") end),
+        extra:   ($extra   | if . == "" then [] else rtrimstr("\n") | split("\n") end)}'
+  done | jq -s --arg sr "$STABLE_ROOT" --arg ud "$UNIT_DIR" --argjson d "$drifted" \
+      '{stable_root:$sr, unit_dir:$ud, drifted:$d, units:.}'
+  exit $(( drifted > 0 ? 1 : 0 ))
+fi
+
+print_installer_hint() {
+  local installer="$1" note="$2"
+  if [[ -n "$installer" ]]; then
+    printf '         re-run: %s%s\n' "$installer" "$note"
+  else
+    printf '         no scripts/install-* found for this unit; reinstall by hand\n'
+  fi
+}
+
+for i in "${!rec_unit[@]}"; do
+  unit="${rec_unit[$i]}"; status="${rec_status[$i]}"; installer="${rec_installer[$i]}"
+  note="${rec_note[$i]}"; missing="${rec_missing[$i]}"; extra="${rec_extra[$i]}"
+  case "$status" in
+    ok) [[ "$quiet" -eq 1 ]] || printf 'ok     %s\n' "$unit" ;;
+    absent) [[ "$quiet" -eq 1 ]] || printf 'absent %s (lane not installed on this machine)\n' "$unit" ;;
+    local)
+      [[ "$quiet" -eq 1 ]] || {
+        printf 'local  %s (installed unit adds known installer-injected lines only)\n' "$unit"
+        while IFS= read -r l; do [[ -n "$l" ]] && printf '         + %s\n' "$l"; done <<<"$extra"
+      }
+      ;;
+    half-installed)
+      printf 'DRIFT  %s - lane is half-installed: this unit is missing while its sibling is installed\n' "$unit"
+      printf '         a service without its timer never fires, and the installed half looks clean on its own\n'
+      print_installer_hint "$installer" "$note"
+      ;;
+    error)
+      printf 'DRIFT  %s - %s\n' "$unit" "$missing"
+      print_installer_hint "$installer" "$note"
+      ;;
+    drift)
+      printf 'DRIFT  %s - installed unit does not match the tracked template\n' "$unit"
+      while IFS= read -r l; do [[ -n "$l" ]] && printf '         missing: %s\n' "$l"; done <<<"$missing"
+      while IFS= read -r l; do [[ -n "$l" ]] && printf '         extra:   %s\n' "$l"; done <<<"$extra"
+      print_installer_hint "$installer" "$note"
+      ;;
+  esac
+done
+
+if [[ "$drifted" -gt 0 ]]; then
+  echo "check-lane-units: $drifted unit(s) drifted from their tracked template"
+  exit 1
+fi
+[[ "$quiet" -eq 1 ]] || echo "check-lane-units: installed units match their templates"
+exit 0
