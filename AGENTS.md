@@ -547,6 +547,22 @@ housekeeping section.
 `verify_state=passed|failed` plus result metadata back to bd. Keep full-suite
 concurrency low by default; Beads/Dolt tests are process and disk heavy.
 
+Test runs leak `dolt sql-server` processes into `$TMPDIR`, and neither in-tree
+cleanup mechanism can reap a *previous* run's leftovers — twice this host
+accumulated ~10h-old servers holding gigabytes of tmpfs (mybd-avwqg). The
+zero-token `reap-test-debris` timer (installed via
+`scripts/install-reap-test-debris`, hourly) is the mop: it kills only
+current-user `dolt sql-server` processes rooted in the suite's own temp-dir
+patterns and older than 4h, then sweeps those temp trees under the SAME age
+floor (`clean-test-tmp.sh`'s own default is 30 minutes, which would delete a
+live run's tree out from under the server this lane just spared). It scans
+`$TMPDIR` and `$VERIFY_GOTMPDIR` both, because `verify-next` redirects the
+suite's TMPDIR to the latter. Do not raise its reach or lower its age floor
+casually — the safety argument is in
+`internal/doltserver/sweep.go` and is summarised in `scripts/README.md`
+"reap-test-debris". Prevention (arming a parent-death guard for the `cmd/bd`
+suites) is still open.
+
 ### PR Merge Tails (babysitter pattern)
 
 Never babysit CI in-session. When a PR's remaining work is "merge when checks

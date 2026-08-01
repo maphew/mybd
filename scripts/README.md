@@ -335,6 +335,76 @@ done
 The verifier intentionally uses local git, local bd metadata, and local logs
 only. It does not call GitHub Actions or poll GitHub status.
 
+## reap-test-debris (leaked test-server lane)
+
+```bash
+scripts/reap-test-debris [--dry-run]   # one pass: reap leaked servers, then sweep temp dirs
+scripts/install-reap-test-debris       # enable the hourly systemd user timer
+scripts/test-reap-test-debris          # hermetic suite (32 cases)
+```
+
+Zero-token host hygiene. The beads test suite spawns `dolt sql-server`
+processes rooted in temp directories, and **nothing on the host could reap a
+previous run's leftovers** — the two in-tree mechanisms each have a structural
+gap:
+
+- the parent-death guard is armed by `BEADS_TEST_PDEATHSIG`, which the `cmd/bd`
+  suites deliberately do not set (they legitimately spawn detached servers that
+  must outlive the command that started them);
+- `SweepOrphanedTestServers` runs after `m.Run()` returns, so a SIGKILLed or
+  OOMed run never reaches it — and `selectOrphanTestServerPIDs` only reaps a
+  *live* server whose cwd sits under a root the **caller** vouches for. A later
+  run gets a fresh random root, so the previous run's orphans match neither its
+  deleted-cwd condition nor its root condition.
+
+Observed twice on this host (mybd-avwqg): four ~10h-old servers holding ~4 GB of
+tmpfs, which here is RAM.
+
+The lane closes exactly that gap by vouching for a root the *test suite alone*
+creates — `$TMPDIR/<one of the suite's own mkdtemp patterns>` — which is the
+thing an in-process sweeper cannot assume about a run that is already gone. It
+is otherwise as conservative as `sweep.go` argues it must be:
+
+| guard | why |
+|---|---|
+| current user only (`pgrep -u`) | never another account's server |
+| both `dolt` and `sql-server` in the cmdline | mirrors `isDoltServerCmdline` |
+| evidence from the `--config` path **or** cwd | the observed orphans carried the temp root only in `--config`; a SIGKILLed run carries it only in a deleted cwd |
+| match anchored at the **first** component under a temp root, with no `..` anywhere below it | `.../someones-project/beads-bd-tests-1/` is not a test root, and neither is the temp root itself — a bare `$TMPDIR` match is precisely the cross-suite killer `sweep.go` warns about. `--config` values are `realpath`-resolved first, since they are another process's argv, not a path we produced |
+| minimum age, default 4h | the longest suite is bounded by `verify-babysit`'s `VERIFY_TIMEOUT=100m`, so 4h is ~2.4x headroom over anything legitimately in flight |
+| `/proc` re-read immediately before each signal | the candidate list is a snapshot and a stubborn target costs 10s of sleeping; a PID that is no longer a dolt server is not signalled |
+| SIGTERM, 10s grace, then SIGKILL | every orphan seen so far exited in under 5s |
+
+**Two roots, not one.** `verify-next` exports `TMPDIR=$VERIFY_GOTMPDIR`
+(default `/var/tmp/verify-gotmp`) into the suite it runs, so the host's main
+*unattended* producer of this debris leaks nowhere near `/tmp`. The default
+root list is therefore `$TMPDIR` **plus** `$VERIFY_GOTMPDIR`; `REAP_TMPDIR`
+overrides it with a colon-separated list.
+
+**One floor, both halves.** Servers are reaped *before* the temp sweep, and the
+sweep runs under the same minimum age — `clean-test-tmp.sh`'s own default is 30
+minutes, 8x looser, so the floor is passed down explicitly via
+`BEADS_CLEAN_TEST_TMP_MIN_AGE` rather than inherited. It is also skipped
+outright whenever an in-flight run was detected. This is the part that is easy
+to get wrong: sparing a live run's *server* at 4h and then `rm -rf`-ing that
+same run's `HOME` and `testTempRoot` at 30 minutes would be worse than doing
+nothing, because the suite would fail in a way nobody could attribute. Both
+halves are the same promise or the promise is worthless.
+
+`--dry-run` previews **both** halves, listing the directories the sweep would
+delete. A dry run that only showed the PIDs would understate the blast radius
+to exactly the person trying to measure it.
+
+Log: `~/.local/state/mybd/reap-test-debris/reap.log`. Knobs:
+`REAP_MIN_AGE_SEC`, `REAP_TMPDIR`, `REAP_SKIP_TMP_SWEEP=1`,
+`REAP_SWEEP_SCRIPT`, and `REAP_PROC_SOURCE` (a US-delimited fixture the tests
+use to drive selection without spawning real servers).
+
+This is the **mop, not the fix**. Prevention — getting the `cmd/bd` suites under
+a parent-death guard — is mybd-avwqg part (a) and needs design, because the
+naive "set `BEADS_TEST_PDEATHSIG=1` for `cmd/bd`" broke the detached-server
+tests once already (see the review thread on gastownhall/beads#4592).
+
 ## bisect-next (red-base bisect lane)
 
 ```bash

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run reap-test-debris hourly
+
+[Timer]
+# Hourly is ample: the default 4h minimum age means nothing is ever eligible
+# sooner than four hours after it leaked, so a tighter cadence buys nothing.
+# The offset keeps it clear of verify-babysit (*:07/15) and pr-babysit.
+OnCalendar=*:41
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
