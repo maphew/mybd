@@ -4,8 +4,12 @@
 check coverage before claiming; worktree + branch + tests + PR per task; do not
 merge, do not decide product questions, do not touch history.
 
-**Runtime:** claude-opus-5-high, solo (no subagents, no workflows — the session
-harness disallowed both for this run, overriding the repo's standing opt-in).
+**Runtime:** claude-opus-5-high. The implementation phase ran solo — the session
+harness disallowed subagents and workflows, overriding the repo's standing
+opt-in. That changed mid-session when the owner made dual-vendor review a
+precondition for merging, which is a direct request for review agents; the
+review phase therefore used a Claude `reviewer` subagent and
+`scripts/codex-agent reviewer`. No workflows were used at any point.
 
 ---
 
@@ -21,13 +25,24 @@ session:
 | `bd ready` | 100 |
 | `bd ready --limit 0` | **383** (P1:74, P2:208, P3:98, P4:3) |
 
-The first 100 rows are the entire P1 band. So a session that surveys "the queue"
-from a bare `bd ready` sees only P1s — which in this repo are overwhelmingly
-owner-decision beads, upstream campaigns, and PR-shepherding tails — and
-concludes the queue holds no actionable autonomous work. That conclusion is
-wrong, and it is wrong in a specific direction: **the contained, self-contained
-code tasks live in the P2 band the cap hides.** Two of the three tasks completed
-below came from beyond row 100.
+`bd ready` sorts by priority ascending, then `created_at` ascending. With P1 at
+74, the whole P1 band fits inside the cap and the cut lands 26 rows into P2: the
+bare listing showed 74 P1s and the 26 oldest P2s, hiding **182 of 208 P2s and
+every P3 and P4 row.** So a session that surveys "the queue" from a bare
+`bd ready` sees a listing dominated by the P1 band — which in this repo is
+overwhelmingly owner-decision beads, upstream campaigns, and PR-shepherding
+tails — plus a thin, oldest-only slice of P2, and concludes the queue holds no
+actionable autonomous work. That conclusion is wrong in a specific direction:
+**the contained, self-contained code tasks are disproportionately in the part of
+P2 the cap hides.**
+
+Concretely, at the moment of the survey the bare listing ended at `mybd-guvk`,
+and neither `mybd-jgqy` nor `mybd-cof8` appeared in it — both were past the cut.
+`mybd-fbr7z` sat far deeper. Of the three tasks completed below, one came from
+well beyond the cap and two from just past it; the five dependency edges this
+session added later pulled `jgqy` and `cof8` up into the visible window, which is
+why re-running the numbers now shows them at rows 83–84. Marginal exclusion is
+still exclusion when there is no footer telling you a cut happened.
 
 I made exactly that mistake for the first half of this session, and I am at least
 the third to make it — `mybd-5vf6r` records two sessions on 07-26/27 reporting
@@ -46,8 +61,9 @@ the cold-start path and this needs to reach the next agent before it repeats.
 
 ### 1. Lane unit drift check — `mybd-fbr7z`
 
-Branch `feat/lane-unit-drift` (commit `12e5db19c`, pushed). **Not merged**, per
-the brief.
+Branch `feat/lane-unit-drift`, merged to `main` as `9f5dbf8a4`. Two commits:
+`12e5db19c` (the original) and `1f3636ad8` (the review fixes). Read the second —
+`12e5db19c` alone is the version with the false greens catalogued below.
 
 Every lane here (`verify-babysit`, `pr-babysit`, `solo-sweep`, `tri-daily`) is a
 tracked template in `scripts/systemd/` that a `scripts/install-*` script renders
@@ -56,7 +72,8 @@ does not change the machine, and the failure is invisible precisely because git
 says the feature exists — that is how the zero-token bisect lane sat unexecuted
 for days while AGENTS.md claimed `base-red` beads "often arrive pre-diagnosed".
 
-Added `scripts/check-lane-units` (+ `scripts/test-check-lane-units`, 11 cases),
+Added `scripts/check-lane-units` (+ `scripts/test-check-lane-units`, 20 cases
+after review; the first version's 11 were weaker than they looked),
 wired into `session-close-check` as warn-only check 5, documented in
 `scripts/README.md` and AGENTS.md.
 
@@ -64,11 +81,14 @@ Three design points worth keeping if this is revised:
 
 - `@ROOT@` is derived from the git common dir **exactly as the installers derive
   it**, so running from a worktree does not invent drift.
-- An installed unit that is a *superset* of the template is classified `local`,
-  not drift, because `install-solo-sweep` injects `Environment=` lines from its
-  arming flags. A permanently-red check gets ignored, which would reproduce the
-  original bug at one remove. (This is not hypothetical: the live machine has
-  `Environment=SOLO_SWEEP_MAX_RUNS=16` on `solo-sweep.service`.)
+- Installer-injected additions must not count as drift, or the check goes
+  permanently red and gets ignored — which would reproduce the original bug at
+  one remove. This is not hypothetical: the live machine carries
+  `Environment=SOLO_SWEEP_MAX_RUNS=16` and two siblings on `solo-sweep.service`.
+  **The exemption must stay narrow.** My first version exempted *any* superset,
+  which the review showed was a false green (see below); only
+  `Environment=SOLO_SWEEP_*`, the set `install-solo-sweep` actually writes, is
+  benign now. Do not widen it back to "extras are fine".
 - It never reinstalls. A deliberate hand-edit is legitimate; clobbering it
   silently would be the same class of bug pointing the other way.
 
@@ -106,16 +126,19 @@ hole: tidy without CI just resets the clock; CI without tidy lands red.
    is inherent to the replace directive and is why #4942 deliberately skipped it.
 2. `scripts/build-examples.sh` + a `build-examples` job in `pr.yml`. Discovers
    modules via `git ls-files` (no hardcoded list), sources `.buildflags` so
-   `check-build-tags.sh` stays green, builds into a scratch dir so it leaves no
-   untracked binaries, reports every failing module with its exact `go mod tidy`
-   command.
+   `check-build-tags.sh` stays green, and reports every failing module with its
+   exact `go mod tidy` command. It runs **`go vet ./...`**, not `go build` —
+   that changed during review, for the reason in the review section below.
 
 **One thing deliberately left to the maintainers, and said so in the PR body:**
-`build-examples` is *not* in `ci-gate`'s `CI_GATE_REQUIRED`. The replace directive
-means any root `go.mod` change not mirrored into examples fails the job, so making
-it blocking adds a "tidy the examples too" step to every dependency bump. That is
-contributor-friction policy, not the adding PR's call. `pr.yml` carries a comment
-with the exact promotion steps.
+`build-examples` is `continue-on-error: true` and *not* in `ci-gate`'s
+`CI_GATE_REQUIRED`. The replace directive means any root `go.mod` change not
+mirrored into examples fails the job, so making it blocking adds a "tidy the
+examples too" step to every dependency bump. That is contributor-friction
+policy, not the adding PR's call. `pr.yml` carries a comment with the exact
+promotion steps. (The `continue-on-error` half also changed during review:
+omitting a job from `ci-gate` is *not* by itself enough to make it non-blocking
+in this repo — see below.)
 
 Negative test performed: reverting `library-usage/go.mod` to pre-tidy makes the
 script exit 1 and name that module while the other still reports `ok`.
@@ -123,7 +146,12 @@ script exit 1 and name that module while the other still reports `ok`.
 ### 3. Queue hygiene — five stubs dep-gated
 
 Five ready stubs recorded their blocker **in prose only**, so they kept surfacing
-as independently actionable while the fix was mid-flight. Prose is invisible to
+as independently actionable while the fix was mid-flight. Credit where due: four
+of the five already carried a `[solo-sweep 2026-07-30]` note proposing this exact
+edge — `mybd-uh8q`'s says *"Suggested owner action: add a dep edge from this stub
+to mybd-dcdfw so bd ready stops surfacing it independently."* This session
+verified each PR's live state and executed the proposals; it did not originate
+them. That lane is doing its job, and consuming its output is the point of it. Prose is invisible to
 `bd ready`; AGENTS.md's own cold-start prompt 3 asks sessions to encode it as an
 edge. PR state was verified live via `gh` at edge-creation time (all OPEN,
 non-draft, unmerged):
@@ -147,15 +175,16 @@ the work to us. All five left `bd ready` and nothing was closed.
 Recording these so the next session does not re-derive them.
 
 **`mybd-hyhd0`** (pr-babysit polls blocked absent-check lanes forever) — **the
-primary symptom is already fixed.** All three cited beads merged and closed hours
-after the bead was filed (`mybd-o21it` → #4535 at 07-28T05:28Z, `mybd-06h1a` →
+primary symptom is already fixed.** All three cited beads merged and closed within
+two hours of the bead being filed (`mybd-o21it` → #4535 at 07-28T05:28Z, `mybd-06h1a` →
 #4751, `mybd-i6oj` → #4933), and the log spam was fixed by `126851c05`
 (`explain_no_checks` + per-head `pr_babysit_nochecks` marker). The bead's
 diagnosis also mis-models the design: `rearm_sweep()` is *supposed* to probe
 `merge-blocked` beads — that probe is the only route back into automation — and
-`checks-unavailable-persistent` shares the `*)` branch with `checks-persistent`,
-so the claim that failed-checks blocks "stop polling correctly" does not hold in
-current source. Residual: `REARM_LIMIT` budgets re-arms, not probes, so a
+`checks-unavailable-persistent` shares an explicit alternation label with
+`checks-persistent` at `scripts/pr-babysit:141` (the bare `*)` next to it is the
+skip branch), so the claim that failed-checks blocks "stop polling correctly"
+does not hold in current source. Residual: `REARM_LIMIT` budgets re-arms, not probes, so a
 permanently blocked PR is probed forever; current cost is zero (one
 `merge-blocked` bead, `deferred`, which the sweep skips). Recommended
 rewrite-or-close; did not close it myself. The one live item riding along under
@@ -175,7 +204,9 @@ safe half and the one I would recommend — but it is **unverifiable on this hos
 `nix` and `nix-build` are both absent, so I could not run the script once before
 shipping a nix CI job to a repo whose nix gate has already been red once.
 
-**`mybd-e1b3f`** (proxied lifecycle race) — covered by unmerged work. The fix
+**`mybd-e1b3f`** (proxied lifecycle race) — left alone: adjacent unmerged work
+is already in this area, though whether it fully covers the bead is a judgment
+call I did not make. The fix
 direction (publish an identifying record before the long startup steps) is
 already the subject of `feat/psxg5-listener-policy` ("epoch-fenced startup",
 `d83434010`, pushed to origin, not on `upstream/main`). Left alone.
@@ -195,20 +226,40 @@ semantics/precedence contract before implementation.
 
 ## What I noticed that isn't on any list
 
-**The `bd ready` cap is not just an ergonomics wart; it has been shaping triage
-verdicts.** Two memories in this repo —
-`oldest-band-is-triage-residue` and `oldest-band-of-bd-ready-is-triage-residue` —
-record independent sessions concluding that the ready queue is triage residue
-rather than startable work. Both were written by sessions working from `bd ready`.
-If those sweeps also saw only the P1 band, their conclusion was drawn from 26% of
-the queue, selected for being the part most likely to be owner-gated. I am not
-asserting they are wrong; I am flagging that the sampling frame was never stated,
-and that this session found startable work at rows 100+ after reaching the same
-"it's all blocked" conclusion from rows 0–99. Worth a re-check of those verdicts
-with `--limit 0` before they harden into policy.
+**The cap has a blind spot that oldest-first sweeps cannot see past, and it is
+not the one I first wrote down.**
 
-Second: those two memories appear to be near-duplicates of each other. Worth a
-merge pass.
+My first draft of this section claimed the memories `oldest-band-is-triage-residue`
+and `oldest-band-of-bd-ready-is-triage-residue` concluded "the ready queue is
+triage residue", drawn from a sampling frame that "was never stated". A
+fact-check pass killed both halves, and they deserve to be recorded as killed
+rather than quietly dropped, because the shape of the error is the interesting
+part. Both memories are explicitly scoped to the **oldest band**, not the queue;
+one says verbatim *"Do not read that as 'the queue is dry'"* and then names three
+merged-quality PRs produced from that band. And both **do** state their frame —
+*"Of ~15 non-human-labelled stubs older than 2026-07-17"* and *"Of ~20 stubs from
+2026-05/06/07-11 examined in age order"*. I had paired "I am not asserting they
+are wrong" with a factual assertion about them that was wrong, which is a hedge
+functioning as a shield. Worth naming so the next reader distrusts that move.
+
+The real version of the worry is better, and it survives:
+
+Within each priority band `bd ready` sorts oldest-first, so the cap hides the
+*newest* rows of each band — the last thing an age-ordered sweep would want. But
+it also truncates **whole bands**. The first P3 row sits at position 264 of 383,
+so the entire P3 band is invisible to a bare `bd ready` — and P3 contains
+`mybd-d8q0` (2026-07-05), `mybd-8chd.8` and `mybd-63ns` (07-06), and four more
+from 07-11. Every one of those is **older** than the 2026-07-17 cutoff one of
+those memories used to define "the oldest band". An oldest-first sweep run off an
+unfootered `bd ready` could not have seen them, and would have had no way to know
+they existed. That is a concrete, checkable gap in those sweeps' coverage, and it
+does not require the memories to be wrong about what they *did* look at.
+
+Those two memories overlap heavily in headline and taxonomy, but they are not
+near-duplicates: the second carries specific tells for finding real work in that
+band, plus bead and PR evidence, and its posture partly conflicts with the
+first's "expect near-zero yield". Consolidate carefully or not at all — a naive
+merge would lose the tells.
 
 ---
 
@@ -221,7 +272,8 @@ by a Claude reviewer and `scripts/codex-agent reviewer` (GPT-5.6-sol) on the
 same diff.
 
 It was not ceremony. **Six of the findings were false greens in code I had
-already declared verified** — the single failure direction neither of these
+already declared verified** (the fix commit folds two of them into one item, so
+it reads as five there) — the single failure direction neither of these
 tools may have.
 
 **Lane-unit check (`feat/lane-unit-drift`).** Both vendors independently hit the
@@ -276,7 +328,11 @@ PR description:
    correction posted as a comment rather than made silently.
 3. Codex alone caught that `mapfile` (bash 4) and `xargs -r` (GNU) meant the
    script could not run on stock macOS at all — pointed, given `mybd-5eacq` in
-   this same sweep is about macOS-only breakage being undetectable.
+   this same sweep is about macOS-only breakage being undetectable. The same
+   pass also guarded an unchecked `source ./.buildflags` (under `set -uo
+   pipefail` a failure continued with `GOFLAGS` unset, type-checking the ICU
+   path while `check-build-tags.sh` still passed, since it only greps for the
+   literal string) and made "found zero modules" an error rather than a green.
 
 The vendors overlapped on exactly one finding and were disjoint on the rest,
 which is the pattern the `cross-vendor-review-pairing` memory already records.
@@ -288,7 +344,19 @@ and `mybd-xqpl4` (the review-needed self-filter).
 
 ## Landing
 
-Both mybd branches merged to `main` after the review above, per the owner
-ruling. `maphew:fix/example-extension-go-tidy` remains open as
-gastownhall/beads#5229 — PR-only repo, ordinary review, deliberately not handed
-to the `pr-babysit` merge lane and carrying no `merge-when-green` bead.
+`feat/lane-unit-drift` merged to `main` as `9f5dbf8a4` after the review above,
+per the owner ruling, and `maphew/mybd#26` auto-closed as merged. This report's
+own branch merges immediately after it — that ordering is why the sentence you
+are reading names one merge commit and not two.
+
+`maphew:fix/example-extension-go-tidy` remains open as gastownhall/beads#5229 —
+PR-only repo, ordinary review, deliberately not handed to the `pr-babysit` merge
+lane and carrying no `merge-when-green` bead.
+
+One process note worth keeping, because it nearly went wrong here: the first
+draft of this section said "both mybd branches merged to `main`" while neither
+was merged and the *reviewed* head of the lane branch was not even pushed. A
+reviewer caught it. A report that states a landing prospectively is worse than
+one that omits it, because the next session's first move is to trust it —
+`scripts/session-close-check` and `bd ready` both key off what is actually
+reachable, and neither would have contradicted the sentence.
