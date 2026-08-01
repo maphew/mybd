@@ -224,6 +224,45 @@ green_base_note() {
   GREEN_BASE_KEYS+="$repo@${branch:-unknown}"$'\n'
 }
 
+# The stop-the-line exception (mybd-01yzj).  A red base holds every lane behind
+# it, which is right for every ordinary PR — merging onto a red base hides new
+# failures.  For the PR that IS the base fix it is circular: the base cannot go
+# green until this PR merges, and the patrol will not merge it until the base is
+# green, so the one PR the project most wants landed is the one the automation
+# categorically cannot land.
+#
+# The exception is deliberately narrow.  It requires all of: an explicit
+# pr_babysit_base_fix key written by `pr-handoff --base-fix` (a reviewed, human
+# or agent act — the patrol never sets it), that key naming the exact base
+# preflight reports red, and the red base being the SOLE preflight objection.
+# The PR's own checks were already required green to reach preflight at all.
+# Anything else — conflicts, draft, changes-requested, a transient merge state
+# alongside the red base — still holds the lane. On a green base the flag does
+# nothing, so it cannot become a standing merge licence.
+BASE_FIX_KEY=""
+base_fix_authorized() {
+  local bead="$1" metadata="$2" repo="$3" blocks="$4" claim branch other
+  BASE_FIX_KEY=""
+  claim="$(jq -r '.pr_babysit_base_fix // empty' <<<"$metadata")"
+  [[ -n "$claim" ]] || return 1
+  other="$(grep -vE "$RED_BASE_BLOCK_RE" <<<"$blocks" || true)"
+  if [[ -n "$other" ]]; then
+    log "$bead: base-fix flag set but preflight objects to more than the red base; exception withheld"
+    return 1
+  fi
+  branch="$(sed -nE 's/^\[block\] Base branch (.+) CI is RED(:.*)?$/\1/p' <<<"$blocks" | head -n1)"
+  if [[ -z "$branch" ]]; then
+    log "$bead: base-fix flag set but the red base could not be identified; exception withheld"
+    return 1
+  fi
+  if [[ "$claim" != "$repo@$branch" ]]; then
+    log "$bead: base-fix flag names $claim but the red base is $repo@$branch; exception withheld"
+    return 1
+  fi
+  BASE_FIX_KEY="$claim"
+  return 0
+}
+
 # Standing base-health watch: read each watched base's CI directly, with no PR
 # in the picture.  Deliberately mirrors pr-preflight's base-health verdict
 # (newest DECISIVE completed run per workflow) so the two never disagree about
@@ -402,7 +441,7 @@ while read -r item; do
     continue
   fi
 
-  settle_attempted=0
+  settle_attempted=0; base_fix_bypass=0
   while :; do
     preflight_out="$(PR_PREFLIGHT_BLOCK_RED_BASE=1 "$PREFLIGHT" "$pr" --repo "$repo" 2>&1)"; preflight_status=$?
     [[ -n "$preflight_out" ]] && sed "s|^|$(date -u +%FT%TZ) [preflight $repo#$pr] |" <<<"$preflight_out" >>"$LOG"
@@ -425,7 +464,17 @@ while read -r item; do
       # their own schedule and must not convert waiting tails into blocks.
       # It is escalated globally instead — see red_base_escalate.
       red_base_note "$repo" "$blocks"
-      transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
+      if base_fix_authorized "$bead" "$metadata" "$repo" "$blocks"; then
+        # The one case where merging onto a red base is the correct move: this
+        # PR is the declared remedy for that base.  Loud on purpose — it is the
+        # only path in the patrol that merges without a green base.
+        log "$bead: BASE-FIX exception — $repo#$pr merges onto RED base $BASE_FIX_KEY on its own green checks"
+        bd update "$bead" --append-notes "[pr-babysit $(date -u +%FT%TZ)] Merging onto RED base $BASE_FIX_KEY under the base-fix exception: this PR is the declared remedy for that base, its own checks are green, and the red base was preflight's only objection." >/dev/null 2>&1 \
+          || log "$bead: base-fix note append failed"
+        base_fix_bypass=1
+      else
+        transition "$bead" "$metadata" "$notes" "preflight-red-base:$head" "Base branch CI is red; retained under patrol." || log "$bead: transition failed"
+      fi
     elif [[ -n "$blocks" ]]; then
       # Transient-only blocks (merge state UNKNOWN/UNSTABLE, checks still
       # pending): GitHub computes these lazily, so wait a bounded number of
@@ -441,16 +490,20 @@ while read -r item; do
     else
       transition "$bead" "$metadata" "$notes" "preflight-unavailable:$head" "Preflight failed without a recognizable block; retained under patrol." || log "$bead: transition failed"
     fi
-    continue
+    (( base_fix_bypass )) || continue
   fi
-  if ! grep -qE '^\[pass\] Base branch .+ CI is green( \(|$)' <<<"$preflight_out"; then
-    transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
-    continue
+  if (( base_fix_bypass == 0 )); then
+    if ! grep -qE '^\[pass\] Base branch .+ CI is green( \(|$)' <<<"$preflight_out"; then
+      transition "$bead" "$metadata" "$notes" "preflight-base-unknown:$head" "Preflight did not explicitly authorize a green base; retained under patrol." || log "$bead: transition failed"
+      continue
+    fi
+    # A positively observed green base is the only thing that clears a standing
+    # red-base escalation for that same base.  "No lanes reported red" is absence
+    # of evidence — an empty queue must not be read as recovery.  A base-fix
+    # merge deliberately skips this: the base is red, and saying otherwise here
+    # would withdraw the very escalation this PR is trying to resolve.
+    green_base_note "$repo" "$preflight_out"
   fi
-  # A positively observed green base is the only thing that clears a standing
-  # red-base escalation for that same base.  "No lanes reported red" is absence
-  # of evidence — an empty queue must not be read as recovery.
-  green_base_note "$repo" "$preflight_out"
   # A fully healthy preflight resets the transient budget: the counter tracks
   # consecutive transient sightings, not lifetime ones.
   if [[ "$(jq -r '.pr_babysit_transient // empty' <<<"$metadata")" == "$head":* ]]; then

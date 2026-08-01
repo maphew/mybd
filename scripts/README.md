@@ -391,7 +391,7 @@ to the lane.
 ## pr-babysit / pr-handoff (merge-tail patrol)
 
 ```bash
-scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]
+scripts/pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>] [--base-fix]
 scripts/pr-close-handoff <pr-number> [--repo owner/repo] --bead <id> --reason <text> [--after <hours, default 72>]
 scripts/pr-babysit
 scripts/install-pr-babysit
@@ -411,6 +411,23 @@ retries transient merge states for a bounded number of passes, and merges
 only against a freshly re-read, matching head SHA. Anything it can't trust
 (unreadable checks, a genuine policy block, an authorization mismatch) parks
 the bead `merge-blocked` and unclaims it for `bd ready`.
+
+`--base-fix` is the one exception to base-health gating, and it exists because
+the rule deadlocks on exactly one PR: the fix for a red base cannot merge until
+the base is green, and the base cannot go green until it merges (bead
+mybd-01yzj — found while landing gastownhall/beads#5204 after a 13h red main).
+The flag records `pr_babysit_base_fix=<repo>@<branch>`, naming the base this PR
+remedies, and the patrol then merges on the PR's **own** green checks while
+that base is red. The exception is narrow by construction: the recorded key
+must match the base preflight reports red, that red base must be preflight's
+*sole* objection (a conflict, draft state, changes-requested, or even a
+transient merge state alongside it still holds the lane), and the PR's own
+checks were already required green to reach preflight at all. On a green base
+the flag does nothing, so it cannot decay into a standing merge licence, and
+the patrol never sets the key itself — writing it is a reviewed act at handoff.
+A base-fix merge does not record a green sighting: the base is still red, and
+claiming otherwise would withdraw the very `base-red` escalation the PR is
+trying to resolve.
 
 **close-when-quiet** — for a decline disposition an agent wants to offer
 rather than execute immediately. The agent posts the disposition comment

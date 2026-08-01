@@ -364,6 +364,53 @@ run_patrol; run_patrol; run_patrol
 grep -q 'dropping unparseable state record' "$CASE/state/pr-babysit/patrol.log" || fail "corrupt state record was silently discarded"
 unset PR_BABYSIT_RED_BASE_LIMIT
 
+# --- base-fix exception (mybd-01yzj) ---------------------------------------
+# The PR that fixes a red base is the one PR the ordinary rule cannot land: the
+# base cannot go green until it merges, and it will not merge until the base is
+# green.  pr-handoff --base-fix names the base, and the patrol then merges on
+# the PR's own green checks — but only when the red base is the sole objection.
+redonly='[block] Base branch main CI is RED: Main failed at 2026-07-31T09:00:00Z'
+basefix_policy='{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_base_fix":"gastownhall/beads@main"}'
+
+reset base-fix-merges "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT="$redonly"
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "base-fix PR was not merged onto its red base"
+grep -q 'BASE-FIX exception' "$CASE/state/pr-babysit/patrol.log" || fail "base-fix merge was not logged loudly"
+
+# The exception covers the red base and nothing else: any other objection holds.
+reset base-fix-other-block "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 \
+  FAKE_PREFLIGHT_OUTPUT="$redonly"$'\n''[block] GitHub reports merge conflicts.'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix merged past a genuine block"
+grep -q -- '--status open' "$FAKE_BD_LOG" || fail "genuine block alongside a red base was not escalated"
+
+# A transient merge state alongside the red base is also not covered: merging a
+# PR whose mergeability GitHub has not finished computing is exactly the risk.
+reset base-fix-transient "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 \
+  FAKE_PREFLIGHT_OUTPUT="$redonly"$'\n''[block] Merge state is UNKNOWN.'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix merged with a transient merge state"
+grep -q 'exception withheld' "$CASE/state/pr-babysit/patrol.log" || fail "withheld base-fix exception was silent"
+
+# The flag is scoped to one base: it must not license a merge onto a different
+# red base (e.g. the PR was retargeted after handoff).
+reset base-fix-wrong-base '{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_base_fix":"gastownhall/beads@release-1.2"}'
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]' FAKE_PREFLIGHT_EXIT=1 FAKE_PREFLIGHT_OUTPUT="$redonly"
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "base-fix flag licensed a merge onto a different base"
+grep -q 'names gastownhall/beads@release-1.2 but the red base is' "$CASE/state/pr-babysit/patrol.log" || fail "base mismatch was not explained"
+
+# On a green base the flag is inert: the ordinary path runs, including the green
+# sighting that withdraws a standing escalation.
+reset base-fix-green-inert "$basefix_policy"
+export FAKE_CHECKS='[{"name":"unit","bucket":"pass","link":""}]'
+run_patrol
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "base-fix flag disturbed an ordinary green merge"
+grep -q 'BASE-FIX exception' "$CASE/state/pr-babysit/patrol.log" && fail "base-fix exception fired on a green base"
+
 # --- standing base watch (mybd-sopqb) -------------------------------------
 # The whole point: a red base with ZERO armed lanes still escalates.  Before
 # this lane the detector was fed only by parked lanes, so it went silent the

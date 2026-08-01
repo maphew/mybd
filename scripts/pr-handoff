@@ -8,9 +8,10 @@ METHOD="squash"
 FLAKE_RERUN="allowed"
 PR=""
 BEAD_OVERRIDE=""
+BASE_FIX=0
 
 usage() {
-  echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>]" >&2
+  echo "usage: pr-handoff <pr-number> [--repo owner/repo] [--method squash|merge|rebase] [--no-flake-rerun] [--bead <id>] [--base-fix]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -25,6 +26,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { usage; exit 2; }
       BEAD_OVERRIDE="$2"; shift 2 ;;
     --no-flake-rerun) FLAKE_RERUN="no"; shift ;;
+    --base-fix) BASE_FIX=1; shift ;;
     -*) usage; exit 2 ;;
     *)
       [[ -z "$PR" ]] || { usage; exit 2; }
@@ -38,9 +40,23 @@ done
 [[ -z "$BEAD_OVERRIDE" || "$BEAD_OVERRIDE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
 
 cd "$ROOT" || exit 1
-pr_json="$(gh pr view "$PR" --repo "$REPO" --json title,state 2>/dev/null)" || { echo "cannot read PR" >&2; exit 1; }
+pr_json="$(gh pr view "$PR" --repo "$REPO" --json title,state,baseRefName 2>/dev/null)" || { echo "cannot read PR" >&2; exit 1; }
 title="$(jq -er '.title | strings | select(length > 0)' <<<"$pr_json")" || { echo "malformed PR data" >&2; exit 1; }
 [[ "$(jq -r '.state // empty' <<<"$pr_json")" == "OPEN" ]] || { echo "PR is not OPEN" >&2; exit 1; }
+
+# --base-fix is the stop-the-line exception (bead mybd-01yzj).  Ordinarily a red
+# base holds every lane behind it, which is right — merging onto a red base
+# hides new failures.  For the PR that IS the base fix it deadlocks: the base
+# cannot go green until this PR merges, and the patrol will not merge it until
+# the base is green.  The flag names the exact base this PR remedies; the patrol
+# then merges on the PR's OWN green checks while that base is red, and only when
+# the red base is the sole preflight objection.  It is inert on a green base and
+# inert if the PR's base changes, so it cannot become a standing merge licence.
+BASE_FIX_KEY=""
+if (( BASE_FIX )); then
+  base_ref="$(jq -er '.baseRefName | strings | select(length > 0)' <<<"$pr_json")" || { echo "cannot read PR base branch" >&2; exit 1; }
+  BASE_FIX_KEY="$REPO@$base_ref"
+fi
 
 canonical="gh:$REPO#$PR"
 legacy="gh-pr-$PR"
@@ -79,11 +95,16 @@ bd update "$bead" --claim --add-label merge-when-green --external-ref "$canonica
   --set-metadata "pr_babysit_pr=$PR" \
   --set-metadata "pr_babysit_method=$METHOD" \
   --set-metadata "pr_babysit_flake_rerun=$FLAKE_RERUN" \
+  --set-metadata "pr_babysit_base_fix=$BASE_FIX_KEY" \
   --set-metadata pr_babysit_last_transition= \
-  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN — patrol owns the merge; sessions hand off here." \
+  --append-notes "[pr-handoff $(date -u +%FT%TZ)] repo=$REPO pr=$PR method=$METHOD flake_rerun=$FLAKE_RERUN${BASE_FIX_KEY:+ base_fix=$BASE_FIX_KEY} — patrol owns the merge; sessions hand off here." \
   >/dev/null
 
 echo "handed off: $REPO#$PR -> bead $bead"
+if [[ -n "$BASE_FIX_KEY" ]]; then
+  echo "BASE-FIX: the patrol may merge this PR while $BASE_FIX_KEY is RED, on this PR's own green checks."
+  echo "          Every other preflight block still holds, and the exception is inert once $BASE_FIX_KEY is green."
+fi
 if ! systemctl --user is-active --quiet pr-babysit.timer 2>/dev/null; then
   echo "WARNING: pr-babysit.timer is not active. Enable with: scripts/install-pr-babysit" >&2
 fi
