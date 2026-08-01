@@ -458,14 +458,29 @@ The last check before a merge asks whether the green being merged on was
 earned against a base that still exists. GitHub runs `pull_request` checks
 against a merge ref built when the run is **created**, so "the branch is behind"
 is *not* by itself a stale verdict — a run created after the base moved tested
-today's base, `behind_by` or not. Stale means the newest check *started* before
-the base's tip commit. When the branch is behind *and* its newest check started
-before the base tip, the patrol runs `gh pr update-branch` and declines to merge
-on that pass; the new head's checks decide on a later one.
+today's base, `behind_by` or not. Stale means a contributing check *started*
+before the base last moved. When the branch is behind *and* its oldest check
+started before the last base update, the patrol runs `gh pr update-branch` and
+declines to merge on that pass; the new head's checks decide on a later one.
 
-The signal is `startedAt` rather than `completedAt` on purpose: a run that began
-before the base moved and finished after it still tested the old merge ref, and
-reading completion time would wave exactly that case through.
+Three signal choices, the last two from cross-vendor review of the first cut:
+
+- **`startedAt`, not `completedAt`.** A run that began before the base moved and
+  finished after it still tested the old merge ref; completion time would wave
+  exactly that case through.
+- **The oldest start across the rollup, not the newest.** One late entry — a
+  single rerun job, a check added afterwards — must not certify the whole
+  verdict, because the jobs that did not rerun still hold the old result.
+- **The base ref's activity, not the tip commit's date.** A pre-existing commit
+  fast-forwarded or pushed directly onto the base carries its original committer
+  date, so a check that ran between that date and the push would read as fresh
+  against a base it never saw. `GET /repos/{o}/{r}/activity?ref=…` records the
+  ref update itself. If that endpoint is unavailable the guard falls back to the
+  committer date and logs it — a narrow hole beats losing the guard entirely.
+
+Accepted residual (**mybd-oa40o**): `startedAt` is *job* start and the merge ref
+is built at *run creation*, so a long queue delay still reads slightly
+optimistic. Seconds normally; hours for a fork run parked in `action_required`.
 
 Nothing else catches this. Upstream branch protection does not require
 up-to-date branches — `mergeStateStatus` never reports `BEHIND` (measured
@@ -486,18 +501,23 @@ Bounds, because this lane pushes a merge commit into a PR branch:
   GitHub (conflict, or no write access to a fork branch). The attempt is
   reserved *before* the call, so a crash spends it rather than risking a push
   every pass.
-- **Fails closed.** An unreadable comparison, base tip, or check timestamp
-  retains the bead under patrol rather than merging — could-not-ask is not
-  permission.
+- **Fails closed, but not forever.** An unreadable comparison, base activity, or
+  check timestamp retains the bead under patrol rather than merging —
+  could-not-ask is not permission. After 10 consecutive unreadable passes it
+  escalates to `merge-blocked` (`freshness-unavailable-persistent`), matching
+  the unreadable-checks budget: a rollup that carries no timestamps at all never
+  recovers on its own, and a retained-forever lane is claimed and therefore
+  invisible to `bd ready`. A readable pass clears the counter.
 
-Both stale-green blocks are **durable**: `stale-green-persistent` and
-`stale-green-update-failed` are deliberately absent from the re-arm sweep's
-class whitelist, because both mean a human has to choose (rebase by hand,
-resolve the conflict, ask the contributor, or merge anyway). The re-arm sweep
-does clear `pr_babysit_freshen` alongside the other retry counters when it
-restores a lane blocked for some *other* reason; an agent re-arming a
-stale-green block by hand should clear it too, or the lane re-blocks on its
-first pass.
+All three stale-green blocks are **durable**: `stale-green-persistent`,
+`stale-green-update-failed` and `freshness-unavailable-persistent` are
+deliberately absent from the re-arm sweep's class whitelist, because each means
+a human has to choose (rebase by hand, resolve the conflict, ask the
+contributor, fix whatever makes the freshness unreadable, or merge anyway). The
+re-arm sweep does clear `pr_babysit_freshen` and `pr_babysit_freshun` alongside
+the other retry counters when it restores a lane blocked for some *other*
+reason; an agent re-arming a stale-green block by hand should clear them too, or
+the lane re-blocks on its first pass.
 
 Knobs: `PR_BABYSIT_FRESHEN=0` disables the guard entirely (restoring the
 pre-2026-08-01 behaviour); `PR_BABYSIT_FRESHEN_LIMIT` changes the budget.
