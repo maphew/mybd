@@ -159,7 +159,23 @@ lock has sat untracked in `git status` since 2026-07-31.
 prepared DML. Broadens the comment and adds Check E to
 `check-migration-hygiene.sh`.
 
-One correction to the implementation before commit: seven shipped migrations
+Three rounds of cross-vendor (Codex) review, each finding something the last did
+not, and all three were real:
+
+1. The check **rejected the very pattern its own failure message recommends** —
+   0059's `INSERT INTO __bd_0059_*` stand-in writes would have been flagged.
+2. It scanned `.down.sql`, which can never meet this bug (only `*.up.sql` is
+   embedded into the bundle).
+3. The resulting stand-in exemption then checked only the *first* DML target, so
+   `SET @sql = IF(cond, '<stand-in write>', '<real write>')` was waved through
+   on the strength of the branch that was not the problem. Reproduced before
+   fixing.
+
+Round 3 is the one worth remembering: it is a false negative *created by* the
+fix for round 1, in a shape reachable by combining the recommended pattern with
+an ordinary one. A single review pass would have shipped it.
+
+One further correction, mine rather than the reviewer's: seven shipped migrations
 already use the flagged idiom. That is not a latent bug and the docs now say why
 — a shipped migration is frozen, and on the only path the check concerns (the
 fresh-schema bundle, i.e. an empty database) a data backfill is a no-op whether
