@@ -212,12 +212,83 @@ merge pass.
 
 ---
 
-## Branches awaiting landing
+## Dual-vendor review — and what it caught in my own work
 
-The brief said do not merge, so three branches are pushed and unlanded. Tracked
-by an open bead so they are reachable from `bd ready`:
+Owner ruling mid-session: **mybd merges to `main` once dual-vendor review has
+happened, and that is the default course; `gastownhall/beads` is PR-only and
+also requires local dual-vendor review.** Both code branches were then reviewed
+by a Claude reviewer and `scripts/codex-agent reviewer` (GPT-5.6-sol) on the
+same diff.
 
-- `feat/lane-unit-drift` (mybd) — the lane-unit drift check.
-- `report/ready-queue-sweep-2026-08-01` (mybd) — this report.
-- `maphew:fix/example-extension-go-tidy` (bd-main) — PR #5229, needs review, not
-  the patrol.
+It was not ceremony. **Six of the findings were false greens in code I had
+already declared verified** — the single failure direction neither of these
+tools may have.
+
+**Lane-unit check (`feat/lane-unit-drift`).** Both vendors independently hit the
+same first defect:
+
+1. Each unit was packed into one `|`-delimited record and unpacked with `read`,
+   which stops at the first newline. A unit with two missing directives reported
+   one, and the extras list was emitted as `[]` while an extra existed. My test
+   suite passed on this because every fixture had exactly one missing line.
+2. Any superset counted as `local`, exit 0 — but a directive *deleted* from the
+   template still runs on the machine, and an added `ExecStart=` in a
+   `Type=oneshot` runs in addition. A hand-edit adding `ExecStart=/bin/false`
+   reported clean.
+3. A half-installed lane reported clean: a service whose timer is missing never
+   fires, yet the timer was `absent` and the service `ok`.
+4. No `errexit` and an unguarded `mktemp -d`: on failure every `diff` compared
+   two nonexistent files and the tool printed *"installed units match their
+   templates"* against a genuinely drifted machine.
+5. Hand-rolled JSON escaping handled only `\` and `"`; a tab — legal leading
+   whitespace, legal inside `Environment=` — produced output `jq` refused to
+   parse.
+6. A `|` inside a directive (`ExecStart=/bin/sh -c 'journalctl | grep foo'`,
+   stock systemd) split across missing/extra, inventing a hand-edit that never
+   happened.
+
+The deeper problem was the test suite: **it passed on broken code twice.** The
+Claude reviewer demonstrated it by mutation — deleting the `@ROOT@`
+stable-checkout derivation outright, and replacing `json_escape` with the
+identity function, both left the suite green. Rewritten to 20 cases; the fixture
+now carries a quote, a backslash, a literal tab and a piped `ExecStart`, and the
+`@ROOT@` derivation is exercised from a real linked worktree. I re-ran the
+reviewers' mutations plus one of my own against the new suite; each now fails.
+
+**Examples PR (#5229).** Two correctness bugs, one of which contradicted my own
+PR description:
+
+1. `go build -o <dir>/ ./...` compiles only the *main* packages and silently
+   skips libraries. Verified in an isolated module: `go build -o dir/ ./...`
+   exits 0 where `go build ./...` and `go vet ./...` both exit 1. Switched to
+   `go vet ./...`, which also type-checks test files — and
+   `examples/library-usage/main_test.go` exercises a lot of live API whose
+   imports `go mod tidy` counts, so the committed go.mod had a portion the
+   check never touched.
+2. **"Not in `ci-gate`" is not "non-blocking".** My PR body claimed leaving the
+   job out of the required list kept it friction-free. False for our own
+   automation: `pr-preflight.sh` blocks on any FAILURE in the raw
+   `statusCheckRollup`, and the `pr-babysit` patrol requires every rollup entry
+   SUCCESS/NEUTRAL/SKIPPED — neither consults `ci-gate`. The state I proposed
+   was the one posture that stalls the merge lane repo-wide while advertising
+   itself as optional. Now `continue-on-error: true`; promotion to a real gate
+   is documented and left to the maintainers. PR description corrected and the
+   correction posted as a comment rather than made silently.
+3. Codex alone caught that `mapfile` (bash 4) and `xargs -r` (GNU) meant the
+   script could not run on stock macOS at all — pointed, given `mybd-5eacq` in
+   this same sweep is about macOS-only breakage being undetectable.
+
+The vendors overlapped on exactly one finding and were disjoint on the rest,
+which is the pattern the `cross-vendor-review-pairing` memory already records.
+
+Two follow-up beads came out of the review: `mybd-hb6pk` (the extension example
+is runtime-broken — `sql.Open("sqlite3")` with no driver registered anywhere in
+beads; the new CI job will certify it "buildable" forever, so green ≠ working)
+and `mybd-xqpl4` (the review-needed self-filter).
+
+## Landing
+
+Both mybd branches merged to `main` after the review above, per the owner
+ruling. `maphew:fix/example-extension-go-tidy` remains open as
+gastownhall/beads#5229 — PR-only repo, ordinary review, deliberately not handed
+to the `pr-babysit` merge lane and carrying no `merge-when-green` bead.
