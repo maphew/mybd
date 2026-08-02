@@ -568,6 +568,80 @@ run_patrol
 [[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 1 ]] || fail "PR_BABYSIT_FRESHEN=0 did not disable the guard"
 unset PR_BABYSIT_FRESHEN
 
+# Serialized freshens (mybd-j1wcr): one lane per base owns the update-branch
+# slot, durably across passes.  On a fast-moving base, freshening every stale
+# lane each pass burned update-branch pushes and CI cycles without converging
+# any lane — each patrol merge re-staled the others' brand-new runs — and
+# parked three lanes as merge-blocked out of pure congestion on 2026-08-01.
+# Non-owner stale lanes defer: no budget spent, no park, still armed.
+reset freshen-serialized "$policy"
+jq --argjson metadata "$policy" \
+  '. + [{id:"mybd-test2", status:"in_progress", assignee:"maphew", labels:["merge-when-green"], external_ref:"gh:gastownhall/beads#124", notes:"", metadata:$metadata}]' \
+  "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "serialized freshen ran update-branch more than once in one pass"
+[[ "$(count 'pr merge' "$FAKE_GH_LOG")" == 0 ]] || fail "a stale green merged during the serialized pass"
+grep -q 'stale-green-deferred:' "$FAKE_BD_LOG" || fail "second stale lane was not deferred"
+[[ "$(jq -r '.[] | select(.id == "mybd-test").metadata.pr_babysit_freshen' "$FAKE_QUEUE")" == 1 ]] || fail "slot-holding lane did not spend its freshen budget"
+[[ "$(jq -r '.[] | select(.id == "mybd-test2") | .metadata.pr_babysit_freshen // "unspent"' "$FAKE_QUEUE")" == "unspent" ]] || fail "deferred lane spent freshen budget"
+[[ "$(jq -r '.[] | select(.id == "mybd-test2").labels | index("merge-when-green")' "$FAKE_QUEUE")" != "null" ]] || fail "deferred lane lost its arm"
+
+# Ownership is durable: on the next pass the same lane freshens again and the
+# other still defers — a pass-local flag would rotate the slot and spread the
+# budget burn across lanes instead of converging one (cross-vendor finding).
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 2 ]] || fail "owner did not keep the slot on the next pass"
+[[ "$(jq -r '.[] | select(.id == "mybd-test").metadata.pr_babysit_freshen' "$FAKE_QUEUE")" == 2 ]] || fail "owner budget not spent on second pass"
+[[ "$(jq -r '.[] | select(.id == "mybd-test2") | .metadata.pr_babysit_freshen // "unspent"' "$FAKE_QUEUE")" == "unspent" ]] || fail "non-owner spent budget on second pass"
+
+# The owner record, not queue order, decides who freshens: with the SECOND
+# lane pre-recorded as owner, the first lane in queue order defers.
+reset freshen-owner-honored "$policy"
+jq --argjson metadata "$policy" \
+  '. + [{id:"mybd-test2", status:"in_progress", assignee:"maphew", labels:["merge-when-green"], external_ref:"gh:gastownhall/beads#124", notes:"", metadata:$metadata}]' \
+  "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
+mkdir -p "$CASE/state/pr-babysit"
+printf 'gastownhall/beads@main\tmybd-test2\n' >"$CASE/state/pr-babysit/freshen-owner"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "owner-honored pass freshened more than the owner"
+[[ "$(jq -r '.[] | select(.id == "mybd-test2").metadata.pr_babysit_freshen' "$FAKE_QUEUE")" == 1 ]] || fail "recorded owner did not freshen"
+[[ "$(jq -r '.[] | select(.id == "mybd-test") | .metadata.pr_babysit_freshen // "unspent"' "$FAKE_QUEUE")" == "unspent" ]] || fail "non-owner first lane freshened past the recorded owner"
+
+# One record per bead: a lane that claims a base drops any slot it held for
+# another base (PR retargeted while armed), so it cannot hold two bases and
+# starve the old base's lanes behind a slot it will never use again.
+reset freshen-owner-retarget "$policy"
+mkdir -p "$CASE/state/pr-babysit"
+printf 'gastownhall/beads@other\tmybd-test\n' >"$CASE/state/pr-babysit/freshen-owner"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+grep -q $'gastownhall/beads@main\tmybd-test' "$CASE/state/pr-babysit/freshen-owner" || fail "retargeted lane did not claim its current base"
+! grep -q 'gastownhall/beads@other' "$CASE/state/pr-babysit/freshen-owner" || fail "retargeted lane kept its old base's slot"
+
+# An owner that left the armed queue (merged, closed, parked) releases the
+# slot: the record is pruned and the next stale lane claims it.
+reset freshen-owner-released "$policy"
+mkdir -p "$CASE/state/pr-babysit"
+printf 'gastownhall/beads@main\tmybd-gone\n' >"$CASE/state/pr-babysit/freshen-owner"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "departed owner did not release the slot"
+grep -q $'gastownhall/beads@main\tmybd-test' "$CASE/state/pr-babysit/freshen-owner" || fail "slot was not claimed by the surviving lane"
+
+# A lane with an exhausted budget defers like any other lane when the slot is
+# already taken: stale-green-persistent is reachable only by the lane that
+# actually held the slot and still failed to converge.
+reset freshen-serialized-exhausted "$policy"
+jq '. + [{id:"mybd-test2", status:"in_progress", assignee:"maphew", labels:["merge-when-green"], external_ref:"gh:gastownhall/beads#124", notes:"", metadata:{"pr_babysit_method":"squash","pr_babysit_flake_rerun":"allowed","pr_babysit_freshen":"3"}}]' \
+  "$FAKE_QUEUE" >"$FAKE_QUEUE.tmp" && mv -f "$FAKE_QUEUE.tmp" "$FAKE_QUEUE"
+export FAKE_CHECKS="$greenchecks" FAKE_BEHIND=5 FAKE_CHECK_STARTED=2026-08-01T00:00:00Z FAKE_BASE_TIP=2026-08-01T09:00:00Z
+run_patrol
+! grep -q 'stale-green-persistent:' "$FAKE_BD_LOG" || fail "budget-exhausted lane parked while the slot was taken"
+[[ "$(jq -r '.[] | select(.id == "mybd-test2").labels | index("merge-blocked")' "$FAKE_QUEUE")" == "null" ]] || fail "deferred exhausted lane was parked"
+[[ "$(count 'pr update-branch' "$FAKE_GH_LOG")" == 1 ]] || fail "exhausted lane consumed a second update-branch"
+
 # --- base-fix exception (mybd-01yzj) ---------------------------------------
 # The PR that fixes a red base is the one PR the ordinary rule cannot land: the
 # base cannot go green until it merges, and it will not merge until the base is

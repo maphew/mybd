@@ -125,7 +125,7 @@ explain_no_checks() {
 rearm_sweep() {
   local blocked item bead status assignee metadata key class blocked_head ref repo pr
   local rearm_prev n pr_json state head msstatus checks eligible why
-  blocked="$(bd list --label merge-blocked --json 2>/dev/null)" || return 0
+  blocked="$(bd list --label merge-blocked --limit 0 --json 2>/dev/null)" || return 0
   jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$blocked" || return 0
   while read -r item; do
     bead="$(jq -r '.id // empty' <<<"$item")"; [[ -n "$bead" ]] || continue
@@ -390,9 +390,46 @@ if [[ "${PR_BABYSIT_DOLT_PULL:-1}" == 1 ]]; then
 fi
 
 rearm_sweep
-QUEUE="$(bd list --label merge-when-green --json 2>/dev/null)" || { log "bd unavailable; skipping"; exit 0; }
+QUEUE="$(bd list --label merge-when-green --limit 0 --json 2>/dev/null)" || { log "bd unavailable; skipping"; exit 0; }
 if ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$QUEUE"; then log "bd returned malformed queue data"; exit 0; fi
 settle_budget=$SETTLE_RETRIES_PER_PASS
+# Serialized stale-green freshens (mybd-j1wcr).  Freshening every stale lane
+# each pass is wasted motion on a fast-moving base: each merge the patrol then
+# performs re-stales every other lane's brand-new CI run, so the fleet burns
+# update-branch pushes and CI cycles without any lane converging, and on
+# 2026-08-01 three lanes exhausted their FRESHEN_LIMIT budgets and parked as
+# merge-blocked out of pure congestion.  One lane per base OWNS the
+# update-branch slot, durably across passes — a pass-local flag would only
+# rate-limit: the owner's refreshed CI is usually still pending on the next
+# pass, so the slot would rotate to another stale lane and spread the budget
+# burn instead of converging one lane (cross-vendor review finding on the
+# first cut).  Ownership is released only when the owner leaves the armed
+# queue: merged, closed, blocked, or disarmed.  Deferred lanes spend no
+# freshen budget and never park; they wait, armed, for their turn.  A
+# poor-man's merge queue; the real one is mybd-jcx5.
+FRESHEN_OWNER_STATE="$STATE_DIR/freshen-owner"
+freshen_owner_get() {
+  [[ -f "$FRESHEN_OWNER_STATE" ]] || return 0
+  awk -v k="$1" -F'\t' '$1 == k {print $2; exit}' "$FRESHEN_OWNER_STATE" 2>/dev/null
+}
+# One record per key AND per bead: dropping the bead's other keys means a
+# retargeted PR cannot hold its old base's slot while claiming the new one.
+freshen_owner_set() {
+  { [[ -f "$FRESHEN_OWNER_STATE" ]] && awk -v k="$1" -v b="$2" -F'\t' '$1 != k && $2 != b' "$FRESHEN_OWNER_STATE"; printf '%s\t%s\n' "$1" "$2"; } >"$FRESHEN_OWNER_STATE.tmp" \
+    && mv -f "$FRESHEN_OWNER_STATE.tmp" "$FRESHEN_OWNER_STATE"
+}
+# Prune owners no longer in the armed queue.  This is the only release path,
+# and it covers every exit: a merged owner's bead was closed, a parked owner
+# lost merge-when-green, a hand-closed owner is gone.  An owner that is armed
+# but pending checks is deliberately retained — that pending run is exactly
+# what the other lanes are waiting on.
+if [[ -f "$FRESHEN_OWNER_STATE" ]]; then
+  while IFS=$'\t' read -r k b; do
+    [[ -n "$k" && -n "$b" ]] || continue
+    jq -e --arg id "$b" 'any(.[]; .id == $id and ((.labels // []) | index("merge-when-green")))' >/dev/null 2>/dev/null <<<"$QUEUE" && printf '%s\t%s\n' "$k" "$b"
+  done <"$FRESHEN_OWNER_STATE" >"$FRESHEN_OWNER_STATE.tmp"
+  mv -f "$FRESHEN_OWNER_STATE.tmp" "$FRESHEN_OWNER_STATE"
+fi
 
 while read -r item; do
   bead="$(jq -r '.id // empty' <<<"$item")"; ref="$(jq -r '.external_ref // empty' <<<"$item")"; notes="$(jq -r '.notes // empty' <<<"$item")"
@@ -696,12 +733,32 @@ while read -r item; do
       bd update "$bead" --unset-metadata pr_babysit_freshun >/dev/null 2>&1 || log "$bead: freshness counter clear failed"
     fi
     if (( behind > 0 )) && [[ "$oldest_check" < "$base_tip" ]]; then
+      # Serialized (mybd-j1wcr): the update-branch slot for this base belongs
+      # to one lane until that lane leaves the armed queue; every other stale
+      # lane waits, armed, without spending budget or parking.  Checked before
+      # the budget gate on purpose — a budget-exhausted lane that is not the
+      # owner defers like everyone else rather than escalating, so
+      # stale-green-persistent can only be reached by the lane that actually
+      # held the slot and still failed to converge.
+      owner_key="$repo@$guard_base"
+      owner="$(freshen_owner_get "$owner_key")"
+      if [[ -n "$owner" && "$owner" != "$bead" ]]; then
+        transition "$bead" "$metadata" "$notes" "stale-green-deferred:$head" "Green checks predate the last base update, but lane $owner holds the update-branch slot for $owner_key until it converges; deferring this lane's refresh (no freshen budget spent)." || log "$bead: transition failed"
+        log "$bead: stale-green DEFERRED $repo#$pr — $owner owns the freshen slot for $owner_key"
+        continue
+      fi
       freshen_n="$(jq -r '.pr_babysit_freshen // empty' <<<"$metadata")"
       [[ "$freshen_n" =~ ^[0-9]+$ ]] || freshen_n=0
       if (( freshen_n >= FRESHEN_LIMIT )); then
         block "$bead" "$metadata" "$notes" "stale-green-persistent:$head" "Green checks still started before the last base update after $freshen_n update-branch attempt(s); the base may be moving faster than this PR's CI. Needs agent judgment."
         continue
       fi
+      # Ownership is claimed BEFORE the budget reservation and the push: if the
+      # owner record cannot be written, refreshing anyway would let every later
+      # stale lane also see no owner and push its own refresh — the concurrent
+      # freshens this slot exists to prevent.  A claim that persists without a
+      # refresh just retries next pass, budget intact.
+      if ! freshen_owner_set "$owner_key" "$bead"; then log "$bead: freshen deferred (owner record write failed)"; continue; fi
       # Reserved before calling GitHub, like the rerun budget: a crash after
       # reservation conservatively spends one attempt rather than risking a
       # loop that pushes a merge commit into the PR branch every pass.
@@ -993,7 +1050,7 @@ close_retain() {
   fi
 }
 
-CLOSE_QUEUE="$(bd list --label close-when-quiet --json 2>/dev/null)" || { log "bd unavailable; skipping close-when-quiet"; exit 0; }
+CLOSE_QUEUE="$(bd list --label close-when-quiet --limit 0 --json 2>/dev/null)" || { log "bd unavailable; skipping close-when-quiet"; exit 0; }
 if ! jq -e 'type == "array"' >/dev/null 2>/dev/null <<<"$CLOSE_QUEUE"; then log "bd returned malformed close-when-quiet queue data"; exit 0; fi
 
 while read -r item; do
