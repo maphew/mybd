@@ -15,7 +15,7 @@
 # In concurrent sessions sharing one checkout the single stamp is coarse; pass
 # --since for precise scoping (see session-start-stamp for the non-clobber rule).
 #
-# Five checks, the first four backing one judgment prompt each from the close
+# Six checks, the first four backing one judgment prompt each from the close
 # protocol:
 #   1. Unreferenced reports - a new reports/*.md file referenced by no OPEN bead
 #      and no memory (learning stranded off the cold-start path).
@@ -26,6 +26,9 @@
 #   5. Lane unit drift - a tracked scripts/systemd/ template that the installed
 #      unit does not match, i.e. a lane change that looks landed in git while the
 #      machine still runs the old behaviour (scripts/check-lane-units).
+#   6. Landed branches - an in_progress bead naming a branch whose content is
+#      already on the repo's upstream main (the mirror of check 4: work that
+#      shipped under another PR while the bead stayed open, mybd-xrp9v).
 set -euo pipefail
 . "$(dirname "$0")/_tri-lib.sh"
 tri_require bd jq git
@@ -104,14 +107,6 @@ if [[ -x "$root/scripts/check-lane-units" ]]; then
   fi
 fi
 
-if [[ -z "${since_epoch:-}" ]]; then
-  warn "no session boundary (no --since, no $stamp); session-scoped checks skipped"
-  [[ "$warns" -gt 0 ]] && echo "session-close-check: $warns warning(s)" >&2
-  [[ "$strict" -eq 1 && "$warns" -gt 0 ]] && exit 1 || exit 0
-fi
-
-echo "session-close-check: boundary $(date -u -d "@$since_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "@$since_epoch")${since_sha:+ (base ${since_sha:0:9})}" >&2
-
 # Probe bd once. Under the repo's schema-migration gate or a Dolt lock bd can be
 # unavailable; a warn-only tool must not emit false positives/negatives then.
 bd_ok=1
@@ -119,6 +114,105 @@ if ! bd list --limit 1 --json >/dev/null 2>&1; then
   warn "bd unavailable (migration gate / lock?); bd-backed checks skipped"
   bd_ok=0
 fi
+beads_json=""
+[[ "$bd_ok" == 1 ]] && beads_json="$(bd list --limit 0 --json 2>/dev/null || true)"
+
+# --- Check 6: in_progress beads whose named branch already landed upstream ---
+# Backlog state, not session state - like check 5 it runs without a boundary,
+# because the beads it exists for are the ones nobody looked at for days: six
+# sat in_progress 1-11 days after their content merged upstream under different
+# PR numbers (mybd-xrp9v). The bead->branch link is a plain substring match on
+# in_progress bead text, which works because verify-enqueue writes
+# "branch=<name>" into bead notes. Two landed signals, warn on either:
+#   a. `git cherry <base> <branch>` reports no '+': every commit is contained
+#      in or patch-equivalent to the base. Sufficient alone.
+#   b. cherry has '+' lines (uninformative after an upstream rebase/reword) but
+#      every file the branch ADDS already exists on the base - upstream does
+#      not independently grow the same new files. Path existence, not content
+#      equality, on purpose: the real cases landed as reworded variants whose
+#      content differs, which is exactly why cherry failed on them. The
+#      residual risk (upstream coincidentally grew the same path) is accepted
+#      because the check is warn-only and the message asks for judgment.
+# A '+' cherry on a branch that adds no files stays unflagged, and a branch
+# whose range contains merge commits never fires rule (a): `git cherry` omits
+# merges, so a conflict resolution carried by one is invisible to it.
+# Inconclusive is not evidence, and a false positive here would train readers
+# to skip check 6.
+if [[ "$bd_ok" == 1 ]]; then
+  inprog_tsv="$(
+    jq -r '.[] | select(.status == "in_progress")
+      | [.id, ([.title, (.description // ""), (.notes // "")] | join(" ") | gsub("[\n\t]"; " "))]
+      | @tsv' <<<"$beads_json" 2>/dev/null || true
+  )"
+
+  check_landed_branches() {
+    local dir="$1" label="$2" base br ids cherry merges mb added f landed detail
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    if git -C "$dir" rev-parse --verify --quiet upstream/main >/dev/null 2>&1; then
+      base="upstream/main"
+    elif git -C "$dir" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+      base="origin/main"
+    else
+      return 0
+    fi
+    while IFS= read -r br; do
+      [[ -n "$br" ]] || continue
+      case "$br" in main|master) continue ;; esac
+      # Bounded substring match: "fix/foo" in bead text must not claim branch
+      # "fix/foo" when the text actually says "fix/foo-v2" (or fix/foo-old).
+      # index()+boundary chars instead of a regex so branch names need no
+      # metacharacter escaping.
+      ids="$(awk -F'\t' -v br="$br" '
+        BEGIN { bound = "[A-Za-z0-9/_.-]" }
+        {
+          off = 1
+          while ((pos = index(substr($2, off), br)) > 0) {
+            start = off + pos - 1
+            before = (start == 1) ? "" : substr($2, start - 1, 1)
+            after = substr($2, start + length(br), 1)
+            if (before !~ bound && after !~ bound) { print $1; break }
+            off = start + 1
+          }
+        }' <<<"$inprog_tsv" | paste -sd, -)"
+      [[ -n "$ids" ]] || continue
+      cherry="$(git -C "$dir" cherry "$base" "$br" 2>/dev/null)" || continue
+      merges="$(git -C "$dir" rev-list --merges --count "$base..$br" 2>/dev/null || echo 1)"
+      landed="" detail=""
+      if ! grep -q '^+' <<<"$cherry" && [[ "$merges" -eq 0 ]]; then
+        landed=1
+        detail="every commit contained in or patch-equivalent to $base ($(git -C "$dir" rev-parse --short "$base" 2>/dev/null))"
+      else
+        mb="$(git -C "$dir" merge-base "$base" "$br" 2>/dev/null)" || continue
+        added="$(git -C "$dir" diff --diff-filter=A --name-only "$mb" "$br" 2>/dev/null)"
+        if [[ -n "$added" ]]; then
+          landed=1
+          while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            git -C "$dir" cat-file -e "$base:$f" 2>/dev/null || { landed=""; break; }
+          done <<<"$added"
+          if [[ -n "$landed" ]]; then
+            f="$(head -n1 <<<"$added")"
+            detail="every file it adds already exists on $base (e.g. $f, last touched by $(git -C "$dir" log -1 --format=%h "$base" -- "$f" 2>/dev/null))"
+          fi
+        fi
+      fi
+      [[ -n "$landed" ]] || continue
+      warn "$ids names branch ${label}${br}, whose work appears already landed upstream: $detail - close the bead(s) or note the residual"
+    done < <(git -C "$dir" for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
+  }
+  check_landed_branches "$root" ""
+  if [[ -d "$root/bd-main" ]]; then
+    check_landed_branches "$root/bd-main" "bd-main:"
+  fi
+fi
+
+if [[ -z "${since_epoch:-}" ]]; then
+  warn "no session boundary (no --since, no $stamp); session-scoped checks skipped"
+  [[ "$warns" -gt 0 ]] && echo "session-close-check: $warns warning(s)" >&2
+  [[ "$strict" -eq 1 && "$warns" -gt 0 ]] && exit 1 || exit 0
+fi
+
+echo "session-close-check: boundary $(date -u -d "@$since_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "@$since_epoch")${since_sha:+ (base ${since_sha:0:9})}" >&2
 
 if [[ "$bd_ok" == 1 ]]; then
   # --- Check 1: new reports not referenced by an open bead or a memory --------
@@ -158,8 +252,8 @@ if [[ "$bd_ok" == 1 ]]; then
   # timestamps that fromdateiso8601 parses), so bash only relays finished warning
   # lines. This avoids fragile multi-field row parsing: empty fields, tabs, and
   # separators in titles cannot corrupt it. `try ... catch 0` guards any stray
-  # timestamp format so one odd row can never abort the run.
-  beads_json="$(bd list --limit 0 --json 2>/dev/null || true)"
+  # timestamp format so one odd row can never abort the run. beads_json was
+  # fetched once, above the bd probe's first consumer (check 6).
 
   # Check 2: thin new bead (created since boundary, description < THIN chars)
   while IFS= read -r line; do

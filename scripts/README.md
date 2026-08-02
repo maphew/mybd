@@ -391,10 +391,11 @@ It is **read-only on purpose**: it never reinstalls. A deliberate hand-edit of
 an installed unit is legitimate, and clobbering it silently would be the same
 class of bug pointing the other way. Zero-token, no network, no `bd`.
 
-`session-close-check` runs it as check 5 (warn-only). Unlike the other four
+`session-close-check` runs it as check 5 (warn-only). Unlike the session-scoped
 checks it is machine state rather than session state, so it deliberately sits
 outside both the session boundary and the `bd` probe — it stays useful in the
-runs where the rest go quiet. There is no `.ps1` wrapper: systemd user units do
+runs where the rest go quiet (check 6, landed branches, sits outside the
+boundary too but still needs `bd`). There is no `.ps1` wrapper: systemd user units do
 not exist on Windows, and on a machine with no `~/.config/systemd/user` the
 check reports that and exits 0.
 

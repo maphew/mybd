@@ -801,8 +801,9 @@ these three (answer in the handoff, do not just tick them):
 A warn-only mechanical backstop catches the cheap omissions (unreferenced new
 reports, thin new beads, beads left `in_progress`, branches this session
 advanced that are neither pushed nor named by an open bead - in this repo or in
-`bd-main` - and lane units whose installed copy no longer matches its tracked
-template). It never blocks a close:
+`bd-main` - lane units whose installed copy no longer matches its tracked
+template, and `in_progress` beads naming a branch whose content already landed
+on upstream main under another PR). It never blocks a close:
 
 ```bash
 scripts/session-close-check            # warn, exit 0 (Windows: scripts/session-close-check.ps1)

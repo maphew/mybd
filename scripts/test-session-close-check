@@ -48,9 +48,14 @@ case "${1:-}" in
     if [[ "$limit" == "1" ]]; then
       printf '[]\n'
     elif [[ "$status" == "open" || "$status" == "open,in_progress" ]]; then
-      printf '%s\n' '[{"id":"mybd-test","status":"open","title":"Open report owner","description":"reports/referenced-report.md","notes":"","created_at":""}]'
+      if [[ -n "${BD_OPEN_JSON:-}" ]]; then
+        printf '%s\n' "$BD_OPEN_JSON"
+      else
+        printf '%s\n' '[{"id":"mybd-test","status":"open","title":"Open report owner","description":"reports/referenced-report.md","notes":"","created_at":""}]'
+      fi
     else
-      printf '[]\n'
+      # The unfiltered full list feeds checks 2, 3, and 6.
+      printf '%s\n' "${BD_FULL_JSON:-[]}"
     fi
     ;;
   memories)
@@ -175,6 +180,140 @@ if [[ "$(grep -c 'WARN: lane unit' "$lane_stderr")" -eq 1 ]]; then
   pass "one warning per drifted unit, detail lines relayed as context"
 else
   fail "expected exactly one lane-unit WARN: $(cat "$lane_stderr")"
+fi
+
+# --- Check 6: in_progress bead naming a branch that already landed ----------
+# Fixture: origin/main is simulated with a plain remote-tracking ref. Four
+# branches, all named by one in_progress bead:
+#   fix/landed-equivalent - cherry-picked onto main verbatim (rule a: warn)
+#   fix/landed-rewritten  - adds a file main also grew, different content, so
+#                           cherry is '+' but the add exists (rule b: warn)
+#   fix/not-landed        - adds a file main does not have (must stay silent)
+#   fix/modify-only       - '+' cherry, adds nothing: inconclusive (silent)
+# plus two branches probing the matcher and the merge guard:
+#   fix/landed        - fully landed content, but the bead text only says
+#                       fix/landed-equivalent, so the bounded matcher must not
+#                       claim it (silent)
+#   fix/merge-carried - non-merge commits all patch-equivalent, but a merge
+#                       commit carries an unlanded resolution `git cherry`
+#                       cannot see; adds nothing, so rule b is silent too
+landroot="$tmp/landed-repo"
+mkdir -p "$landroot"
+git init -q -b main "$landroot"
+git -C "$landroot" config user.name "test-session-close-check"
+git -C "$landroot" config user.email "test-session-close-check@example.invalid"
+git -C "$landroot" config commit.gpgsign false
+printf 'baseline\n' >"$landroot/README.md"
+git -C "$landroot" add README.md
+git -C "$landroot" commit -q -m "baseline"
+land_base="$(git -C "$landroot" rev-parse HEAD)"
+
+git -C "$landroot" checkout -q -b fix/landed-equivalent "$land_base"
+printf 'util\n' >"$landroot/util.txt"
+git -C "$landroot" add util.txt
+git -C "$landroot" commit -q -m "add util"
+
+git -C "$landroot" checkout -q main
+git -C "$landroot" cherry-pick fix/landed-equivalent >/dev/null 2>&1 \
+  || fail "fixture cherry-pick failed"
+mkdir -p "$landroot/docs"
+printf 'upstream version\n' >"$landroot/docs/thing.md"
+git -C "$landroot" add docs/thing.md
+git -C "$landroot" commit -q -m "add thing doc (upstream form)"
+
+git -C "$landroot" checkout -q -b fix/landed-rewritten "$land_base"
+mkdir -p "$landroot/docs"
+printf 'branch version\n' >"$landroot/docs/thing.md"
+git -C "$landroot" add docs/thing.md
+git -C "$landroot" commit -q -m "add thing doc (branch form)"
+
+git -C "$landroot" checkout -q -b fix/not-landed "$land_base"
+printf 'wip\n' >"$landroot/only.txt"
+git -C "$landroot" add only.txt
+git -C "$landroot" commit -q -m "genuinely unlanded work"
+
+git -C "$landroot" checkout -q -b fix/modify-only "$land_base"
+printf 'modified\n' >>"$landroot/README.md"
+git -C "$landroot" commit -q -am "modify only, add nothing"
+
+# Landed content under a name the bead text contains only as a prefix of
+# another branch's name - the bounded matcher must leave it alone.
+git -C "$landroot" branch fix/landed fix/landed-equivalent
+
+# A patch-equivalent commit plus a merge commit carrying a resolution line that
+# is NOT on main. cherry omits the merge, so without the merge guard this
+# would false-positive rule a; it adds no files, so rule b must stay quiet.
+git -C "$landroot" checkout -q -b tweak "$land_base"
+printf 'extra\n' >>"$landroot/README.md"
+git -C "$landroot" commit -q -am "tweak readme"
+git -C "$landroot" checkout -q main
+git -C "$landroot" cherry-pick tweak >/dev/null 2>&1 \
+  || fail "fixture cherry-pick (tweak) failed"
+git -C "$landroot" checkout -q -b fix/merge-carried "$land_base"
+git -C "$landroot" merge --no-ff --no-commit tweak >/dev/null 2>&1
+printf 'resolution\n' >>"$landroot/README.md"
+git -C "$landroot" add README.md
+git -C "$landroot" commit -q -m "merge tweak, resolution not on main"
+git -C "$landroot" branch -q -D tweak
+
+git -C "$landroot" checkout -q main
+git -C "$landroot" update-ref refs/remotes/origin/main "$(git -C "$landroot" rev-parse main)"
+
+landed_json='[{"id":"mybd-landed","status":"in_progress","title":"landed fixture","description":"branches under test: fix/landed-equivalent fix/landed-rewritten fix/not-landed fix/modify-only fix/merge-carried","notes":"","created_at":"","started_at":""}]'
+landed_stderr="$tmp/landed.stderr"
+if (cd "$landroot" && BD_OPEN_JSON="$landed_json" BD_FULL_JSON="$landed_json" \
+    bash "$check" --since HEAD --strict) >/dev/null 2>"$landed_stderr"; then
+  landed_rc=0
+else
+  landed_rc=$?
+fi
+
+if [[ "$landed_rc" -eq 1 ]]; then
+  pass "landed-branch warnings fail --strict"
+else
+  fail "landed fixture exit = $landed_rc, want 1; stderr: $(cat "$landed_stderr")"
+fi
+
+if grep -Eq "mybd-landed names branch fix/landed-equivalent.*patch-equivalent" "$landed_stderr"; then
+  pass "patch-equivalent branch warns with the bead id (rule a)"
+else
+  fail "rule-a warning missing: $(cat "$landed_stderr")"
+fi
+
+if grep -Eq "mybd-landed names branch fix/landed-rewritten.*every file it adds already exists" "$landed_stderr"; then
+  pass "rewritten branch whose adds all exist upstream warns (rule b)"
+else
+  fail "rule-b warning missing: $(cat "$landed_stderr")"
+fi
+
+if grep -Fq "fix/not-landed" "$landed_stderr"; then
+  fail "genuinely unlanded branch was flagged: $(cat "$landed_stderr")"
+else
+  pass "branch with genuine unlanded commits stays silent"
+fi
+
+if grep -Fq "fix/modify-only" "$landed_stderr"; then
+  fail "inconclusive modify-only branch was flagged: $(cat "$landed_stderr")"
+else
+  pass "inconclusive branch (no added files) stays silent"
+fi
+
+if grep -Fq "names branch fix/landed," "$landed_stderr"; then
+  fail "bounded matcher claimed fix/landed from the fix/landed-equivalent text: $(cat "$landed_stderr")"
+else
+  pass "bounded matcher does not claim a branch named only as a prefix"
+fi
+
+if grep -Fq "fix/merge-carried" "$landed_stderr"; then
+  fail "merge-carried resolution was flagged as landed: $(cat "$landed_stderr")"
+else
+  pass "merge commit carrying an unlanded resolution stays silent"
+fi
+
+if [[ "$(grep -c '^WARN:' "$landed_stderr")" -eq 2 ]]; then
+  pass "landed fixture emits exactly the two expected warnings"
+else
+  fail "unexpected extra warnings in landed fixture: $(cat "$landed_stderr")"
 fi
 
 if [[ "$fails" -eq 0 ]]; then
