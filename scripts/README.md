@@ -724,6 +724,23 @@ Bounds, because this lane pushes a merge commit into a PR branch:
   see mybd-uncb7 for why that was rejected.
 - **Skipped under `--base-fix`.** Being behind a red base is expected of the PR
   that fixes it, and a full CI cycle of delay is what stop-the-line cannot pay.
+- **Serialized: one lane per base owns the update-branch slot** (mybd-j1wcr).
+  Freshening every stale lane each pass is wasted motion on a fast-moving base:
+  each merge the patrol then performs re-stales every other lane's brand-new CI
+  run, so the fleet burns pushes and CI cycles without any lane converging — on
+  2026-08-01 (~30 freshens in one afternoon) three lanes exhausted their
+  budgets and parked `merge-blocked` out of pure congestion. Ownership is
+  durable (`$STATE_DIR/freshen-owner`, keyed `repo@base`), not per-pass: the
+  owner's refreshed CI is usually still pending on the next pass, so a
+  pass-local flag would rotate the slot to another stale lane and spread the
+  budget burn instead of converging one lane (cross-vendor review finding on
+  the first cut). The slot is released only when the owner leaves the armed
+  queue — merged, closed, parked, or disarmed. Non-owner stale lanes record a
+  `stale-green-deferred` transition and wait, armed, spending no freshen
+  budget and never parking — an exhausted-budget non-owner defers too, so
+  `stale-green-persistent` is reachable only by the lane that actually held
+  the slot and still failed to converge. A poor-man's merge queue; the real
+  one is mybd-jcx5.
 - **Budgeted per lane, not per head** (`pr_babysit_freshen`, default 3) —
   update-branch moves the head itself, so a head-scoped counter would never
   bind. Exhausting it parks the bead `merge-blocked`, as does a refusal from
