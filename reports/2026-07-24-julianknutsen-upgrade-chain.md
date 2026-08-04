@@ -86,3 +86,62 @@ Comments: [4905](https://github.com/gastownhall/beads/pull/4905#issuecomment-507
 - His PR bodies are signed `on behalf of CI Bot` / `on behalf of Test User` —
   signing-convention drift worth a gentle note whenever the path conversation
   happens.
+
+## Rereview — 2026-08-04
+
+**Requested head:** `a0030fc62d97c6de3ee7e9e26ca307424eeb2d6c`.
+Julian re-cut #4907 as eight focused migration commits directly above Dolt-only
+`main`; the inherited provider branch and both 2026-07-24 blockers are gone.
+The public v0.49.6/v0.50.3 bridge now invokes the current authenticated
+`migrate legacy-sqlite` reader against the sealed copy, and coarse `.dolt`
+detection lives behind `internal/storage/embeddeddolt`. All GitHub checks on
+the requested head passed. The two commits that reached `main` afterward,
+#5285 and #5334, merge cleanly and are semantically unrelated.
+
+The rereview nevertheless found one **Important data-safety blocker** in the
+new final guard logic. `guardLegacyUpgradeWorkspace` returns success as soon as
+`embeddeddolt.HasRepository(beadsDir)` sees any populated embedded marker,
+before it evaluates explicit `dolt_mode=server`, the local legacy `dolt/` root,
+or the version witness. Store selection later still follows server metadata.
+Consequently this mixed layout bypasses the promised fail-closed admission:
+
+```text
+metadata.json: {"backend":"dolt","dolt_mode":"server"}
+.beads/dolt/                         # historical local server root
+.beads/.local_version: 0.62.0 | absent | malformed
+.beads/embeddeddolt/<any>/.dolt/*    # populated stale marker
+```
+
+The existing precedence test covers an embedded-selected workspace with no
+server metadata; the missing/malformed server-witness tests omit the populated
+embedded marker. Fix by making embedded precedence conditional on the selected
+mode (or by evaluating explicit server mode first), then add the three mixed
+layout cases. Until that lands, the standing changes-requested decision remains
+correct.
+
+Two should-fixes should land in the same round:
+
+- `docs/getting-started/upgrading.md` still says server workspaces with absent,
+  malformed, or non-historical witnesses are admitted normally. The final guard
+  now refuses those layouts when a local `.beads/dolt/` root exists unless the
+  witness is syntactically post-1.0. Align the table and narrative with the
+  implemented rule.
+- The public bridge requires both historical and candidate JSONL exports to be
+  nonempty. A schema-authenticated legacy database with zero issues is valid,
+  and the reader correctly emits an empty file, but the documented bridge then
+  aborts. Permit and test a verified empty cutover, or document and test an
+  explicit safe replacement path.
+
+Verification performed at the exact head:
+
+- `go test ./internal/migration/legacysqlite` — pass.
+- `CGO_ENABLED=0 go test -tags gms_pure_go ./internal/storage/embeddeddolt` —
+  pass.
+- Focused pure-Go `cmd/bd` legacy-guard/no-store tests — pass.
+- Default Windows CGO compilation could not run `cmd/bd` because this host
+  lacks the ICU headers required by the selected Dolt dependency graph; the
+  PR's exact-head GitHub checks, including Windows compile/preflight lanes,
+  were green.
+- `legacy-bridge-test.sh` reached its symlink-containment case, but Git Bash on
+  this host created an ordinary independent directory rather than a symlink;
+  that environment-specific test failure was not treated as a PR finding.
