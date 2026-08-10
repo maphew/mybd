@@ -1,3 +1,10 @@
+> **ARCHIVED 2026-08-10 — do not apply.**
+> maphew stepped down as a Beads maintainer and is now a normal contributor to
+> `gastownhall/beads`. Everything below assumes merge, close, label, and
+> request-changes rights that we no longer hold. Kept because it is a good
+> document and records how the queue was actually run; it is not current policy.
+> See `AGENTS.md` ("Contributing upstream") for what applies now.
+
 # Maintainer PR Guidelines — mybd overlay
 
 @bd-main/PR_MAINTAINER_GUIDELINES.md

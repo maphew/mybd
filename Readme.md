@@ -1,65 +1,69 @@
-# Beads Git Worktree Setup
+# mybd — personal coordination repo for Beads work
 
-This directory uses git worktrees to manage multiple branches efficiently.
+This repo (`maphew/mybd`) holds issue tracking, notes, reports, and agent
+configuration for my work on [Beads](https://github.com/gastownhall/beads). It
+is **not** the Beads source tree.
 
-## Structure
+I am a **contributor** to Beads, not a maintainer (stepped down 2026-08-10).
+This repo opens PRs and files issues upstream; it does not merge, close, label,
+or triage other people's work.
 
-- `.git/` - This metadata repository (`maphew/mybd`)
-- `main/` - Main `maphew/beads` worktree
-- Other branches can be added as additional worktrees at this level
+## Layout
 
-## Creating a New Worktree
+| Path | What |
+|------|------|
+| `.beads/` | bd (Beads) issue database — Dolt-backed, synced via `bd dolt push`/`pull` |
+| `.bare/` | bare object store for the Beads source (`origin` = `maphew/beads`, `upstream` = `gastownhall/beads`) |
+| `bd-main/` | main worktree of `.bare` — where code edits, builds, and PRs happen |
+| `.worktrees/beads/` | throwaway Beads source worktrees |
+| `.worktrees/mybd/` | worktrees for commits to *this* repo |
+| `scripts/` | helper scripts (see `scripts/README.md`) |
+| `reports/` | session reports — the retroactive "why" behind decisions |
+| `retro/` | agent-collaboration retrospectives |
+| `archive/` | superseded policy kept for reference |
 
-```powershell
-git -C main worktree add ../feature-name -b feature-name
-cd ../feature-name
-# start hacking
+`.bare/`, `bd-main/`, and `.worktrees/` are gitignored.
+
+Note `bd-main/` is a **worktree**, not a nested clone: `bd-main/.git` is a
+gitfile pointing at `.bare/`, and shared config (remotes, `core.hooksPath`)
+lives in `.bare/config`.
+
+## Working here
+
+```bash
+bd prime                  # load Beads context
+bd ready                  # what's available
+scripts/check-beads-config
 ```
 
-Or from the root directory:
-```powershell
-git worktree add ./feature-name -b feature-name
-cd ./feature-name
+Commits to this repo go through a worktree on a topic branch, then merge
+directly to `main` — no PRs here, there is no second reviewer:
+
+```bash
+git worktree add .worktrees/mybd/<purpose> -b <branch>
+# ...work, commit...
+git merge --no-ff <branch> && git push    # from the root checkout
 ```
 
-## Switching Between Worktrees
+Beads source worktrees take an **absolute** path (a relative one resolves
+against `bd-main/`):
 
-Each worktree is independent. Simply `cd` into the desired directory:
-```powershell
-cd bd-main
-cd feature-name
+```bash
+git -C bd-main worktree add "$PWD/.worktrees/beads/<purpose>" <branch>
 ```
 
-## Listing Worktrees
+**Never `rm -rf` a path from `git worktree list`** — that list includes `.bare`
+itself. Use `git worktree remove`, and snapshot with
+`git bundle create <file> --branches` before any bulk prune.
 
-```powershell
-git -C main worktree list
-```
+## Agent instructions
 
-## Removing a Worktree
-
-```powershell
-git -C bd-main worktree remove feature-name
-```
-
-Or remove the directory and prune:
-```powershell
-Remove-Item -Recurse feature-name
-git -C main worktree prune
-```
+See [AGENTS.md](AGENTS.md) (shared) and [CLAUDE.md](CLAUDE.md) (Claude Code
+entrypoint). Agents track all work in bd — no markdown TODO lists.
 
 ## Notes
 
-- Each worktree has its own working directory state but shares the repository history
-- Branches checked out in one worktree cannot be checked out in another simultaneously
-- See the [beads repository](https://github.com/maphew/beads) for development guidelines
-- mybd remote sync note: the existing `A:\dev\mybd` clone is repaired; `bd dolt pull` / `bd dolt push` work but are slow (roughly 20-30 seconds) and must be run serially. Do not fresh-bootstrap/clone this repo or run unbounded Dolt remote operations; see [dolthub/dolt#11236](https://github.com/dolthub/dolt/issues/11236) and bead `mybd-iihf`.
-
-## Current Worktrees
-
-- **main**: from steveyegge/beads. Sync frequently, don't change (always branch first)
-
-## Metadata
-
-- **_working_on/**: {worktree}.md - the current area of focus. Ephemeral, move into history when done.
-- **_history/**: {worktree}/{worktree}_yyyy-mm-dd.md - where date is last-modified
+`bd dolt pull` / `bd dolt push` work but are slow (roughly 20-30 seconds) and
+must be run serially. Do not fresh-bootstrap this repo or run unbounded Dolt
+remote operations; see [dolthub/dolt#11236](https://github.com/dolthub/dolt/issues/11236)
+and bead `mybd-iihf`.

@@ -15,7 +15,7 @@
 # In concurrent sessions sharing one checkout the single stamp is coarse; pass
 # --since for precise scoping (see session-start-stamp for the non-clobber rule).
 #
-# Six checks, the first four backing one judgment prompt each from the close
+# Five checks, the first four backing one judgment prompt each from the close
 # protocol:
 #   1. Unreferenced reports - a new reports/*.md file referenced by no OPEN bead
 #      and no memory (learning stranded off the cold-start path).
@@ -23,14 +23,24 @@
 #   3. Left in_progress - a bead still in_progress that this session started.
 #   4. Unreferenced branches - a branch this session advanced that is neither
 #      pushed nor named by an open bead or memory, in this repo or bd-main.
-#   5. Lane unit drift - a tracked scripts/systemd/ template that the installed
-#      unit does not match, i.e. a lane change that looks landed in git while the
-#      machine still runs the old behaviour (scripts/check-lane-units).
-#   6. Landed branches - an in_progress bead naming a branch whose content is
+#   5. Landed branches - an in_progress bead naming a branch whose content is
 #      already on the repo's upstream main (the mirror of check 4: work that
 #      shipped under another PR while the bead stayed open, mybd-xrp9v).
+#
+# A sixth check (installed systemd lane units vs their tracked templates) was
+# removed 2026-08-10 with the automation lanes it watched.
 set -euo pipefail
-. "$(dirname "$0")/_tri-lib.sh"
+
+# Inlined from the former scripts/_tri-lib.sh, which was removed with the
+# upstream-triage lane on 2026-08-10 (maintainer -> contributor role change).
+# These two helpers were the only things this script used from it.
+tri_die() { echo "${0##*/}: $*" >&2; exit 1; }
+tri_require() {
+  for cmd in "$@"; do
+    command -v "$cmd" >/dev/null || tri_die "$cmd not on PATH"
+  done
+}
+
 tri_require bd jq git
 
 THIN_DESC_CHARS=30
@@ -85,28 +95,6 @@ elif [[ -n "$since" ]]; then
   resolve_boundary "$since" || tri_die "could not parse --since value: $since"
 fi
 
-# --- Check 5: installed lane units vs their tracked templates ----------------
-# Deliberately outside the session boundary and outside the bd probe: this is
-# machine state, not session state, and it stays useful in exactly the runs
-# where the other four go quiet (no stamp, bd behind the migration gate). Warn
-# only - check-lane-units never repairs anything, and a hand-edited unit is
-# legitimate, so the decision to re-run an installer stays with the reader.
-if [[ -x "$root/scripts/check-lane-units" ]]; then
-  if ! lane_out="$("$root/scripts/check-lane-units" --quiet 2>&1)"; then
-    while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
-      # One warning per drifted unit. The detail lines (missing directive, the
-      # installer to re-run) and check-lane-units' own tally are relayed as
-      # context so the count stays "how many things are wrong", not "how many
-      # lines were printed".
-      case "$line" in
-        DRIFT*) warn "lane unit ${line#DRIFT}" ;;
-        *) printf '        %s\n' "$line" >&2 ;;
-      esac
-    done <<<"$lane_out"
-  fi
-fi
-
 # Probe bd once. Under the repo's schema-migration gate or a Dolt lock bd can be
 # unavailable; a warn-only tool must not emit false positives/negatives then.
 bd_ok=1
@@ -117,13 +105,14 @@ fi
 beads_json=""
 [[ "$bd_ok" == 1 ]] && beads_json="$(bd list --limit 0 --json 2>/dev/null || true)"
 
-# --- Check 6: in_progress beads whose named branch already landed upstream ---
-# Backlog state, not session state - like check 5 it runs without a boundary,
+# --- Check 5: in_progress beads whose named branch already landed upstream ---
+# Backlog state, not session state - it runs without a boundary,
 # because the beads it exists for are the ones nobody looked at for days: six
 # sat in_progress 1-11 days after their content merged upstream under different
 # PR numbers (mybd-xrp9v). The bead->branch link is a plain substring match on
-# in_progress bead text, which works because verify-enqueue writes
-# "branch=<name>" into bead notes. Two landed signals, warn on either:
+# in_progress bead text, which works when a bead names its branch - the retired
+# verify-enqueue wrote "branch=<name>" into bead notes automatically; sessions
+# now do it by hand. Two landed signals, warn on either:
 #   a. `git cherry <base> <branch>` reports no '+': every commit is contained
 #      in or patch-equivalent to the base. Sufficient alone.
 #   b. cherry has '+' lines (uninformative after an upstream rebase/reword) but
@@ -137,7 +126,7 @@ beads_json=""
 # whose range contains merge commits never fires rule (a): `git cherry` omits
 # merges, so a conflict resolution carried by one is invisible to it.
 # Inconclusive is not evidence, and a false positive here would train readers
-# to skip check 6.
+# to skip this check.
 if [[ "$bd_ok" == 1 ]]; then
   inprog_tsv="$(
     jq -r '.[] | select(.status == "in_progress")
@@ -253,7 +242,7 @@ if [[ "$bd_ok" == 1 ]]; then
   # lines. This avoids fragile multi-field row parsing: empty fields, tabs, and
   # separators in titles cannot corrupt it. `try ... catch 0` guards any stray
   # timestamp format so one odd row can never abort the run. beads_json was
-  # fetched once, above the bd probe's first consumer (check 6).
+  # fetched once, above the bd probe's first consumer (check 5).
 
   # Check 2: thin new bead (created since boundary, description < THIN chars)
   while IFS= read -r line; do

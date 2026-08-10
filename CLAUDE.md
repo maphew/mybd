@@ -2,146 +2,52 @@
 
 @AGENTS.md
 
-Shared cross-agent instructions live in [AGENTS.md](AGENTS.md) (imported above): conventions, signing, the bd issue-tracker workflow, session-completion protocol, and maintainer PR review.
+Shared cross-agent instructions live in [AGENTS.md](AGENTS.md) (imported
+above): conventions, repository layout, signing, the bd issue-tracker workflow,
+contributing upstream, and the session-completion protocol.
 
 This file is intentionally short. Do not copy workflow, build, storage, or UI
 rules here; those details drift quickly when repeated across agent entrypoints.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:bacef91e -->
+## Role
+
+maphew is a **contributor** to `gastownhall/beads`, not a maintainer (stepped
+down 2026-08-10). We open PRs and file issues; we do not merge, close, label, or
+triage other people's work. The scheduled automation lanes that assumed merge
+rights are gone. See bd memory `maintainer-role-stepped-down` and
+[archive/PR_MAINTAINER_GUIDELINES.md](archive/PR_MAINTAINER_GUIDELINES.md)
+(historical, do not apply).
+
 ## Issue Tracking with bd (beads)
 
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
+**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT
+use markdown TODOs, task lists, or other tracking methods.
 
 ```bash
-bd ready --json
+bd ready --json                          # unblocked work
+bd create "Title" --description="..." -t bug|feature|task -p 0-4 --json
+bd update <id> --claim --json            # claim atomically
+bd close <id> --reason "Completed" --json
+bd remember --key <key> "fact"           # cross-session knowledge
+bd memories <keyword>                    # search memories
 ```
 
-**Create new issues:**
+Types: `bug`, `feature`, `task`, `epic`, `chore`.
+Priorities: `0` critical, `1` high, `2` medium (default), `3` low, `4` backlog.
 
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
+Workflow: check `bd ready` → `bd update <id> --claim` → implement → link
+discovered work with `--deps discovered-from:<parent-id>` → `bd close`.
 
-**Claim and update:**
+Quality: use `--acceptance` and `--design` when creating; `--validate` to check
+description completeness.
 
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Quality
-- Use `--acceptance` and `--design` fields when creating issues
-- Use `--validate` to check description completeness
-
-### Lifecycle
-- `bd defer <id>` / `bd supersede <id>` for issue management
-- `bd stale` / `bd orphans` / `bd lint` for hygiene
-- `bd human <id>` to flag for human decisions
-- `bd formula list` / `bd mol pour <name>` for structured workflows
+Lifecycle: `bd defer` / `bd supersede`; `bd stale` / `bd orphans` / `bd lint`
+for hygiene; `bd formula list` / `bd mol pour <name>` for structured workflows.
 
 ### Sync
 
-bd stores issue history in Dolt:
+bd stores issue history in Dolt. Each write auto-commits to Dolt history; use
+`bd dolt push`/`bd dolt pull` for remote sync. Do not treat
+`.beads/issues.jsonl` as the sync protocol — it is a passive export.
 
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- Do not treat `.beads/issues.jsonl` as the sync protocol
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and https://github.com/gastownhall/beads/blob/main/docs/getting-started/quickstart.md.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-**This repo runs team-maintainer** (owner directive maphew 2026-07-08:
-`agent.profile=team-maintainer` in bd config; see the
-`agent-profile-team-maintainer` bd memory). Commit, sync, and push are routine
-work here — an explicit in-prompt "do not commit"/"do not push" still
-overrides. The generic profile descriptions below are reference only; do not
-fall back to Conservative just because it is labeled "default".
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd dolt push
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-
-<!-- END BEADS INTEGRATION -->
+For more detail run `bd prime`.
