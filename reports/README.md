@@ -15,6 +15,11 @@ It records the lane shutdown, backlog collapse, repository cleanup, a serious
 worktree-pruning incident and recovery, corrections to the salvage assessment,
 and the resulting contributor priorities.
 
+Then read [the unfiled-defect harvest](2026-08-10-unfiled-defect-harvest.md).
+It is the first substantial follow-through in the new role: 31 verified defects
+that existed only in local review findings were converted into upstream issues
+rather than retained as a private maintainer-era asset.
+
 That transition is a fault line in this archive. Reports before it remain
 useful evidence and institutional history, but recommendations that assume
 merge, close, label, release, or upstream-triage authority are historical.
@@ -43,7 +48,10 @@ large issue attachment.
 
 ### Contributor reset
 
-**Read:** [Maintainer → contributor teardown](2026-08-10-ic-role-change-teardown.md)
+**Read:**
+
+- [Maintainer → contributor teardown](2026-08-10-ic-role-change-teardown.md)
+- [Unfiled-defect harvest](2026-08-10-unfiled-defect-harvest.md)
 
 **Live Beads context:** `mybd-jcylm` and its four PR-specific beads.
 
@@ -132,7 +140,7 @@ ambiguity is useful information rather than missing issue metadata.
 
 | Period | Read | Why it matters now |
 |---|---|---|
-| 2026-08-10 | [Role-change teardown](2026-08-10-ic-role-change-teardown.md) | Resets the meaning of everything that came before it. |
+| 2026-08-10 | [Role-change teardown](2026-08-10-ic-role-change-teardown.md) and [unfiled-defect harvest](2026-08-10-unfiled-defect-harvest.md) | Resets the meaning of everything that came before it, then converts the main unreported asset of the maintainer period into 31 upstream issues. |
 | 2026-08-03–04 | [Stale-tail sweep](2026-08-04-stale-tail-pr-sweep.md) and [unreviewed-head sweep](2026-08-03-pr-review-sweep-unreviewed-heads.md) | Last broad maintainer-era picture of the upstream queue; useful history, no longer an operating mandate. |
 | 2026-07-30–08-02 | [Ready-queue sweep](2026-08-02-ready-queue-autonomous-sweep.md), [human-gating conversion](2026-08-01-bd-ready-human-gating-conversion.md), and [ready-gating audit](2026-07-31-ready-gating-audit.md) | A burst of automation exposed the gap between database readiness and humanly claimable work. |
 | 2026-07-29 | [Orchestration-layer landscape](2026-07-29-orchestration-layer-landscape.md) | Tested whether the local management machinery duplicated existing systems; its evidence outlives the machinery. |
