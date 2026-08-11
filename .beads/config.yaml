@@ -73,4 +73,4 @@ prime:
 agent:
     profile: team-maintainer
 sync:
-    remote: "https://github.com/maphew/mybd.git"
+    remote: "git+https://github.com/maphew/mybd.git"
