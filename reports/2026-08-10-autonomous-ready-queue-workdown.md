@@ -2,7 +2,7 @@
 
 **Directive:** work `bd ready` until dry or genuinely blocked; newest first, existing PRs first; workflows; worktree + branch + tests + PR per task.
 
-**Headline:** ready queue 151 → ~110. 8 upstream PRs opened or repaired, 2 abandoned contributor PRs carried with authorship preserved, 5 upstream issues filed, 9 evidence/nudge comments posted, ~25 beads closed, 8 deferred with real checkpoints. Every upstream change passed the cross-vendor codex gate; several needed multiple rounds and the gate caught real bugs each time.
+**Headline:** ready queue 151 → 76. 11 upstream PRs opened plus 2 repaired, 3 abandoned contributor PRs/reviews carried with authorship preserved, 5 upstream issues filed, 9 evidence/nudge comments posted, ~25 beads closed, 8 deferred with real checkpoints. Every upstream change passed the cross-vendor codex gate; several needed multiple rounds and the gate caught real bugs each time.
 
 ## Why the queue "looked old" (session preamble)
 
@@ -75,7 +75,12 @@ Closed 9 (zahk, mlik, psis, 45gp, 5buk, noz5j, mlqr, hxa9, 7kcg - tracked work m
 - Parallel-session stash trap re-confirmed: a bare `git stash` in a worktree popped another session's WIP from the shared stack (AGENTS.md already warns; entry preserved, no loss).
 - The codex gate earned its keep: across ~10 runs it caught one real P2 on c4x69 (post-drain liveness), one P1-class scanner bug (CTE escapes), the post-run-gates propagation gap on 9222, and drove the 5065 footer-identity design to fail-safe. Findings against upstream code outside the diff (state.go atomicity, show emoji) were reconciled, not blindly applied - one became #5637; the emoji one was judged upstream's policy/practice tension and skipped.
 
-## Addendum: final PR numbers
+## Addendum: final PR numbers (session extended past the first close-out)
 
 - **#5641** - `bd sql` read-only open (mybd-9222, closed). Six gate rounds; the final one clean. The classifier fails closed on comments and backslashes, making it safe under any server `sql_mode`.
-- **#5642** - carry of #5065 (mybd-fezwm, closed). Three gate rounds converged 1 P1 + 5 P2 → 4 P2 → 3 polish P2s; the residuals are listed in the PR body for the maintainers, and halaprix/jms830 were notified on the original thread.
+- **#5642** - carry of #5065 (mybd-fezwm, closed). Three gate rounds converged 1 P1 + 5 P2 → 4 P2 → 3 polish P2s; residuals listed in the PR body, halaprix/jms830 notified.
+- **#5645** - `bd gate create --title` regression test (mybd-qjtbb, closed; offered in the 5099 review).
+- **#5648** - dependency-type alias family (mybd-i61ti + mybd-2rne5, closed; fixes upstream #5585 + #5560). The gate caught the proxied batch twin AND a direction inversion in the form path that only the Docker-gated CI tests would have exposed.
+- **#5651** - batch-close error taxonomy (mybd-zgqpl, closed; the taxonomy half of the 5293 review offers, CAS half deliberately dropped per upstream's documented rejection). Eight gate rounds converged to zero findings, en route adding phase-marked post-write errors, scoped HTTP mapping, and the previously-unreachable mid-batch infrastructure conformance slice.
+
+Second sweep additions beyond PRs: the 29 harvest-filed watch beads deferred as a cohort to 2026-08-25 (memory `harvest-watch-cohort`); `scripts/bdj` + codex-agent size cap landed locally (retro F-004/F-005); PR 4858 nudge (supersedes h9w5's implementation plan); jgqy/y938/6qr7s/62300 dispositioned; 24 stale test temp dirs swept. Final fleet: **17 open PRs** tracked by mybd-koabx.
