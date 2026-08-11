@@ -91,6 +91,35 @@ if [ "$tier" = builder ] && [ "${CODEX_AGENT_ALLOW_ROOT:-0}" != "1" ]; then
   fi
 fi
 
+# F-005: delegate final messages repeatedly exceeded the 256KB Read cap
+# (434KB/297KB reviewer outputs). Prepend a size-discipline preamble to the
+# builder/reviewer prompt so detail lands in -o files, not the final message.
+# (The reviewer --diff path uses `codex review`, which has no prompt seam;
+# its output is already captured to a log file by scripts/pr-open.)
+if [ "$tier" != scout ] && [ $# -gt 0 ]; then
+  SIZE_PREAMBLE='Final-message discipline: keep your final message under 30KB - a compact summary of findings/actions only. Full logs, diffs, or long analysis belong in the -o output file or files on disk; reference their paths instead of inlining. Oversized final messages are truncated unread.'
+  last="${!#}"
+  prev=""
+  [ $# -ge 2 ] && prev="${*:$#-1:1}"
+  # Only rewrite when the last arg is plausibly the prompt: not itself a
+  # flag, and not the VALUE of a preceding value-taking flag. Otherwise
+  # leave the invocation untouched rather than corrupting an argument.
+  case "$prev" in
+    -o|--output|-c|--config|-C|--cd|-m|--model|--output-schema) prompt_is_last=0 ;;
+    *) prompt_is_last=1 ;;
+  esac
+  if [ "$last" = "-" ]; then
+    stdin_prompt="$(cat)"
+    set -- "${@:1:$#-1}" "$SIZE_PREAMBLE
+
+$stdin_prompt"
+  elif [ "$prompt_is_last" = 1 ] && [ "${last#-}" = "$last" ]; then
+    set -- "${@:1:$#-1}" "$SIZE_PREAMBLE
+
+$last"
+  fi
+fi
+
 case "$tier" in
   scout)
     exec codex exec -s read-only -m gpt-5.6-terra \
