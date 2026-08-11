@@ -170,6 +170,19 @@ du -sh "${TMPDIR:-/tmp}"/beads-bd-tests-* 2>/dev/null
 Only kill current-user servers rooted in the suite's own temp-dir patterns, and
 never one younger than a run that might still be live.
 
+On hosts where /tmp is a small tmpfs (observed 2026-07-31: 20G tmpfs at 78%,
+linker died with 'No space left on device' - a failure that looks nothing like
+a disk problem), point Go's scratch space at the home disk before heavy builds
+or test runs:
+
+```bash
+export GOTMPDIR="$HOME/.cache/gotmp" GOCACHE="$HOME/.cache/gocache"
+mkdir -p "$GOTMPDIR" "$GOCACHE"
+```
+
+scripts/codex-agent already does this for delegated builds; in-session runs
+must do it themselves. Sweep beads-bd-tests-* dirs older than a day.
+
 ### Windows / Daily Housekeeping
 
 On Windows, confirm the `bd` on `PATH` is the expected version before running
