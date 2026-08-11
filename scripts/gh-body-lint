@@ -1,8 +1,77 @@
 #!/usr/bin/env bash
 # gh-body-lint — guard GitHub PR/comment/review Markdown before posting.
+#
+# Self-contained since 2026-08-10: the shared scripts/_tri-lib.sh was deleted
+# in the maintainer-to-contributor teardown, so the helpers this script needs
+# are inlined below (mybd-l2la0).
 
 set -euo pipefail
-. "$(dirname "$0")/_tri-lib.sh"
+
+die() { echo "${0##*/}: $*" >&2; exit 1; }
+
+strip_html_comments() {
+  awk '
+    {
+      line = $0; out = ""
+      while (1) {
+        if (!inc) {
+          s = index(line, "<!--")
+          if (s) { out = out substr(line, 1, s - 1); line = substr(line, s + 4); inc = 1 }
+          else { out = out line; break }
+        } else {
+          e = index(line, "-->")
+          if (e) { line = substr(line, e + 3); inc = 0 } else break
+        }
+      }
+      print out
+    }
+  '
+}
+
+# Count the words of a GitHub-facing body, excluding fenced code blocks and
+# HTML comments (invisible on GitHub), and fail if over budget. Prints the
+# count on success. An unterminated fence would silently exclude everything
+# after it, so refuse it instead of undercounting.
+word_budget() {
+  local body_file="$1" max_words="$2"
+  local fences words
+  fences="$(grep -cE '^[[:space:]]*(```|~~~)' "$body_file" || true)"
+  if (( ${fences:-0} % 2 != 0 )); then
+    die "unterminated code fence in $body_file - close it before posting"
+  fi
+  words="$(awk '/^[[:space:]]*(```|~~~)/{in_code=!in_code; next} !in_code' "$body_file" \
+    | strip_html_comments | wc -w)"
+  if (( words > max_words )); then
+    die "body is $words words, budget is $max_words: $body_file
+Keep only what changes the maintainer's action: verdict plus top findings.
+The full analysis stays in the local review note, not the upstream post."
+  fi
+  echo "$words"
+}
+
+lint_gh_body() {
+  local body_file="$1"
+  [[ -f "$body_file" ]] || die "GitHub body file not found: $body_file"
+
+  local failed=0
+  if grep -nF '\n' "$body_file" >&2; then
+    echo "GitHub body contains literal \\n sequences; write real newlines and use --body-file" >&2
+    failed=1
+  fi
+  if grep -nE '(^|[^[:alnum:]_])GH#[0-9]+' "$body_file" >&2; then
+    echo "GitHub body contains GH# refs; use #1234 or owner/repo#1234 for GitHub autolinks" >&2
+    failed=1
+  fi
+  [[ "$failed" == 0 ]] || die "GitHub body lint failed: $body_file"
+}
+
+# Normalize safe GitHub body patterns in-place. This intentionally only changes
+# same-repo shorthand refs; literal \n needs a human/template fix.
+normalize_gh_body() {
+  local body_file="$1"
+  [[ -f "$body_file" ]] || die "GitHub body file not found: $body_file"
+  perl -0pi -e 's/(^|[^[:alnum:]_])GH#([0-9]+)/$1#$2/g' "$body_file"
+}
 
 FIX=0
 MAX_WORDS=""
@@ -11,7 +80,7 @@ FILES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fix) FIX=1; shift;;
-    --max-words) [[ $# -ge 2 ]] || tri_die "--max-words needs a value"; MAX_WORDS="$2"; shift 2;;
+    --max-words) [[ $# -ge 2 ]] || die "--max-words needs a value"; MAX_WORDS="$2"; shift 2;;
     --max-words=*) MAX_WORDS="${1#--max-words=}"; shift;;
     -h|--help)
       cat <<'USAGE'
@@ -31,20 +100,20 @@ posted text stays digestible; long analysis belongs in a local report.
 USAGE
       exit 0
       ;;
-    -*) tri_die "unknown flag: $1";;
+    -*) die "unknown flag: $1";;
     *) FILES+=("$1"); shift;;
   esac
 done
 
-[[ "${#FILES[@]}" -gt 0 ]] || tri_die "usage: gh-body-lint [--fix] [--max-words N] <body.md> [body2.md...]"
-[[ -z "$MAX_WORDS" || "$MAX_WORDS" =~ ^[0-9]+$ ]] || tri_die "--max-words must be a number (got '$MAX_WORDS')"
+[[ "${#FILES[@]}" -gt 0 ]] || die "usage: gh-body-lint [--fix] [--max-words N] <body.md> [body2.md...]"
+[[ -z "$MAX_WORDS" || "$MAX_WORDS" =~ ^[0-9]+$ ]] || die "--max-words must be a number (got '$MAX_WORDS')"
 
 for file in "${FILES[@]}"; do
   if [[ "$FIX" == 1 ]]; then
-    tri_normalize_gh_body "$file"
+    normalize_gh_body "$file"
   fi
-  tri_lint_gh_body "$file"
+  lint_gh_body "$file"
   if [[ -n "$MAX_WORDS" ]]; then
-    tri_word_budget "$file" "$MAX_WORDS" >/dev/null
+    word_budget "$file" "$MAX_WORDS" >/dev/null
   fi
 done
