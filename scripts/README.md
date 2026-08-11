@@ -131,6 +131,80 @@ bisecting behaviour across releases without disturbing the binary on PATH.
 
 Empirical cross-version `dolt` CLI compatibility probes.
 
+## Reading room
+
+### `report-room.ps1`
+
+Deterministic, local, zero-inference reader over `reports/README.md`: joins
+the authored Active Threads with a current read-only Beads snapshot into a
+disposable offline HTML page. The Markdown source and Beads stay canonical;
+the generated page is never tracked and never written under `reports/`.
+
+```powershell
+scripts/report-room.ps1 open  [-NoLaunch] [-Output <path>] [-RepoRoot <path>]
+scripts/report-room.ps1 check [-Json] [-RepoRoot <path>]
+```
+
+**Prerequisites:** PowerShell 7+, and `bd` on PATH (only for live bead
+hydration; `-BdJsonPath` substitutes a fixture). No other dependency: the
+Markdown renderer is a minimal internal converter for the constrained subset
+used by the source (headings, paragraphs, links, bold/italic/code, lists,
+tables, blockquotes), not a general Markdown parser.
+
+**`open`** parses each H3 under `## Active threads` as one authored thread,
+validates every relative report link (paths traversing outside the repo are
+rejected), hydrates every unique `mybd-*` ID with a **single batched**
+`bd show <ids...> --json` (bounded per-ID fallback if batching is
+unsupported), and renders a self-contained HTML file under the OS temp
+directory (override with `-Output`). Bead IDs in prose become same-page links
+to embedded detail cards - clicking one needs no process, network request, or
+model call. Closed and missing beads stay visible and clearly marked. Each
+thread shows exact age facts (oldest/newest linked report date, span in days,
+oldest active bead and its age, stalest non-closed bead and days since
+update); emphasis thresholds are named constants (`AGE_EMPHASIS_SOFT_DAYS`=30,
+`AGE_EMPHASIS_STRONG_DAYS`=90) and are neutral emphasis only - age never
+claims priority or neglect. The default browser is launched unless
+`-NoLaunch`; the output path is printed either way. Partial output is deleted
+on failure.
+
+**`check`** prints a compact human summary; `-Json` emits a stable schema
+(`schema_version` 1):
+
+```
+{ schema_version, generated_at, source, repo_root,
+  prerequisites: { pwsh, bd_available, bead_source, renderer },
+  age_thresholds: { soft_days, strong_days },
+  counts: { threads, unique_report_links, unique_bead_ids },
+  threads: [ { title, report_count,
+               report_links: [{ target, date, in_repo, resolved }],
+               bead_count, bead_ids, unresolved_bead_ids, closed_bead_ids,
+               age: { oldest_report_date, newest_report_date,
+                      report_span_days, oldest_active_bead, stalest_bead } } ],
+  unthreaded_since_latest: [ ... ],   # informational, never an error
+  errors:   [{ code, message }],      # exit 1 when non-empty
+  warnings: [{ code, message }] }     # findings only, exit stays 0
+```
+
+Report dates come from a leading `YYYY-MM-DD` filename prefix; `unknown` is
+reported rather than an invented date.
+
+**Failure behavior / exit codes:** 0 success (warnings allowed), 1 error -
+missing prerequisites (`bd` absent), malformed source structure, missing or
+out-of-repo report links, invalid bead JSON, renderer failure - and 2 usage
+error. Errors and warnings are distinguished in the JSON (`link_missing`,
+`link_outside_repo`, `bd_unavailable`, `bd_json_invalid`, `malformed_source`
+vs `bead_unresolved`, `bead_closed`).
+
+**No-inference / no-mutation boundary:** no model or API call, no network, no
+standing service or `bd serve`, no tracked HTML twin, and no mutating `bd`
+command ever - Beads is read only through `bd show --json`. Neither command
+modifies reports or Beads.
+
+**Test seams** (used by `test-report-room.ps1`): `-BdJsonPath <file>` injects
+fixture bead JSON, `REPORT_ROOM_BD_EXE` overrides the bd executable, and
+`REPORT_ROOM_TEST_FAIL_RENDER=1` forces a renderer failure after the output
+file exists to exercise cleanup.
+
 ## Session lifecycle
 
 ### `session-start-stamp`
@@ -165,6 +239,7 @@ The script is only a backstop — the three judgment prompts in AGENTS.md
 | `test-agent-hooks` | the cross-platform agent hook configs |
 | `test-pr-review-gate` | the `gh pr create` PreToolUse gate |
 | `test-session-close-check` | the cold-start report-reference check |
+| `test-report-room.ps1` | the report-room reader (fixture Markdown + injected bead JSON; no live DB, no browser) |
 
 ## Retired but kept
 
