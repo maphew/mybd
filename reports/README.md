@@ -53,12 +53,12 @@ large issue attachment.
 - [Maintainer → contributor teardown](2026-08-10-ic-role-change-teardown.md)
 - [Unfiled-defect harvest](2026-08-10-unfiled-defect-harvest.md)
 
-**Live Beads context:** `mybd-jcylm` and its four PR-specific beads.
-
 **Questions now:** Which existing contributions are still worth shepherding?
 Which maintainer-era commitments should be retired rather than quietly carried
 into the contributor role? What lightweight habits replace automation that
 previously supplied queue awareness?
+
+**Live Beads context:** `mybd-jcylm` and its four PR-specific beads.
 
 ### Local-first proxied Dolt
 
@@ -71,13 +71,13 @@ previously supplied queue awareness?
 3. [Proxy identity design](2026-07-24-psxg5-proxy-identity-design.md) — one
    important safety seam in detail.
 
-**Live Beads context:** `mybd-psxg` remains open. Its campaign is 2/5 complete;
-the executable/version contract (`mybd-psxg.4`) and safe copy migration
-(`mybd-psxg.2`) remain open, along with a live concurrency blocker.
-
 **Question now:** Does this remain the right large contribution campaign after
 the role change, or should it be decomposed into smaller upstream contributions
 that do not require local campaign ownership?
+
+**Live Beads context:** `mybd-psxg` remains open. Its campaign is 2/5 complete;
+the executable/version contract (`mybd-psxg.4`) and safe copy migration
+(`mybd-psxg.2`) remain open, along with a live concurrency blocker.
 
 ### Agent and session machinery
 
@@ -93,12 +93,12 @@ reinventing an existing orchestration product. Much of the lane-specific
 recommendation is now historical, but the findings about isolation, recovery,
 cross-runtime policy, and local-first orchestration still apply.
 
+**Question now:** Which guardrails are properties of sound agent work in any
+role, and which existed only to support maintainer-scale throughput?
+
 **Live Beads context:** the cross-runtime follow-ups under `mybd-lq8i` remain
 open. The maintainer lanes discussed in the landscape report were removed on
 2026-08-10.
-
-**Question now:** Which guardrails are properties of sound agent work in any
-role, and which existed only to support maintainer-scale throughput?
 
 ### What `bd ready` cannot express
 
@@ -113,13 +113,13 @@ that is not socially, temporally, or operationally claimable. They also expose
 the opposite failure: knowledge can exist in a report or closed bead while
 remaining invisible to the next cold-started agent.
 
-**Live Beads context:** `mybd-jrbuu` and `mybd-zg2dj` cover dependency types
-that fail to express the intended gating semantics. `mybd-0nzhq` is this
-reading-room experiment.
-
 **Question now:** Is the missing layer better represented as richer scheduling
 semantics, or should some uncertainty intentionally remain narrative until a
 person turns it into a commitment?
+
+**Live Beads context:** `mybd-jrbuu` and `mybd-zg2dj` cover dependency types
+that fail to express the intended gating semantics. `mybd-0nzhq` is this
+reading-room experiment.
 
 ## Questions worth carrying
 
