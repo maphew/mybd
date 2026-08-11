@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Smoke test for scripts/bdj. Uses a fake bd on PATH; never touches the live db.
+
+set -euo pipefail
+
+BDJ="$(cd "$(dirname "$0")" && pwd)/bdj"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+mkfake() { # $1 = script body for the fake bd
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/bd"
+  chmod +x "$TMP/bd"
+}
+
+run() { PATH="$TMP:$PATH" "$BDJ" "$@"; }
+
+# 1. Array passes through.
+mkfake 'echo "[{\"id\":\"a\"},{\"id\":\"b\"}]"'
+[ "$(run list | jq length)" = 2 ] || fail "array should pass through with length 2"
+
+# 2. Object gets wrapped.
+mkfake 'echo "{\"id\":\"solo\"}"'
+[ "$(run show x | jq -r '.[0].id')" = solo ] || fail "object should wrap to [obj]"
+
+# 3. Empty output becomes [].
+mkfake 'true'
+[ "$(run ready)" = "[]" ] || fail "empty output should become []"
+
+# 4. bd failure propagates (non-zero exit).
+mkfake 'echo boom >&2; exit 7'
+if run ready >/dev/null 2>&1; then fail "bd failure should propagate"; fi
+
+# 5. Passing --json explicitly is refused.
+mkfake 'echo "[]"'
+if run list --json >/dev/null 2>&1; then fail "explicit --json should be refused"; fi
+
+# 6. --json is appended (fake asserts it received the flag).
+mkfake '[[ "${!#}" == "--json" ]] || { echo "no --json" >&2; exit 9; }; echo "[]"'
+run list -n 0 >/dev/null || fail "bdj should append --json as the last arg"
+
+echo "ok: all bdj smoke tests passed"

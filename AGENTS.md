@@ -16,6 +16,11 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 "gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
 
+When scripting over bd output, prefer `scripts/bdj <args>` over `bd <args>
+--json`: it normalizes the output shape to always be a JSON array (object ->
+[object], empty -> []), ending the jq shape-guessing failures (retro F-004).
+For any counting, pass `-n 0` - bd listing commands silently cap at 100 rows.
+
 ## Repository Layout
 
 The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo,
@@ -303,6 +308,9 @@ Rules (the wrapper enforces the first two):
   main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
 - Close stdin (`</dev/null`) when scripting. Capture results with `-o <file>`,
   `--json`, or `--output-schema <file>`.
+- Delegate final messages are capped by a wrapper preamble (retro F-005):
+  summary under 30KB in the final message, full detail to the `-o` file -
+  then grep the file on disk instead of re-reading it whole.
 - Continue a session with `codex exec resume <session-id>` rather than
   re-explaining context. Scout runs are `--ephemeral` and cannot be resumed.
 - Commits by a Codex delegate follow the same signing convention; generate the
