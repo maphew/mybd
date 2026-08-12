@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Amp session close with retained evidence (bead mybd-lq8i.3).
+#
+# The 2026-07-25 cross-runtime retro found Amp runs left no close/worktree
+# proof: executor logs only, no retained check output. This wrapper runs the
+# standard session-close-check and appends one evidence row to a git-tracked
+# ledger, so close evidence survives even when Amp's local thread store does
+# not retain the transcript.
+#
+# Usage: scripts/amp-session-close [args passed through to session-close-check]
+# Env:   MYBD_AMP_LEDGER      override ledger path (tests)
+#        MYBD_AMP_CLOSE_CHECK override check command (tests)
+set -uo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+tid="${AMP_CURRENT_THREAD_ID:-unknown-thread}"
+
+sig=$("$root/scripts/agent-sig.sh" amp 2>/dev/null || echo "_amp-unknown-model-unknown-reasoning_")
+
+check="${MYBD_AMP_CLOSE_CHECK:-$root/scripts/session-close-check}"
+"$check" "$@"
+rc=$?
+
+ledger="${MYBD_AMP_LEDGER:-$root/retro/amp-close-ledger.tsv}"
+mkdir -p "$(dirname "$ledger")"
+[ -f "$ledger" ] || printf 'when\tthread\thead\tclose_check\tsignature\n' >"$ledger"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "$tid" \
+  "$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo '?')" \
+  "$([ "$rc" -eq 0 ] && echo ok || echo "warned($rc)")" \
+  "$sig" >>"$ledger"
+
+echo "amp-session-close: evidence row appended to ${ledger#"$root"/} (thread $tid)"
+exit "$rc"

@@ -9,9 +9,9 @@
 # memory. Unknown fields become unknown-model / unknown-reasoning.
 #
 # Runtime detection: claude (CLAUDE_CODE_SESSION_ID set), codex (CODEX_HOME or
-# CODEX_THREAD_ID set). Other runtimes pass their name as $1, e.g.
-# `agent-sig kilocode`. Runtimes whose metadata this script cannot read may
-# supply AGENT_MODEL / AGENT_REASONING env vars.
+# CODEX_THREAD_ID set), amp (AMP_CURRENT_THREAD_ID set). Other runtimes pass
+# their name as $1, e.g. `agent-sig kilocode`. Runtimes whose metadata this
+# script cannot read may supply AGENT_MODEL / AGENT_REASONING env vars.
 set -euo pipefail
 
 form=comment
@@ -28,6 +28,8 @@ if [ -z "$runtime" ]; then
     runtime=claude
   elif [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
     runtime=codex
+  elif [ -n "${AMP_CURRENT_THREAD_ID:-}" ]; then
+    runtime=amp
   else
     runtime=unknown-runtime
   fi
@@ -79,6 +81,42 @@ case "$runtime" in
       fi
       model="${row%%|*}"
       [ "$row" != "$model" ] && effort="${effort:-${row#*|}}"
+    fi
+    ;;
+  amp)
+    # Amp writes per-thread transcripts to ~/.local/share/amp/threads/ and
+    # per-turn agent_state lines (reasoningEffort, agentMode) to the CLI log.
+    # The active thread id is exported as AMP_CURRENT_THREAD_ID; until the
+    # in-progress thread is flushed to disk, fall back to the newest thread
+    # file. Drop only the claude- model-family prefix (sign opus-4-6, not
+    # claude-opus-4-6); runtime is already "amp".
+    tid="${AMP_CURRENT_THREAD_ID:-}"
+    threads="$HOME/.local/share/amp/threads"
+    src=""
+    [ -n "$tid" ] && [ -f "$threads/$tid.json" ] && src="$threads/$tid.json"
+    [ -z "$src" ] && src=$(ls -t "$threads"/*.json 2>/dev/null | head -1 || true)
+    if [ -z "$model" ] && [ -n "$src" ] && [ -r "$src" ]; then
+      model=$(jq -r '[.messages[]?.usage?.model // empty] | last // empty' "$src" 2>/dev/null || true)
+      model=${model#claude-}
+    fi
+    if [ -z "$effort" ]; then
+      # Amp's effort knob is agentMode (smart/low/rush); builds before
+      # ~2026-08 called it reasoningEffort. Prefer the per-message value in
+      # the thread transcript, then the CLI log's per-turn agent_state line,
+      # then the session-level default.
+      if [ -n "$src" ] && [ -r "$src" ]; then
+        effort=$(jq -r '([.messages[]?.agentMode // empty] | last) // .agentMode // empty' "$src" 2>/dev/null || true)
+      fi
+      if [ -z "$effort" ] && [ -n "$tid" ] && [ -r "$HOME/.cache/amp/logs/cli.log" ]; then
+        line=$(grep -F "\"threadId\":\"$tid\"" "$HOME/.cache/amp/logs/cli.log" 2>/dev/null \
+          | grep -E '"(reasoningEffort|agentMode)"' | tail -1 || true)
+        [ -n "$line" ] && effort=$(printf '%s' "$line" \
+          | jq -r '.reasoningEffort // .agentMode // empty' 2>/dev/null || true)
+      fi
+      if [ -z "$effort" ]; then
+        effort=$(jq -r '.agentMode // (.lastReasoningEffortByMode[.agentMode // "smart"]) // empty' \
+          "$HOME/.local/share/amp/session.json" 2>/dev/null || true)
+      fi
     fi
     ;;
 esac
