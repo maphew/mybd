@@ -555,3 +555,27 @@ drafts above were filed same day against upstream main still at 4ad99760b
 Source beads closed with issue refs; mybd-psxg epic closed (handoff
 complete). Next: master handoff index issue (drafted, pending owner review),
 then the 9 unverified mediums.
+
+---
+
+# Addendum 2 (2026-08-12, autonomous loop): unverified-medium queue drained
+
+9-agent verification workflow (run wf_4afa62a3-a46, ~428k tokens - verify
+stage overran the 200k soft target per policy) against upstream/main still at
+4ad99760b. All 9 verdicts high-confidence:
+
+| bead | verdict | outcome |
+|---|---|---|
+| mybd-y18b | STILL-VALID | filed gastownhall/beads#5706 (procid gate cleared by merged 5013) |
+| mybd-u28eh | STILL-VALID | filed #5707 (gate cleared: 4461 merged 08-07) |
+| mybd-569g | PARTIALLY-VALID | filed #5708 (TESTING_PHILOSOPHY.md now stub; pyramid claim re-anchored to TESTING.md) |
+| mybd-3xire | PARTIALLY-VALID | filed #5709 (setup half fixed by 5204; span re-wrap half survives) |
+| mybd-d8q0 | STILL-VALID | filed #5710 (gate cleared: 4585 merged 07-07) |
+| mybd-vv48x | STALE | closed - resolved upstream (5265 + store-side commits) |
+| mybd-qnva | NOT-UPSTREAM-MATERIAL | closed - upstream TODO be-yinl4d-iter already tracks it |
+| mybd-atp2s | NOT-UPSTREAM-MATERIAL | folded into #5053 as comment (runner-queueing data) |
+| mybd-jart4 | BLOCKED | held - gated on external PR 4720 merge; dep edge jart4->i921i added |
+
+Conversion campaign total: 21 issues filed (5689-5693, 5695-5710 minus 5694),
+4 rejected with evidence, 1 gated. Full agent evidence in the workflow
+journal (session-local); verdict summaries in the bead close reasons.
