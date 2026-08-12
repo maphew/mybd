@@ -84,17 +84,27 @@ case "$runtime" in
     fi
     ;;
   amp)
-    # Amp writes per-thread transcripts to ~/.local/share/amp/threads/ and
-    # per-turn agent_state lines (reasoningEffort, agentMode) to the CLI log.
-    # The active thread id is exported as AMP_CURRENT_THREAD_ID; until the
-    # in-progress thread is flushed to disk, fall back to the newest thread
-    # file. Drop only the claude- model-family prefix (sign opus-4-6, not
+    # Amp threads are server-resident since ~2026-04 (orb / any-machine
+    # pickup); the local store ~/.local/share/amp/threads/ is a stale archive
+    # that stopped receiving files then. Fetch the live payload for the
+    # active thread (AMP_CURRENT_THREAD_ID) via `amp threads export`, falling
+    # back to a local file for that EXACT thread when offline. Never fall
+    # back to "newest local file" - on a post-04 install that silently signs
+    # months-old metadata; unknown-* placeholders are the honest failure.
+    # Drop only the claude- model-family prefix (sign opus-4-6, not
     # claude-opus-4-6); runtime is already "amp".
     tid="${AMP_CURRENT_THREAD_ID:-}"
     threads="$HOME/.local/share/amp/threads"
     src=""
-    [ -n "$tid" ] && [ -f "$threads/$tid.json" ] && src="$threads/$tid.json"
-    [ -z "$src" ] && src=$(ls -t "$threads"/*.json 2>/dev/null | head -1 || true)
+    amp_tmp=""
+    if [ -n "$tid" ] && command -v amp >/dev/null 2>&1; then
+      amp_tmp=$(mktemp)
+      if amp threads export "$tid" >"$amp_tmp" 2>/dev/null && [ -s "$amp_tmp" ] \
+         && jq -e . "$amp_tmp" >/dev/null 2>&1; then
+        src="$amp_tmp"
+      fi
+    fi
+    [ -z "$src" ] && [ -n "$tid" ] && [ -f "$threads/$tid.json" ] && src="$threads/$tid.json"
     if [ -z "$model" ] && [ -n "$src" ] && [ -r "$src" ]; then
       model=$(jq -r '[.messages[]?.usage?.model // empty] | last // empty' "$src" 2>/dev/null || true)
       model=${model#claude-}
@@ -118,6 +128,7 @@ case "$runtime" in
           "$HOME/.local/share/amp/session.json" 2>/dev/null || true)
       fi
     fi
+    [ -n "$amp_tmp" ] && rm -f "$amp_tmp"
     ;;
 esac
 
