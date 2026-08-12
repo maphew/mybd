@@ -416,3 +416,116 @@ Update the comment to describe the current (post-#5204) lifecycle instead of the
 
 No behavior change needed — comment-only.
 
+---
+
+# Batch 2: proxied-campaign (mybd-psxg) handoff drafts
+
+Added 2026-08-12, same session as the psxg finish-locally-vs-handoff decision
+(verdict: hand off). Verified against upstream/main 4ad99760b by a 4-agent
+workflow. These four upgrade psxg.3 / nsg1 / 5zvr from the unverified-medium
+queue and add the psxg.4-part-2 follow-up as a new item. Re-check freshness
+before filing — in particular, PR 5092's merge state gates the psxg.4-part-2
+draft's framing.
+
+## mybd-psxg.3: docs/cli-docs.pin stuck at v1.1.0 (2 releases stale); doctor gitignore template still writes .beads/proxieddb/
+
+**Evidence:** Confirmed at upstream/main@4ad99760b, 2026-08-12. The live help text is FIXED on main (cmd/bd/init.go:2329-2333 says `.beads/dolt`; fix landed between v1.1.2 and v1.2.0), so the original bead claim is half-resolved. Two residual gaps: (1) committed generated docs still say proxieddb — docs/CLI_REFERENCE.md:3438,3448,3449 and docs/cli-reference/init.md:66,76,77 — because docs/cli-docs.pin pins doc generation to tag v1.1.0 and was never bumped across v1.1.1→v1.2.1 despite its own header saying "Bump this tag as part of each release" (git log shows only the introducing commit d2f87d50d). (2) cmd/bd/doctor/gitignore.go:101 `ProjectGitignorePatterns` — written into user projects' root .gitignore by `bd init` and `bd doctor --fix` (wired via cmd/bd/init.go:1112, cmd/bd/doctor_fix.go:279, cmd/bd/init_stealth.go:181,268) — still lists `.beads/proxieddb/` with no `.beads/dolt/` entry. Mitigating: the nested `.beads/.gitignore` template (gitignore.go:12, bare `dolt/`) independently covers the data dir, so severity is defense-in-depth, not active leak. **Overlap:** open issue gastownhall/beads#5103 (hamchowderr, 2026-07-28) covers the help-text half, which is now fixed on main; it mentions neither the stale docs pin nor the doctor gitignore template. File this as a NARROW new issue cross-referencing #5103 as prior art; optionally leave a courtesy comment on #5103 noting the help-text half is fixed as of v1.2.0.
+
+---
+
+`bd init --help` was fixed between v1.1.2 and v1.2.0 to document the proxied-server data root as `.beads/dolt` (the actual implementation root) — resolving the live-help half of #5103. Two smaller pieces of the same rename are still stale on main:
+
+### 1. Committed generated CLI docs still say `proxieddb` because `docs/cli-docs.pin` is two releases stale
+
+`docs/CLI_REFERENCE.md` (lines 3438, 3448, 3449) and `docs/cli-reference/init.md` (lines 66, 76, 77) still describe `--proxied-server`, `--proxied-server-log-path`, and `--proxied-server-root-path` as rooted at `.beads/proxieddb`.
+
+The generator isn't broken — `docs/cli-docs.pin` pins doc generation to release tag `v1.1.0`, whose `cmd/bd/init.go` genuinely said proxieddb. The pin file's own header says "Bump this tag as part of each release, then run ./scripts/generate-cli-docs.sh", but `git log --oneline -- docs/cli-docs.pin` shows only the commit that introduced the pinning scheme (d2f87d50d); it was never bumped through v1.1.1, v1.1.2, v1.2.0, or v1.2.1. The committed reference docs are two minor releases behind the pin file's own stated policy.
+
+**Fix shape:** bump `docs/cli-docs.pin` to the current release tag and re-run `scripts/generate-cli-docs.sh` (regenerates docs/CLI_REFERENCE.md, docs/cli-reference/*, docs/docs.json). Consider wiring the script's existing `--check` mode into the release checklist or CI so a missed bump fails visibly instead of silently shipping stale docs.
+
+### 2. Doctor's root-.gitignore template still writes the obsolete `.beads/proxieddb/` pattern
+
+`cmd/bd/doctor/gitignore.go:97-104` `ProjectGitignorePatterns` — the patterns `bd init` and `bd doctor --fix` write into a user project's **root** `.gitignore` — still lists `.beads/proxieddb/` (line 101) and has no `.beads/dolt/` entry. This is live code, not generated docs: wired through `cmd/bd/init.go:1112`, `cmd/bd/doctor_fix.go:279`, `cmd/bd/init_stealth.go:181,268`.
+
+Practical severity is low because the nested `.beads/.gitignore` template (`GitignoreTemplate`, gitignore.go:12, bare `dolt/` pattern) independently covers the data dir. But the root-gitignore layer exists precisely as defense-in-depth against committing Dolt database files, and today it defends a directory name that no longer exists. Suggest replacing with `.beads/dolt/` (optionally keeping `.beads/proxieddb/` for repos that predate the rename). The repo's own top-level `.gitignore:140` has the same stale pattern, cosmetically.
+
+Related: #5103 reported the help-text half of this rename drift; that half is fixed on main as of v1.2.0 — this issue covers the two remaining pieces #5103 doesn't mention.
+
+## mybd-psxg.4 (part 2): dolt CLI executable contract, part 2 — identity threading, capability registry, doctor check, packaging (stacks on #5092)
+
+**Evidence:** Confirmed at upstream/main@4ad99760b, 2026-08-12. internal/doltversion does not exist on main yet (PR 5092 unmerged: OPEN, mergeable, ~104 checks green, steveyegge MERGE-AFTER-FIXES 08-10 with all 3 should-fixes addressed by 08-12 pushes, awaiting re-review). Bare `exec.LookPath("dolt")` persists at internal/doltserver/doltserver.go:1261 (shared-server), cmd/bd/compact.go:804, internal/remotecache/cache.go:88, internal/storage/dolt/bootstrap.go:63. Only ONE version-gated capability exists in the tree (SupportsArchiveLevelConfig, internal/doltserver/gc_config.go:11-68, shared-server-only, YAML-key surface only). Pidfile v2 struct (internal/storage/dbproxy/pidfile/pidfile.go:14-23) has zero dolt-binary identity fields. No doctor check inspects the dolt CLI executable (all 7 existing dolt doctor checks operate on a connected DB or git config). #5627 (open, ours, no comments) is a concrete regression the part-2 capability registry would fix — renderProxiedServerConfig (cmd/bd/proxied_server.go:322) unconditionally emits auto_gc_behavior.archive_level after 68afa3d51 deleted the managed-mode gate, re-reaching the #4986 yaml.UnmarshalStrict failure on old dolt. Dup search across 8 query shapes: nothing owns part-2 scope; PR 5092 has no closingIssuesReferences. Full design: reports/2026-07-25-psxg4-dolt-cli-contract-design.md (v2, codex-sol adversarially reviewed, 1 FATAL + 6 MAJOR adopted) — the issue body below carries the substance inline since that report is not upstream-visible. **Filing gate: wait until 5092 merges (or file with explicit "blocked on #5092" framing if the queue pace demands).**
+
+---
+
+PR #5092 delivers part 1 of a supported-dolt-executable contract for proxied mode: the `internal/doltversion` leaf package (hardened probe, resolution order `BEADS_DOLT_BIN` env → PATH, warn-only RecommendedMin) wired at the managed-proxied UOW provider and `bd init --proxied-server` preflight. Its PR body explicitly defers the rest. This issue tracks that remainder so it doesn't evaporate; nothing on main or in open PRs owns it today.
+
+### A. Thread one resolved identity through every spawn site
+
+`doltserver.Start` (shared-server path, internal/doltserver/doltserver.go:1261) and other sites (cmd/bd/compact.go:804, internal/remotecache/cache.go:88, internal/storage/dolt/bootstrap.go:63) still do bare `exec.LookPath("dolt")`, so different code paths can silently select different binaries. The `--dolt-bin` plumbing to the proxy child already exists (cmd/bd/db_proxy_child.go) as a threading target.
+
+### B. Clone-local gitignored sidecar override
+
+A dolt-bin override in the existing gitignored per-clone config family (configfile.go / doctor gitignore template), sitting between the env var and PATH in resolution order. Part 1 left only a hook point. (Design note: an earlier draft put the override in committed metadata.json; that was rejected in adversarial review as repo-data-selects-an-executable, matching the credential-command env-only precedent — the sidecar must stay clone-local and gitignored.)
+
+### C. Pidfile dolt-identity fields + candidate/launched/live triple
+
+The pidfile v2 struct has no record of which dolt binary a running managed server was launched with. Add launched-binary path + OS file identity + parsed version; gate managed-mode pidfile publication on a bounded post-ready `SELECT dolt_version()` probe; have `bd dolt status`/doctor report candidate vs launched vs live identity and flag disagreement (external topology: report-only, never gate).
+
+### D. Per-surface capability registry — with #5627 as the first consumer
+
+Today exactly one version-gated capability exists (`SupportsArchiveLevelConfig`, shared-server mode, YAML-key surface only). The YAML config key, SQL `DOLT_GC` arg, `DOLT_STATS_GC`, and CLI flag are distinct surfaces that only coincidentally share version cutoffs. Concrete forcing function: #5627 — managed-proxied config rendering now emits `auto_gc_behavior.archive_level` unconditionally, which pre-archive_level dolt rejects under `yaml.UnmarshalStrict` (the #4986 symptom, re-reachable since 68afa3d51). Its proposed fix ("only emit the key when the probed dolt supports it") should be this registry's first acceptance criterion.
+
+### E. Doctor "Dolt CLI" check
+
+No doctor check inspects the executable itself — the existing seven dolt-related checks all operate on an already-open DB or git config. A new check should report resolved path, source (env/sidecar/PATH), parsed version vs live `dolt_version()`, and OS file identity; checksum only on request. Coordination note: doctor subcommand additions have historically gone through a single-vetted-subcommand owner gate (#3794/#3758 pattern) — flagging rather than assuming.
+
+### F. Packaging and support-matrix docs
+
+Per-OS install channels (Linux tarball/install.sh, macOS brew incl. services caveat, Windows MSI/Chocolatey), an explicit OS/arch/libc support table with tested/expected/unsupported states, a repo-wide DOLT_VERSION pin plus one latest-canary CI lane.
+
+**Explicitly out of scope:** hard version-floor enforcement. That needs the cross-version compatibility matrix evidence first (separate issue; preliminary single-run evidence already points at ≥ 2.0.0 as the real storage boundary). The only hard gate part 1 ships is refusing a binary that fails the bounded probe outright.
+
+Suggested sequencing (from the reviewed design): PR-2 = A+B+C+D (incl. the #5627 fix), PR-3 = E, PR-4 = F.
+
+## mybd-5zvr: docs claim dolt 2.2.0+ but nothing verifies or enforces it — single-run matrix evidence puts the real floor at 2.0.0
+
+**Evidence:** Confirmed at upstream/main@4ad99760b, 2026-08-12. docs/getting-started/sync-setup.md:15,21 assert "Dolt 2.2.0+ / must be 2.2.0+"; no code compares the dolt CLI version against any floor (doctor's "Dolt Version" check, cmd/bd/doctor/server.go:285-368, detects/reports the connected server's version only); CI pins exactly 2.2.0 everywhere (internal/testutil/testdoltcommon.go:14, scripts/pull_dolt_image_test.go:14) so boundary versions are never exercised. Harness exists in the mybd coordination repo: scripts/dolt-compat-matrix (bash, 8 probes, downloads official linux-amd64 tarballs, isolated DOLT_ROOT_PATH per run); first-run results in reports/2026-07-25-dolt-compat-matrix-first-run.md. Dup search across ~12 query shapes: nothing upstream owns an evidence-backed dolt floor; adjacent-not-duplicate: #5627 (config-writing bug re old dolt), #2764 (general CI-gap catch-all, possible see-also). **Note: the issue body must carry the results table inline — the source report is not upstream-visible.**
+
+---
+
+docs/getting-started/sync-setup.md tells users Dolt "must be 2.2.0+", but that number is asserted, not verified or enforced: nothing in the codebase compares the dolt CLI's version to a floor (the doctor "Dolt Version" check only reports what the connected server is), and CI only ever tests exactly 2.2.0, so the boundary between works-and-breaks has never been probed by CI.
+
+A single-run compatibility matrix (2026-07-25, linux-amd64, official release tarballs, 8 probes: version-parse, proxied init+write, reopen, GC via CLI flag / SQL arg / stats-GC, cross-read of storage written by the current embedded dolt module, file:// sync round trip) against dolt CLI 1.52.1 / 1.85.0 / 2.0.0 / 2.2.2 found:
+
+| dolt CLI | serve proxied (init/write/reopen) | cross-read module-written storage |
+|---|---|---|
+| 1.52.1 | FAIL (server never listens) | FAIL ("table has unknown fields") |
+| 1.85.0 | PASS | FAIL ("table has unknown fields") |
+| 2.0.0 | PASS | PASS |
+| 2.2.2 | PASS | PASS |
+
+(GC probes passed uniformly where applicable; the stats-GC probe failed identically on every version including 2.2.2 — a harness artifact from running it through offline `dolt sql`, not a version signal.)
+
+The decisive boundary is cross-read of module-written storage: **dolt ≥ 2.0.0 is required**. 1.85.0 is notable because dolt's own release notes describe it as the oldest 1.x line that understands 2.x storage, yet it still fails at the schema level. Any embedded↔proxied migration or mixed embedded/CLI workflow hard-requires ≥ 2.0.0. Separately, 1.52.1 can't serve proxied mode at all (root cause not yet dug out).
+
+**Suggested resolution:** treat 2.0.0 as the evidence-backed enforceable floor and keep 2.2.x as the documented/CI-tested recommendation — either way the docs number becomes a cited fact or a deliberately conservative choice that says so, instead of a number nobody checked. Happy to contribute the matrix harness (a self-contained bash script) if wanted.
+
+**Honest caveats:** single run, linux-amd64 only; no write-compat or schema-migration-on-old-db probes yet; stats-GC probe needs rework; 1.52.1's serve failure unexplained; not wired into CI. A CI-grade matrix is the follow-on work.
+
+## mybd-nsg1: ci: no Windows lane executes the dbproxy proxied-lifecycle tests (procid / process_executable Windows code has zero CI execution)
+
+**Evidence:** Confirmed at upstream/main@4ad99760b, 2026-08-12, with one correction to the original bead claim: internal/procid/procid_windows_test.go now EXISTS (added by merged PR 5013, commit 21669eca6; TestVerifyAfterTerminateWhileHandleHeld regression-tests the review-caught handle-held defect) — but `git grep procid .github/workflows/` returns zero hits, so it never executes in CI on any runner. proxied-local-smoke.yml is the only workflow scoped to internal/storage/dbproxy/** and is hard ubuntu-latest; its own header admits "Linux first; the test lane defines Windows/macOS parity but does not implement those OS-specific observation helpers yet". The three existing windows-latest jobs (pr.yml test-windows-liveness, worktree-remove-windows; main.yml test-windows) cover unrelated paths and none run `go test` on internal/procid or internal/storage/dbproxy. Both review-caught Windows defects from PR 5013 ARE fixed on main (unverified_process_windows.go:97 handleExited uses GetExitCodeProcess; procid_windows.go:126 likewise) — this is purely a coverage gap, not a live bug. process_executable_windows.go, unverified_process_windows.go, endpoint_windows.go still have zero _windows_test.go. Dup search (7 query shapes): none; closest is closed PR 5075 (GOOS=windows lint/compile pass only).
+
+---
+
+PR #5013 added Windows-specific handling to the managed proxied-server lifecycle (internal/storage/dbproxy/proxy, internal/procid), fixing two Windows-only defects that were caught only by pre-merge review: Verify() falsely reporting a terminated-but-handle-pinned process as running, and a missing GetExitCodeProcess check. Both fixes are on main, and internal/procid/procid_windows_test.go now contains a regression test for the first (TestVerifyAfterTerminateWhileHandleHeld).
+
+The gap: none of that Windows code ever executes in CI.
+
+- `git grep procid .github/workflows/` → zero matches: the regression test runs on no runner, no OS. From a CI standpoint it is dead test code.
+- `.github/workflows/proxied-local-smoke.yml` is the only workflow path-scoped to `internal/storage/dbproxy/**`, and it is `runs-on: ubuntu-latest`; its own header comment says the Windows/macOS observation helpers are defined-but-unimplemented.
+- The windows-latest jobs that do exist (pr.yml `test-windows-liveness` — one config-drift liveness test in cmd/bd; `worktree-remove-windows` — NTFS worktree removal; main.yml `test-windows` — build + smoke only) never run `go test` against internal/procid or internal/storage/dbproxy.
+- `process_executable_windows.go`, `unverified_process_windows.go`, and `endpoint_windows.go` have no `_windows_test.go` at all.
+
+Ask: at minimum, add a windows-latest job running `go test ./internal/procid/... ./internal/storage/dbproxy/...` so the existing Windows regression test and any future Windows dbproxy tests execute pre-merge — rather than relying on ad hoc review to catch platform-specific handle-lifecycle bugs, as happened for #5013. The fuller version is the Windows/macOS parity lane proxied-local-smoke.yml's header already promises.
+
