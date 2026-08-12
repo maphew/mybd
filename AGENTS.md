@@ -415,14 +415,16 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
   `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
 For Amp, run `scripts/agent-sig.sh amp` (auto-detected when
-`AMP_CURRENT_THREAD_ID` is set). It reads live session metadata from the local
-Amp state — model from `messages[].usage.model` in
-`~/.local/share/amp/threads/$AMP_CURRENT_THREAD_ID.json` (newest thread file as
-fallback until the in-progress thread is flushed), effort from the per-message
-`agentMode` (smart/low/rush/deep; pre-2026-08 builds called it
-`reasoningEffort`), falling back to the CLI log and then
-`~/.local/share/amp/session.json`. Do not hand-roll this lookup; if the schema
-drifts again, fix the script.
+`AMP_CURRENT_THREAD_ID` is set). Amp threads are server-resident (orb /
+any-machine pickup; the local thread store stopped receiving files ~2026-04),
+so the script fetches the live payload with
+`amp threads export $AMP_CURRENT_THREAD_ID` — model from
+`messages[].usage.model`, effort from the per-message `agentMode`
+(smart/low/rush/deep; pre-2026-08 builds called it `reasoningEffort`) — with a
+local file for that exact thread as offline fallback, then the CLI log and
+`~/.local/share/amp/session.json`. It deliberately never signs from "newest
+local thread file": that is months stale and would guess. Do not hand-roll
+this lookup; if the schema drifts again, fix the script.
 
 Drop only the `claude-` model-family prefix (write `opus-4-6`).
 

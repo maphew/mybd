@@ -18,18 +18,22 @@ ok()   { note "  ok: $*"; }
 bad()  { note "  FAIL: $*"; fail=1; }
 
 note "[1/3] agent-sig amp reads live Amp metadata"
-if [ -d "$HOME/.local/share/amp/threads" ] && ls "$HOME"/.local/share/amp/threads/*.json >/dev/null 2>&1; then
-  sig=$("$root/scripts/agent-sig.sh" amp 2>/dev/null || true)
+# Threads are server-resident; sign against the machine's last thread id via
+# `amp threads export`, the same path a live session takes.
+tid=$(jq -r '.lastThreadId // empty' "$HOME/.local/share/amp/session.json" 2>/dev/null || true)
+if [ -n "$tid" ] && command -v amp >/dev/null 2>&1 \
+   && amp threads export "$tid" >/dev/null 2>&1; then
+  sig=$(AMP_CURRENT_THREAD_ID="$tid" "$root/scripts/agent-sig.sh" amp 2>/dev/null || true)
   case "$sig" in
     *unknown-model*|*unknown-reasoning*|"")
       bad "unresolved fields: '$sig'" ;;
     _amp-*)
-      ok "$sig" ;;
+      ok "$sig (thread $tid)" ;;
     *)
       bad "unexpected shape: '$sig'" ;;
   esac
 else
-  note "  skip: no local Amp thread store"
+  note "  skip: no amp CLI, no last thread id, or thread export unavailable"
 fi
 
 note "[2/3] agentbin/bd shim serializes concurrent bd"
