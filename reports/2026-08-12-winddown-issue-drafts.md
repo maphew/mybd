@@ -529,3 +529,29 @@ The gap: none of that Windows code ever executes in CI.
 
 Ask: at minimum, add a windows-latest job running `go test ./internal/procid/... ./internal/storage/dbproxy/...` so the existing Windows regression test and any future Windows dbproxy tests execute pre-merge — rather than relying on ad hoc review to catch platform-specific handle-lifecycle bugs, as happened for #5013. The fuller version is the Windows/macOS parity lane proxied-local-smoke.yml's header already promises.
 
+
+---
+
+# Addendum (2026-08-12, later session): all 11 drafts filed
+
+Owner dropped the pacing requirement ("everyone is using agents"). All 11
+drafts above were filed same day against upstream main still at 4ad99760b
+(zero drift since verification, so no re-verification delta):
+
+| bead | issue |
+|---|---|
+| mybd-vctrh | gastownhall/beads#5695 |
+| mybd-ykaa | gastownhall/beads#5696 |
+| mybd-7qp5 | gastownhall/beads#5697 |
+| mybd-lfos | gastownhall/beads#5698 |
+| mybd-43lf | gastownhall/beads#5699 |
+| mybd-o4u1w | gastownhall/beads#5700 |
+| mybd-zz04j | gastownhall/beads#5701 |
+| mybd-psxg.3 | gastownhall/beads#5702 (+ courtesy comment on #5103) |
+| mybd-psxg.4 pt2 | gastownhall/beads#5703 (blocked-on-#5092 framing) |
+| mybd-5zvr | gastownhall/beads#5704 |
+| mybd-nsg1 | gastownhall/beads#5705 |
+
+Source beads closed with issue refs; mybd-psxg epic closed (handoff
+complete). Next: master handoff index issue (drafted, pending owner review),
+then the 9 unverified mediums.
