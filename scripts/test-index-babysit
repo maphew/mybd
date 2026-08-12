@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Offline smoke test for scripts/index-babysit internals (no gh, no bd).
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fails=0
+t() { local name="$1" got="$2" want="$3"
+  if [[ "$got" == "$want" ]]; then echo "ok   $name"
+  else echo "FAIL $name"; echo "  got:  $got"; echo "  want: $want"; fails=$((fails+1)); fi
+}
+
+INDEX_BABYSIT_TEST=1 XDG_STATE_HOME="$(mktemp -d)" source "$ROOT/scripts/index-babysit"
+
+# checkbox regex matches the index's line shape, and only unchecked lines
+line='- [ ] #5092 — dolt CLI discovery + hardened version probe'
+[[ "$line" =~ $CHECKBOX_RE ]] && t "regex-match" "${BASH_REMATCH[1]}" "5092" || t "regex-match" "no-match" "5092"
+done_line='- [x] #5092 — dolt CLI discovery *(merged 2026-08-13, auto-marked)*'
+[[ "$done_line" =~ $CHECKBOX_RE ]] && t "regex-skips-checked" "matched" "no-match" || t "regex-skips-checked" "no-match" "no-match"
+prose='This line mentions #5092 but is not a checkbox'
+[[ "$prose" =~ $CHECKBOX_RE ]] && t "regex-skips-prose" "matched" "no-match" || t "regex-skips-prose" "no-match" "no-match"
+
+# mark_line flips exactly the checkbox and appends outcome
+t "mark_line" "$(mark_line "$line" merged 2026-08-13)" \
+  '- [x] #5092 — dolt CLI discovery + hardened version probe *(merged 2026-08-13, auto-marked)*'
+
+# outcome_for: merged PR, closed-unmerged PR, closed issue, not-planned issue, open item
+t "outcome-merged"     "$(outcome_for '{"state":"closed","closed_at":"2026-08-13T10:00:00Z","pull_request":{"merged_at":"2026-08-13T09:59:00Z"}}')" "$(printf 'merged\t2026-08-13')"
+t "outcome-unmerged"   "$(outcome_for '{"state":"closed","closed_at":"2026-08-13T10:00:00Z","pull_request":{"merged_at":null}}')" "$(printf 'closed unmerged\t2026-08-13')"
+t "outcome-issue"      "$(outcome_for '{"state":"closed","closed_at":"2026-08-13T10:00:00Z","state_reason":"completed"}')" "$(printf 'closed\t2026-08-13')"
+t "outcome-notplanned" "$(outcome_for '{"state":"closed","closed_at":"2026-08-13T10:00:00Z","state_reason":"not_planned"}')" "$(printf 'closed not-planned\t2026-08-13')"
+t "outcome-open"       "$(outcome_for '{"state":"open"}')" ""
+
+(( fails == 0 )) && echo "all tests passed" || { echo "$fails test(s) failed"; exit 1; }

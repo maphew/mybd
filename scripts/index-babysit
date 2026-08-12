@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# index-babysit: zero-token patrol for the maintainer-step-down handoff surface
+# (gastownhall/beads#5711 and the beads behind it).  Contributor-scoped: it
+# NEVER merges, closes, rebases, comments upstream, or pushes anything.  Its
+# only upstream write is editing the index issue's own body to tick checkboxes
+# that observed GitHub state says are done.  Everything else is a local bead
+# comment so the next interactive session inherits the work.
+#
+# Duties per pass:
+#   1. sync_index  - fetch #5711's body; for every unchecked "- [ ] #NNNN ..."
+#                    line whose PR/issue is now closed, flip to [x] with an
+#                    outcome+date parenthetical.  Fail-closed: any fetch/parse
+#                    problem leaves the line (or the whole pass) untouched.
+#   2. watch_gate  - when PR 4720 merges, leave a one-time comment on
+#                    mybd-jart4 telling the next session to re-verify and file
+#                    the proxied mol-bond follow-up.
+#   3. check_fleet - flag open maphew PRs that regress (merge conflict, real
+#                    FAILURE check conclusions, fresh CHANGES_REQUESTED) as
+#                    comments on the wind-down epic bead.  CANCELLED check
+#                    conclusions are deliberately ignored: superseded CI waves
+#                    leave stale cancelled rollup entries that look red but
+#                    are not (observed 2026-08-12 on PR 5202).
+#
+# Env knobs (defaults in parens): INDEX_BABYSIT_REPO (gastownhall/beads),
+# INDEX_BABYSIT_ISSUE (5711), INDEX_BABYSIT_GATE_PR (4720),
+# INDEX_BABYSIT_GATE_BEAD (mybd-jart4), INDEX_BABYSIT_EPIC_BEAD (mybd-ykt9f),
+# INDEX_BABYSIT_AUTHOR (maphew), INDEX_BABYSIT_DRY_RUN (0).
+# INDEX_BABYSIT_TEST=1 sources the functions without running main (tests).
+set -uo pipefail
+
+REPO="${INDEX_BABYSIT_REPO:-gastownhall/beads}"
+INDEX_ISSUE="${INDEX_BABYSIT_ISSUE:-5711}"
+GATE_PR="${INDEX_BABYSIT_GATE_PR:-4720}"
+GATE_BEAD="${INDEX_BABYSIT_GATE_BEAD:-mybd-jart4}"
+EPIC_BEAD="${INDEX_BABYSIT_EPIC_BEAD:-mybd-ykt9f}"
+AUTHOR="${INDEX_BABYSIT_AUTHOR:-maphew}"
+DRY_RUN="${INDEX_BABYSIT_DRY_RUN:-0}"
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/index-babysit"
+mkdir -p "$STATE_DIR"
+LOG="$STATE_DIR/patrol.log"
+LOCK="$STATE_DIR/lock"
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"; }
+
+# Bead comments are best-effort: bd may be mid-migration or another process
+# may hold the embedded-dolt lock.  Return bd's status so callers that need
+# once-only semantics (watch_gate) can retry next pass instead of losing the
+# event; sync_index ignores the status because the flip is re-derivable.
+bd_note() {
+  command -v bd >/dev/null 2>&1 || { log "bd unavailable, note dropped: $2"; return 1; }
+  if bd comment "$1" "$2" >/dev/null 2>&1; then return 0; fi
+  log "bd comment failed on $1: $2"
+  return 1
+}
+
+CHECKBOX_RE='^- \[ \] #([0-9]+) '
+
+# mark_line <line> <outcome> <yyyy-mm-dd>: flip the checkbox and append the
+# outcome.  Only ever called on lines that matched CHECKBOX_RE.
+mark_line() {
+  local line="$1" outcome="$2" date="$3"
+  printf '%s *(%s %s, auto-marked)*\n' "${line/"- [ ] "/"- [x] "}" "$outcome" "$date"
+}
+
+# outcome_for <issues-api-json>: prints "<outcome>\t<date>" for a closed item,
+# nothing for an open one, non-zero on unparseable input.
+outcome_for() {
+  local item="$1" state merged_at reason date
+  state="$(jq -r '.state // empty' <<<"$item")" || return 1
+  [[ "$state" == "closed" ]] || return 0
+  merged_at="$(jq -r '.pull_request.merged_at // empty' <<<"$item")"
+  if [[ -n "$merged_at" ]]; then
+    printf 'merged\t%s\n' "${merged_at%%T*}"
+    return 0
+  fi
+  date="$(jq -r '.closed_at // empty' <<<"$item")"
+  date="${date%%T*}"
+  if jq -e '.pull_request' >/dev/null 2>&1 <<<"$item"; then
+    printf 'closed unmerged\t%s\n' "$date"
+  else
+    reason="$(jq -r '.state_reason // empty' <<<"$item")"
+    if [[ "$reason" == "not_planned" ]]; then
+      printf 'closed not-planned\t%s\n' "$date"
+    else
+      printf 'closed\t%s\n' "$date"
+    fi
+  fi
+}
+
+sync_index() {
+  local body tmp line n item out outcome date changed=0 flips=""
+  body="$(gh issue view "$INDEX_ISSUE" --repo "$REPO" --json body -q .body 2>/dev/null)" \
+    || { log "index #$INDEX_ISSUE: body fetch failed, skipping sync"; return 1; }
+  [[ -n "$body" ]] || { log "index #$INDEX_ISSUE: empty body, refusing to touch"; return 1; }
+  tmp="$(mktemp "$STATE_DIR/.body.XXXXXX")"
+  while IFS= read -r line; do
+    if [[ "$line" =~ $CHECKBOX_RE ]]; then
+      n="${BASH_REMATCH[1]}"
+      if ! item="$(gh api "repos/$REPO/issues/$n" 2>/dev/null)"; then
+        printf '%s\n' "$line" >>"$tmp"
+        log "item #$n: fetch failed, left unchecked"
+        continue
+      fi
+      if ! out="$(outcome_for "$item")"; then
+        printf '%s\n' "$line" >>"$tmp"
+        log "item #$n: unparseable API response, left unchecked"
+        continue
+      fi
+      if [[ -n "$out" ]]; then
+        outcome="${out%%$'\t'*}"
+        date="${out##*$'\t'}"
+        mark_line "$line" "$outcome" "$date" >>"$tmp"
+        flips="$flips #$n=$outcome($date)"
+        changed=1
+      else
+        printf '%s\n' "$line" >>"$tmp"
+      fi
+    else
+      printf '%s\n' "$line" >>"$tmp"
+    fi
+  done <<<"$body"
+  if (( changed )); then
+    if [[ "$DRY_RUN" == 1 ]]; then
+      log "DRY: would tick:$flips"
+    else
+      # Cheap concurrent-edit guard: if the body moved under us mid-pass, do
+      # nothing and let the next pass re-derive everything from fresh state.
+      local now
+      now="$(gh issue view "$INDEX_ISSUE" --repo "$REPO" --json body -q .body 2>/dev/null)"
+      if [[ "$now" != "$body" ]]; then
+        log "index #$INDEX_ISSUE: body changed mid-pass, deferring to next pass"
+      elif gh issue edit "$INDEX_ISSUE" --repo "$REPO" --body-file "$tmp" >/dev/null 2>&1; then
+        log "index #$INDEX_ISSUE ticked:$flips"
+        bd_note "$EPIC_BEAD" "[index-babysit $(date -u +%F)] auto-ticked in $REPO#$INDEX_ISSUE:$flips" || true
+      else
+        log "index #$INDEX_ISSUE: edit failed, will retry next pass"
+      fi
+    fi
+  fi
+  rm -f "$tmp"
+}
+
+watch_gate() {
+  local marker="$STATE_DIR/gate-pr$GATE_PR.cleared" merged
+  [[ -f "$marker" ]] && return 0
+  merged="$(gh api "repos/$REPO/pulls/$GATE_PR" -q .merged 2>/dev/null)" || return 0
+  [[ "$merged" == "true" ]] || return 0
+  log "gate PR $GATE_PR merged"
+  if [[ "$DRY_RUN" == 1 ]]; then
+    log "DRY: would notify $GATE_BEAD"
+    return 0
+  fi
+  # Marker only lands after the bead note succeeds so the event is never lost.
+  if bd_note "$GATE_BEAD" "[index-babysit] GATE CLEARED: $REPO PR $GATE_PR merged. Next session: re-verify runMolBondProxiedServer against new main and file the proxied-routing follow-up upstream if $GATE_PR did not cover it (see the 2026-08-12 re-verification note on this bead), then close this bead."; then
+    touch "$marker"
+  fi
+}
+
+check_fleet() {
+  local prs
+  prs="$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open \
+    --json number,mergeable,reviewDecision,statusCheckRollup --limit 50 2>/dev/null)" \
+    || { log "fleet fetch failed, skipping"; return 0; }
+  local n m d f sig statefile prev flags
+  while IFS= read -r pr; do
+    n="$(jq -r .number <<<"$pr")"
+    m="$(jq -r '.mergeable // ""' <<<"$pr")"
+    d="$(jq -r '.reviewDecision // ""' <<<"$pr")"
+    f="$(jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length' <<<"$pr")"
+    sig="$m|$d|$f"
+    statefile="$STATE_DIR/pr-$n.state"
+    prev="$(cat "$statefile" 2>/dev/null || true)"
+    [[ "$sig" == "$prev" ]] && continue
+    flags=""
+    [[ "$m" == "CONFLICTING" ]] && flags="$flags; merge conflict with base"
+    [[ "$f" -gt 0 ]] && flags="$flags; $f FAILURE check(s) (cancelled ignored)"
+    # Review-decision flags need a prior baseline: on first sight an existing
+    # CHANGES_REQUESTED usually means "already addressed, awaiting re-review",
+    # so record it silently and only flag a later transition into it.
+    [[ -n "$prev" && "$d" == "CHANGES_REQUESTED" && "$prev" != *"CHANGES_REQUESTED"* ]] \
+      && flags="$flags; review requested changes"
+    if [[ -n "$flags" ]]; then
+      log "PR $n attention:${flags} (was: ${prev:-first-seen})"
+      if [[ "$DRY_RUN" != 1 ]]; then
+        bd_note "$EPIC_BEAD" "[index-babysit] PR $n needs a session:${flags}. Babysitter only flags; a session should rebase/fix/respond." || true
+      fi
+    else
+      log "PR $n state change: ${prev:-first-seen} -> $sig (benign)"
+    fi
+    [[ "$DRY_RUN" == 1 ]] || printf '%s' "$sig" >"$statefile"
+  done < <(jq -c '.[]' <<<"$prs")
+}
+
+if [[ "${INDEX_BABYSIT_TEST:-0}" != 1 ]]; then
+  exec 9>"$LOCK"
+  flock -n 9 || exit 0
+  command -v gh >/dev/null 2>&1 || { log "gh missing, pass skipped"; exit 0; }
+  command -v jq >/dev/null 2>&1 || { log "jq missing, pass skipped"; exit 0; }
+  sync_index || true
+  watch_gate || true
+  check_fleet || true
+fi

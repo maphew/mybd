@@ -148,9 +148,23 @@ wave a rough PR through.
 
 ### After a PR is open
 
-Our own open PRs are the contribution surface — they do not merge themselves and
-no patrol watches them any more. Keep them rebased and green, respond to review,
-and close ones you no longer want rather than leaving them to rot.
+Our own open PRs are the contribution surface — they do not merge themselves.
+Keep them rebased and green, respond to review, and close ones you no longer
+want rather than leaving them to rot.
+
+One contributor-scoped patrol exists (2026-08-12, replacing nothing from the
+maintainer era): **`scripts/index-babysit`**, a zero-token systemd user timer
+(every 30 min) that (a) ticks checkboxes in the step-down handoff index
+gastownhall/beads#5711 when the underlying PR/issue closes, (b) comments on
+`mybd-jart4` once PR 4720 merges, and (c) flags fleet regressions — merge
+conflicts, real FAILURE checks (cancelled ignored), *new* CHANGES_REQUESTED —
+as comments on `mybd-ykt9f` for the next session to act on. **It only flags
+and ticks; it never merges, rebases, closes, or pushes.** Sessions doing PR
+work should read recent `mybd-ykt9f` comments. Install/refresh with
+`scripts/install-index-babysit` from the main checkout; re-run it after any
+unit-template change (deployed units drift — see bd memory
+`a-tracked-systemd-unit-template-under-scripts-systemd`). Smoke-test with
+`scripts/test-index-babysit`.
 
 ## Validation
 
