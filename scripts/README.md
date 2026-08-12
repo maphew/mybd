@@ -98,6 +98,24 @@ intentionally no `.ps1` wrapper — the `.sh` extension is the signal. The scrip
 warns on stderr when it falls back to a placeholder; heed that rather than
 posting the signature.
 
+Detects claude, codex, and amp runtimes from their session env vars. For Amp
+it reads model and effort (`agentMode`) from the local thread store and CLI
+log — no hand-rolled lookup needed.
+
+### `agentbin/bd`
+
+Serializing PATH shim enforcing the repo's serial-Dolt rule mechanically
+(bead mybd-lq8i.3). Opt in per session:
+
+```bash
+export PATH="<mybd-root>/scripts/agentbin:$PATH"
+```
+
+Takes a repo-scoped flock (`.beads/.bd-cli.lock`) before exec'ing the real
+`bd`; a parallel invocation waits `MYBD_BD_LOCK_WAIT` seconds (default 90),
+then fails loudly with exit 199. Degrades to a warning passthrough where
+`flock` is unavailable (Git Bash on Windows).
+
 ## Tracker health
 
 ### `check-beads-config`
@@ -231,6 +249,14 @@ silently. If `bd` is unavailable the bd-backed checks warn-skip too.
 The script is only a backstop — the three judgment prompts in AGENTS.md
 ("Cold-start handoff") are the real work. `/session-close` runs both.
 
+### `amp-session-close`
+
+Amp-session variant of the close: runs `session-close-check` (args pass
+through) and appends a signed evidence row — timestamp, thread id, HEAD,
+check result, agent signature — to the git-tracked
+`retro/amp-close-ledger.tsv`. Close proof then survives even when Amp's local
+thread store does not retain the transcript (bead mybd-lq8i.3).
+
 ## Tests
 
 | Script | Covers |
@@ -239,6 +265,7 @@ The script is only a backstop — the three judgment prompts in AGENTS.md
 | `test-agent-hooks` | the cross-platform agent hook configs |
 | `test-pr-review-gate` | the `gh pr create` PreToolUse gate |
 | `test-session-close-check` | the cold-start report-reference check |
+| `test-amp-parity` | the Amp guardrails: live agent-sig metadata, `agentbin/bd` lock semantics, close-ledger row |
 | `test-report-room.ps1` | the report-room reader (fixture Markdown + injected bead JSON; no live DB, no browser) |
 
 ## Retired but kept

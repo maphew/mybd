@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Smoke test for the Amp parity guardrails (bead mybd-lq8i.3).
+#
+# 1. agent-sig amp resolves live model + reasoning from the local Amp state
+#    (skipped when no Amp state exists on this machine).
+# 2. scripts/agentbin/bd serializes concurrent invocations: a contender fails
+#    loudly (exit 199) at zero wait, and succeeds once the lock frees.
+# 3. amp-session-close appends an evidence row to the ledger.
+set -uo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fail=0
+
+note() { printf '%s\n' "$*"; }
+ok()   { note "  ok: $*"; }
+bad()  { note "  FAIL: $*"; fail=1; }
+
+note "[1/3] agent-sig amp reads live Amp metadata"
+if [ -d "$HOME/.local/share/amp/threads" ] && ls "$HOME"/.local/share/amp/threads/*.json >/dev/null 2>&1; then
+  sig=$("$root/scripts/agent-sig.sh" amp 2>/dev/null || true)
+  case "$sig" in
+    *unknown-model*|*unknown-reasoning*|"")
+      bad "unresolved fields: '$sig'" ;;
+    _amp-*)
+      ok "$sig" ;;
+    *)
+      bad "unexpected shape: '$sig'" ;;
+  esac
+else
+  note "  skip: no local Amp thread store"
+fi
+
+note "[2/3] agentbin/bd shim serializes concurrent bd"
+if command -v flock >/dev/null 2>&1; then
+  # Fake bd that holds the lock for 2s; shim resolves it via PATH.
+  cat >"$tmp/bd" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = "--hold" ] && sleep 2
+echo "fake-bd ran: $*"
+EOF
+  chmod +x "$tmp/bd"
+  shim_path="$root/scripts/agentbin:$tmp:/usr/bin:/bin"
+
+  PATH="$shim_path" bd --hold >"$tmp/holder.out" 2>&1 &
+  holder=$!
+  sleep 0.5
+  rc=0
+  PATH="$shim_path" MYBD_BD_LOCK_WAIT=0 bd --contender >"$tmp/contender.out" 2>&1 || rc=$?
+  if [ "$rc" -eq 199 ] && grep -q 'serial-Dolt rule' "$tmp/contender.out"; then
+    ok "contender blocked loudly (exit 199)"
+  else
+    bad "contender rc=$rc, output: $(cat "$tmp/contender.out")"
+  fi
+  wait "$holder" || bad "lock holder itself failed"
+  rc=0
+  PATH="$shim_path" MYBD_BD_LOCK_WAIT=5 bd --after >"$tmp/after.out" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q 'fake-bd ran: --after' "$tmp/after.out"; then
+    ok "runs normally once the lock frees"
+  else
+    bad "post-lock run rc=$rc, output: $(cat "$tmp/after.out")"
+  fi
+else
+  note "  skip: flock unavailable (shim degrades to passthrough)"
+fi
+
+note "[3/3] amp-session-close retains an evidence row"
+ledger="$tmp/ledger.tsv"
+rc=0
+AMP_CURRENT_THREAD_ID="T-smoke-test" \
+  MYBD_AMP_LEDGER="$ledger" MYBD_AMP_CLOSE_CHECK=/bin/true \
+  "$root/scripts/amp-session-close" >"$tmp/close.out" 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] && [ "$(wc -l <"$ledger" 2>/dev/null)" = "2" ] \
+   && grep -q "T-smoke-test" "$ledger"; then
+  ok "ledger row: $(tail -1 "$ledger")"
+else
+  bad "rc=$rc, ledger: $(cat "$ledger" 2>/dev/null || echo missing)"
+fi
+
+if [ "$fail" -eq 0 ]; then
+  note "test-amp-parity: PASS"
+else
+  note "test-amp-parity: FAIL"
+fi
+exit "$fail"

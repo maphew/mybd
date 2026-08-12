@@ -400,31 +400,32 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
   text, or memory. If reliable metadata is unavailable, keep the
   `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
 
-For Amp, read session metadata from the local Amp state, not from the system
-prompt or memory. The active thread id is in `AMP_CURRENT_THREAD_ID`.
-
-- **Reasoning** and **agent mode** come from the per-turn `agent_state` log
-  lines in `~/.cache/amp/logs/cli.log` (`reasoningEffort`, `agentMode`). Fall
-  back to `~/.local/share/amp/session.json`.
-- **Model** is at `messages[].usage.model` in
-  `~/.local/share/amp/threads/$AMP_CURRENT_THREAD_ID.json`. Until the
-  in-progress thread is flushed, fall back to the most recently modified thread
-  file.
-
-```bash
-tid="$AMP_CURRENT_THREAD_ID"
-src="$HOME/.local/share/amp/threads/$tid.json"
-[ -f "$src" ] || src="$(ls -t "$HOME"/.local/share/amp/threads/*.json 2>/dev/null | head -1)"
-model="$(jq -r '[.messages[]?.usage?.model // empty] | last // empty' "$src" 2>/dev/null)"
-model="${model#claude-}"
-line="$(grep -F "\"threadId\":\"$tid\"" "$HOME/.cache/amp/logs/cli.log" 2>/dev/null | grep -F '"reasoningEffort"' | tail -1)"
-reasoning="$(printf '%s' "$line" | jq -r '.reasoningEffort // empty' 2>/dev/null)"
-mode="$(printf '%s' "$line" | jq -r '.agentMode // empty' 2>/dev/null)"
-[ -z "$reasoning" ] && reasoning="$(jq -r --arg m "${mode:-smart}" '.lastReasoningEffortByMode[$m] // empty' "$HOME/.local/share/amp/session.json" 2>/dev/null)"
-echo "_amp-${model:-unknown-model}-${reasoning:-unknown-reasoning} on behalf of $(git config user.name)_"
-```
+For Amp, run `scripts/agent-sig.sh amp` (auto-detected when
+`AMP_CURRENT_THREAD_ID` is set). It reads live session metadata from the local
+Amp state — model from `messages[].usage.model` in
+`~/.local/share/amp/threads/$AMP_CURRENT_THREAD_ID.json` (newest thread file as
+fallback until the in-progress thread is flushed), effort from the per-message
+`agentMode` (smart/low/rush/deep; pre-2026-08 builds called it
+`reasoningEffort`), falling back to the CLI log and then
+`~/.local/share/amp/session.json`. Do not hand-roll this lookup; if the schema
+drifts again, fix the script.
 
 Drop only the `claude-` model-family prefix (write `opus-4-6`).
+
+### Amp session guardrails (mybd-lq8i.3)
+
+Amp has no repo-hook system, so these are opt-in mechanical backstops; smoke
+test all three with `scripts/test-amp-parity`.
+
+- **Serial-Dolt enforcement**: prepend the shim directory to PATH at session
+  start — `export PATH="<mybd-root>/scripts/agentbin:$PATH"`. The `bd` shim
+  takes a repo-scoped flock; a parallel `bd` waits up to `MYBD_BD_LOCK_WAIT`
+  seconds (default 90) then fails loudly with exit 199 instead of racing the
+  embedded Dolt store.
+- **Close evidence**: end Amp sessions with `scripts/amp-session-close` (wraps
+  `session-close-check` and appends a signed evidence row to the git-tracked
+  `retro/amp-close-ledger.tsv`), so close proof survives even when Amp's local
+  thread store does not retain the transcript.
 
 ## Git hooks
 

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Serializing shim for `bd` — mechanical backstop for the serial-Dolt rule
+# (AGENTS.md: "Run embedded-Dolt bd/dolt commands serially in this repo";
+# violation observed in an Amp run 2026-07-23, bead mybd-lq8i.3).
+#
+# Takes a repo-scoped flock before exec'ing the real bd. A second bd started
+# while one is running waits up to $MYBD_BD_LOCK_WAIT seconds (default 90),
+# then fails loudly with exit 199 instead of racing the embedded Dolt store.
+#
+# Opt in per session by prepending to PATH:
+#   export PATH="<mybd-root>/scripts/agentbin:$PATH"
+# Degrades to a plain passthrough (with a warning) where flock is unavailable
+# (e.g. Git Bash on Windows).
+set -euo pipefail
+
+self_dir=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$self_dir/../.." && pwd)
+
+# Resolve the real bd: first executable named bd on PATH that is not this shim.
+real=""
+IFS=: read -ra path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  [ -n "$d" ] || continue
+  [ "$d" = "$self_dir" ] && continue
+  if [ -x "$d/bd" ] && [ ! -d "$d/bd" ]; then
+    real="$d/bd"
+    break
+  fi
+done
+if [ -z "$real" ]; then
+  echo "bd shim: no real bd found on PATH (looked past $self_dir)" >&2
+  exit 127
+fi
+
+if ! command -v flock >/dev/null 2>&1; then
+  echo "bd shim: flock unavailable - running without serialization" >&2
+  exec "$real" "$@"
+fi
+
+lock="$root/.beads/.bd-cli.lock"
+mkdir -p "$(dirname "$lock")"
+wait_s="${MYBD_BD_LOCK_WAIT:-90}"
+
+rc=0
+flock -w "$wait_s" -E 199 "$lock" "$real" "$@" || rc=$?
+if [ "$rc" -eq 199 ]; then
+  echo "bd shim: serial-Dolt rule - another bd command has held the lock for ${wait_s}s." >&2
+  echo "bd shim: refusing to run in parallel; retry when it finishes, or raise MYBD_BD_LOCK_WAIT." >&2
+fi
+exit "$rc"
