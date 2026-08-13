@@ -60,4 +60,24 @@ rewriting). All are about the owner's cross-project agent tooling, not beads.
 - Ready queue after sweep: mybd-koabx (P0 fleet) + the kept personal items +
   mybd-m67s/cfex/d0u3f/74jar/dcyim (P3, unscanned - out of scope this pass).
 
+## Addendum 2026-08-13: P3 sweep (completes the ready queue)
+
+Same standard applied to the five P3 items:
+
+- **mybd-m67s closed (obsolete)** - the claude.ai MCP connectors' Supabase
+  origin (ydeagqbwysgyknwrphur.supabase.co) has had no DNS resolution across
+  checks on 06-10, 07-05, and 08-13: the project is gone, not flaky.
+  Re-enable steps and the config backup path stay in the bead.
+- **mybd-cfex, mybd-dcyim kept** - codex-agent bug + hardening; personal
+  tooling, canonical copy in dotfiles. Same category as the kept 22w9/ukt3.
+- **mybd-74jar kept** - AGENTS.md trim; personal repo hygiene with a real
+  pre-check (verify Amp reads the global conventions file first).
+- **mybd-d0u3f kept, unchanged** - already correctly dispositioned on 08-12
+  as PR-5202-fleet-tied: the probe pattern exists only on 5202's branch, so
+  filing against main would be wrong; resolve in 5202's review cycle or file
+  upstream only if 5202 merges without the seam.
+
+The ready queue is now fully dispositioned: koabx (P0 fleet shepherding) plus
+deliberately-kept personal items only.
+
 _claude-fable-5-high on behalf of matt wilkie_
