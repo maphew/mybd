@@ -140,8 +140,8 @@ semantics, or should some uncertainty intentionally remain narrative until a
 person turns it into a commitment?
 
 **Live Beads context:** `mybd-jrbuu` and `mybd-zg2dj` cover dependency types
-that fail to express the intended gating semantics. `mybd-0nzhq` is this
-reading-room experiment.
+that fail to express the intended gating semantics. The navigation decision is
+complete; this room implements it.
 
 ## Questions worth carrying
 
