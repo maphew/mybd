@@ -24,9 +24,8 @@ That transition is a fault line in this archive. Reports before it remain
 useful evidence and institutional history, but recommendations that assume
 merge, close, label, release, or upstream-triage authority are historical.
 
-The immediate operational follow-through is `mybd-jcylm`: decide the fate of
-the four upstream PRs still authored by maphew. Use `bd show mybd-jcylm` for
-their current state; the report explains why that work became important.
+The first four-PR fate decision is complete. The current follow-through is the
+larger contributor wind-down and public handoff described below.
 
 ## What this room is trying to preserve
 
@@ -58,7 +57,31 @@ Which maintainer-era commitments should be retired rather than quietly carried
 into the contributor role? What lightweight habits replace automation that
 previously supplied queue awareness?
 
-**Live Beads context:** `mybd-jcylm` and its four PR-specific beads.
+**Live Beads context:** the four-PR decision is complete; this thread is now
+historical context for the broader contributor handoff.
+
+### Contributor wind-down and public handoff
+
+**Read in this order:**
+
+1. [PR/issue feedback sweep](2026-08-11-pr-feedback-sweep.md)
+2. [Wind-down sweep](2026-08-12-winddown-sweep.md)
+3. [Verified issue drafts and filing addenda](2026-08-12-winddown-issue-drafts.md)
+4. [Three-day reading-room synthesis](2026-08-14-reading-room-last-three-days.md)
+
+The sequence moves from answering three substantive pull-request reviews to a
+full wind-down: fleet triage, local backlog collapse, 21 upstream issue
+conversions, four evidence-backed rejections, and a final gated finding later
+filed upstream. The public coordination surface is
+[gastownhall/beads#5711](https://github.com/gastownhall/beads/issues/5711), an
+index rather than an assignment queue.
+
+**Questions now:** Which remaining contributions should still be shepherded,
+and which should be deliberately declined? When the open pull-request fleet
+reaches a terminal state, is any non-personal transition work left?
+
+**Live Beads context:** `mybd-ykt9f` is the wind-down epic and `mybd-koabx`
+tracks the remaining pull-request fleet.
 
 ### Local-first proxied Dolt
 
@@ -71,13 +94,12 @@ previously supplied queue awareness?
 3. [Proxy identity design](2026-07-24-psxg5-proxy-identity-design.md) — one
    important safety seam in detail.
 
-**Question now:** Does this remain the right large contribution campaign after
-the role change, or should it be decomposed into smaller upstream contributions
-that do not require local campaign ownership?
+**Question now:** The local campaign handoff is complete and its surviving
+findings are upstream issues. Which of those smaller contributions fit the
+maintainers' current direction, and which should be declined?
 
-**Live Beads context:** `mybd-psxg` remains open. Its campaign is 2/5 complete;
-the executable/version contract (`mybd-psxg.4`) and safe copy migration
-(`mybd-psxg.2`) remain open, along with a live concurrency blocker.
+**Live Beads context:** no local campaign queue remains; use the public handoff
+index for the transferred findings.
 
 ### Agent and session machinery
 
@@ -140,6 +162,7 @@ ambiguity is useful information rather than missing issue metadata.
 
 | Period | Read | Why it matters now |
 |---|---|---|
+| 2026-08-11–14 | [Three-day synthesis](2026-08-14-reading-room-last-three-days.md), [PR feedback sweep](2026-08-11-pr-feedback-sweep.md), [wind-down sweep](2026-08-12-winddown-sweep.md), and [issue-conversion record](2026-08-12-winddown-issue-drafts.md) | Moves from answering review feedback to completing the maintainer-era value transfer: 21 issues filed from the conversion queue, four rejected with evidence, one later filed as a gated follow-up, and a public handoff index established. |
 | 2026-08-10 | [Role-change teardown](2026-08-10-ic-role-change-teardown.md) and [unfiled-defect harvest](2026-08-10-unfiled-defect-harvest.md) | Resets the meaning of everything that came before it, then converts the main unreported asset of the maintainer period into 31 upstream issues. |
 | 2026-08-03–04 | [Stale-tail sweep](2026-08-04-stale-tail-pr-sweep.md) and [unreviewed-head sweep](2026-08-03-pr-review-sweep-unreviewed-heads.md) | Last broad maintainer-era picture of the upstream queue; useful history, no longer an operating mandate. |
 | 2026-07-30–08-02 | [Ready-queue sweep](2026-08-02-ready-queue-autonomous-sweep.md), [human-gating conversion](2026-08-01-bd-ready-human-gating-conversion.md), and [ready-gating audit](2026-07-31-ready-gating-audit.md) | A burst of automation exposed the gap between database readiness and humanly claimable work. |
