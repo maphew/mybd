@@ -83,6 +83,16 @@ reaches a terminal state, is any non-personal transition work left?
 **Live Beads context:** `mybd-ykt9f` is the wind-down epic and `mybd-koabx`
 tracks the remaining pull-request fleet.
 
+### Six-month retrospective
+
+[The six-month collaboration retrospective](2026-08-16-six-month-collaboration-retrospective.md)
+(2026-08-16) reconstructs the whole arc, 2026-02-10 to present, from the
+durable record - reports, retro corpus, git history, bd memories - after
+discovering that raw session transcripts before 2026-07-23 were lost to
+Claude Code's default 30-day pruning (archiving research: `mybd-8vhy3`).
+It maps the six eras, the dated trust-extension arc, the verify ratchet, and
+which friction fixes held (mechanisms) versus which recur (documentation).
+
 ### Local-first proxied Dolt
 
 **Read in this order:**
