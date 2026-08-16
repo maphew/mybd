@@ -195,6 +195,9 @@ check_fleet() {
 if [[ "${INDEX_BABYSIT_TEST:-0}" != 1 ]]; then
   exec 9>"$LOCK"
   flock -n 9 || exit 0
+  # bd resolves its database from the cwd, and the systemd unit starts us in
+  # $HOME - every bd_note silently failed until this cd (mybd-tshg3).
+  cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." || { log "cd to repo root failed, pass skipped"; exit 0; }
   command -v gh >/dev/null 2>&1 || { log "gh missing, pass skipped"; exit 0; }
   command -v jq >/dev/null 2>&1 || { log "jq missing, pass skipped"; exit 0; }
   sync_index || true
