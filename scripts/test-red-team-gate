@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# test-red-team-gate - smoke-test scripts/red-team's loop mechanics via its
+# test seams (MYBD_REDTEAM_ADVERSARY_CMD / _BUILDER_CMD / _BD_CMD), then the
+# pr-review-gate integration for the red-team half, in the style of
+# scripts/test-pr-review-gate.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RT="$ROOT/scripts/red-team"
+GATE="$ROOT/scripts/pr-review-gate"
+# Resolve the log/state dirs the way scripts/red-team and pr-review-gate do,
+# so a run from a linked worktree plants/reads fixtures where the real
+# scripts look, even though this test never touches real review data.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+STATE_DIR="$REVIEW_DIR/redteam-rounds"
+
+pass=0; fail=0
+have_codex=1; command -v codex >/dev/null 2>&1 || have_codex=0
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/redteamgate.XXXXXX")"
+declare -a cleanup_shas=()
+declare -a cleanup_states=()
+cleanup() {
+  for s in ${cleanup_shas[@]+"${cleanup_shas[@]}"}; do
+    rm -f "$REVIEW_DIR/$s.redteam.json" "$REVIEW_DIR/$s.md"
+  done
+  for k in ${cleanup_states[@]+"${cleanup_states[@]}"}; do
+    rm -f "$STATE_DIR/$k"
+  done
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+check() { # check <label> <expected> <actual>
+  if [[ "$2" == "$3" ]]; then
+    printf '  ok    %s\n' "$1"; pass=$((pass+1))
+  else
+    printf '  FAIL  %s (want %s, got %s)\n' "$1" "$2" "$3"; fail=$((fail+1))
+    [[ -s "$tmp/last-out.log" ]] && { echo "  ---- last red-team output ----"; tail -20 "$tmp/last-out.log" | sed 's/^/  | /'; echo "  -------------------------------"; }
+  fi
+}
+
+mk_repo() { # mk_repo -> echoes path to a fresh repo, base "main" resolvable,
+            # HEAD checked out on a separate branch "work" so committing on
+            # it never moves "main" underneath the base check.
+            #
+            # The init commit's tree must be unique per repo: two no-parent
+            # commits with the same tree, author, message, and (same-second)
+            # timestamp hash identically, so distinct mk_repo() calls would
+            # otherwise silently collide on one sha and one test's verdict
+            # fixture would masquerade as another's (caught empirically:
+            # cases 6/7 first failed exactly this way).
+  local d
+  d="$(mktemp -d "$tmp/repo.XXXXXX")"
+  git -C "$d" init -q -b main
+  echo "$d" > "$d/.marker"
+  git -C "$d" add .marker
+  git -C "$d" -c user.email=t@t -c user.name=t commit -q -m init
+  git -C "$d" checkout -qb work
+  echo "$d"
+}
+
+state_key_for() { # state_key_for <dir> -> mirrors scripts/red-team's state key
+  local d="$1" branch top
+  top="$(git -C "$d" rev-parse --show-toplevel)"
+  branch="$(git -C "$d" rev-parse --abbrev-ref HEAD)"
+  printf '%s-%s-%s\n' "$(basename "$top")" "$(tr '/' '_' <<<"$branch")" \
+    "$(printf '%s@%s' "$top" "$branch" | cksum | awk '{print $1}')"
+}
+
+call_rt() { # call_rt <adversary_cmd> <builder_cmd> <bd_cmd> <red-team args...> -> exit code
+  local adv="$1" bld="$2" bdc="$3"; shift 3
+  MYBD_REDTEAM_ADVERSARY_CMD="$adv" MYBD_REDTEAM_BUILDER_CMD="$bld" MYBD_REDTEAM_BD_CMD="$bdc" \
+    timeout 60 "$RT" "$@" >"$tmp/last-out.log" 2>&1
+  echo $?
+}
+
+# ---------------------------------------------------------------------------
+# Stub scripts standing in for the codex adversary/builder/bd. Written to
+# files (not inline `bash -c` strings) to sidestep nested-quoting entirely -
+# scripts/red-team runs MYBD_REDTEAM_ADVERSARY_CMD/_BUILDER_CMD via
+# `bash -c "$VAR"`, so pointing that at `bash <stub path>` is enough.
+STUBS="$tmp/stubs"
+mkdir -p "$STUBS"
+
+cat > "$STUBS/adv-zero.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+cat > "$RT_OUT" <<'JSON'
+{"summary":"clean","findings":[]}
+JSON
+STUBEOF
+
+cat > "$STUBS/adv-p2p3.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+cat > "$RT_OUT" <<'JSON'
+{"summary":"minor stuff","findings":[
+  {"id":"f1","severity":"P2","category":"other","title":"minor issue","evidence":"e","repro":"r"},
+  {"id":"f2","severity":"P3","category":"other","title":"polish item","evidence":"e","repro":"r"}
+]}
+JSON
+STUBEOF
+
+cat > "$STUBS/adv-p1-round1.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ "$RT_ROUND" == "1" ]]; then
+  cat > "$RT_OUT" <<'JSON'
+{"summary":"bad on round 1","findings":[{"id":"f1","severity":"P1","category":"failing-test","title":"bug","evidence":"e","repro":"r"}]}
+JSON
+else
+  cat > "$RT_OUT" <<'JSON'
+{"summary":"clean","findings":[]}
+JSON
+fi
+STUBEOF
+
+cat > "$STUBS/adv-always-p1.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+cat > "$RT_OUT" <<'JSON'
+{"summary":"always bad","findings":[{"id":"f1","severity":"P1","category":"failing-test","title":"persistent bug","evidence":"e","repro":"r"}]}
+JSON
+STUBEOF
+
+cat > "$STUBS/adv-bad-json.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+printf 'this is not json' > "$RT_OUT"
+STUBEOF
+
+cat > "$STUBS/adv-bad-severity.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+cat > "$RT_OUT" <<'JSON'
+{"summary":"bad severity","findings":[{"id":"f1","severity":"PX","category":"other","title":"t","evidence":"e","repro":"r"}]}
+JSON
+STUBEOF
+
+cat > "$STUBS/builder-commit.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+git -C "$RT_WORKDIR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "builder fix"
+STUBEOF
+
+cat > "$STUBS/builder-nocommit.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 0
+STUBEOF
+
+cat > "$STUBS/bd-stub.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+d="$(cd "$(dirname "$0")" && pwd)"
+touch "$d/bd-called"
+printf '{"id":"mybd-fake1"}\n'
+STUBEOF
+
+chmod +x "$STUBS"/*.sh
+
+echo "red-team loop mechanics:"
+
+# 1. zero findings -> pass, rounds=1, base recorded.
+r1="$(mk_repo)"; sha1="$(git -C "$r1" rev-parse HEAD)"; cleanup_shas+=("$sha1")
+e1="$(call_rt "bash $STUBS/adv-zero.sh" "" "" -C "$r1" --base main)"
+v1="$REVIEW_DIR/$sha1.redteam.json"
+check "1 zero findings exits 0"        0    "$e1"
+check "1 verdict=pass"                 pass "$(jq -r '.verdict // "MISSING"' "$v1" 2>/dev/null)"
+check "1 rounds=1"                     1    "$(jq -r '.rounds // "MISSING"' "$v1" 2>/dev/null)"
+check "1 base recorded"                main "$(jq -r '.base // "MISSING"' "$v1" 2>/dev/null)"
+
+# 2. only P2/P3 -> still pass, findings preserved.
+r2="$(mk_repo)"; sha2="$(git -C "$r2" rev-parse HEAD)"; cleanup_shas+=("$sha2")
+e2="$(call_rt "bash $STUBS/adv-p2p3.sh" "" "" -C "$r2" --base main)"
+v2="$REVIEW_DIR/$sha2.redteam.json"
+check "2 P2/P3-only exits 0"           0    "$e2"
+check "2 verdict=pass"                 pass "$(jq -r '.verdict // "MISSING"' "$v2" 2>/dev/null)"
+check "2 findings preserved (count=2)" 2    "$(jq '.findings | length' "$v2" 2>/dev/null)"
+
+# 3. P1 round1, clean round2+, builder commits -> pass, rounds=2, keyed to the
+#    new HEAD, and HEAD moved exactly one commit.
+r3="$(mk_repo)"
+sha3_before="$(git -C "$r3" rev-parse HEAD)"
+e3="$(call_rt "bash $STUBS/adv-p1-round1.sh" "bash $STUBS/builder-commit.sh" "" -C "$r3" --base main --rounds 3)"
+sha3_after="$(git -C "$r3" rev-parse HEAD)"; cleanup_shas+=("$sha3_after")
+v3="$REVIEW_DIR/$sha3_after.redteam.json"
+check "3 exits 0"                      0             "$e3"
+check "3 HEAD moved exactly one commit" "$sha3_before" "$(git -C "$r3" rev-parse HEAD~1)"
+check "3 verdict keyed to new HEAD"    "$sha3_after"  "$(jq -r '.head // "MISSING"' "$v3" 2>/dev/null)"
+check "3 verdict pass, rounds=2"       "pass:2"       "$(jq -r '"\(.verdict):\(.rounds)"' "$v3" 2>/dev/null)"
+
+# 4. always P1, builder commits each round -> exhausts after 3 rounds, fail
+#    verdict, bd stub invoked, bead id recorded in the verdict.
+rm -f "$STUBS/bd-called"
+r4="$(mk_repo)"
+e4="$(call_rt "bash $STUBS/adv-always-p1.sh" "bash $STUBS/builder-commit.sh" "$STUBS/bd-stub.sh" -C "$r4" --base main --rounds 3)"
+sha4="$(git -C "$r4" rev-parse HEAD)"; cleanup_shas+=("$sha4")
+v4="$REVIEW_DIR/$sha4.redteam.json"
+check "4 exits 4 (rounds exhausted)"   4    "$e4"
+check "4 verdict=fail"                 fail "$(jq -r '.verdict // "MISSING"' "$v4" 2>/dev/null)"
+check "4 open_p0p1 >= 1"               1    "$(jq -r 'if (.open_p0p1 // 0) >= 1 then 1 else 0 end' "$v4" 2>/dev/null)"
+check "4 bd stub invoked"              yes  "$([[ -f "$STUBS/bd-called" ]] && echo yes || echo no)"
+check "4 bead id recorded in verdict"  mybd-fake1 "$(jq -r '.bead // "MISSING"' "$v4" 2>/dev/null)"
+
+# 5. --no-fix with a persistent P1: rounds count across invocations on the
+#    same branch; three runs -> 5, 5, 4 (bead filed, state removed). Also: a
+#    passing run removes the state file.
+rm -f "$STUBS/bd-called"
+r5="$(mk_repo)"
+sk5="$(state_key_for "$r5")"; cleanup_states+=("$sk5")
+e5a="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
+check "5a first no-fix run exits 5"    5 "$e5a"
+check "5a state file records round 1"  1 "$(cat "$STATE_DIR/$sk5" 2>/dev/null)"
+
+e5b="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
+check "5b second no-fix run exits 5"   5 "$e5b"
+check "5b state file records round 2"  2 "$(cat "$STATE_DIR/$sk5" 2>/dev/null)"
+
+e5c="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
+sha5="$(git -C "$r5" rev-parse HEAD)"; cleanup_shas+=("$sha5")
+check "5c third no-fix run exits 4"    4  "$e5c"
+check "5c bead filed"                  mybd-fake1 "$(jq -r '.bead // "MISSING"' "$REVIEW_DIR/$sha5.redteam.json" 2>/dev/null)"
+check "5c state file removed"          no "$([[ -e "$STATE_DIR/$sk5" ]] && echo yes || echo no)"
+
+r5b="$(mk_repo)"
+sk5b="$(state_key_for "$r5b")"; cleanup_states+=("$sk5b")
+e5d="$(call_rt "bash $STUBS/adv-p1-round1.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
+check "5d no-fix round1 P1 exits 5"    5 "$e5d"
+check "5d state file records round 1"  1 "$(cat "$STATE_DIR/$sk5b" 2>/dev/null)"
+sha5b="$(git -C "$r5b" rev-parse HEAD)"; cleanup_shas+=("$sha5b")
+e5e="$(call_rt "bash $STUBS/adv-p1-round1.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
+check "5e no-fix round2 clean exits 0" 0 "$e5e"
+check "5e a passing run removes state file" no "$([[ -e "$STATE_DIR/$sk5b" ]] && echo yes || echo no)"
+check "5e verdict pass, rounds=2"      "pass:2" "$(jq -r '"\(.verdict):\(.rounds)"' "$REVIEW_DIR/$sha5b.redteam.json" 2>/dev/null)"
+
+# RT-003 regression: two unrelated repos with the same directory basename AND
+# the same branch must not share a --no-fix round counter (the state key
+# includes a checksum of the absolute toplevel path).
+rt3a="$tmp/rt3a/campaign"; rt3b="$tmp/rt3b/campaign"
+for d in "$rt3a" "$rt3b"; do
+  mkdir -p "$d"
+  git -C "$d" init -q -b main
+  echo "$d" > "$d/.marker"
+  git -C "$d" add .marker
+  git -C "$d" -c user.email=t@t -c user.name=t commit -q -m init
+  git -C "$d" checkout -qb work
+done
+cleanup_states+=("$(state_key_for "$rt3a")" "$(state_key_for "$rt3b")")
+ert3a="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "" -C "$rt3a" --base main --rounds 2 --no-fix)"
+ert3b="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "" -C "$rt3b" --base main --rounds 2 --no-fix)"
+cleanup_shas+=("$(git -C "$rt3a" rev-parse HEAD)" "$(git -C "$rt3b" rev-parse HEAD)")
+check "rt3 same-name campaigns independent (a)" 5 "$ert3a"
+check "rt3 same-name campaigns independent (b)" 5 "$ert3b"
+
+# Cross-vendor review regression: branches foo/bar and foo_bar sanitize to
+# the same readable key but must not share a campaign.
+git -C "$rt3a" checkout -qb feat/x
+cleanup_states+=("$(state_key_for "$rt3a")")
+ertsl1="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "" -C "$rt3a" --base main --rounds 2 --no-fix)"
+git -C "$rt3a" checkout -qb feat_x
+cleanup_states+=("$(state_key_for "$rt3a")")
+ertsl2="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "" -C "$rt3a" --base main --rounds 2 --no-fix)"
+cleanup_shas+=("$(git -C "$rt3a" rev-parse HEAD)")
+check "slash-vs-underscore branches independent" "5:5" "$ertsl1:$ertsl2"
+
+# 6. adversary writes non-JSON garbage -> error, no verdict written.
+r6="$(mk_repo)"; sha6="$(git -C "$r6" rev-parse HEAD)"; cleanup_shas+=("$sha6")
+e6="$(call_rt "bash $STUBS/adv-bad-json.sh" "" "" -C "$r6" --base main)"
+check "6 garbage adversary output exits 1" 1  "$e6"
+check "6 no verdict file written"          no "$([[ -e "$REVIEW_DIR/$sha6.redteam.json" ]] && echo yes || echo no)"
+
+# 7. adversary writes an invalid severity -> error.
+r7="$(mk_repo)"; sha7="$(git -C "$r7" rev-parse HEAD)"; cleanup_shas+=("$sha7")
+e7="$(call_rt "bash $STUBS/adv-bad-severity.sh" "" "" -C "$r7" --base main)"
+check "7 invalid severity exits 1"     1  "$e7"
+check "7 no verdict file written"      no "$([[ -e "$REVIEW_DIR/$sha7.redteam.json" ]] && echo yes || echo no)"
+
+# 8. dirty working tree -> error; --allow-dirty overrides.
+r8="$(mk_repo)"
+echo dirty > "$r8/dirty.txt"
+e8a="$(call_rt "bash $STUBS/adv-zero.sh" "" "" -C "$r8" --base main)"
+check "8a dirty tree exits 1"          1 "$e8a"
+e8b="$(call_rt "bash $STUBS/adv-zero.sh" "" "" -C "$r8" --base main --allow-dirty)"
+sha8="$(git -C "$r8" rev-parse HEAD)"; cleanup_shas+=("$sha8")
+check "8b --allow-dirty overrides, exits 0" 0    "$e8b"
+check "8b verdict pass despite dirty tree"  pass "$(jq -r '.verdict // "MISSING"' "$REVIEW_DIR/$sha8.redteam.json" 2>/dev/null)"
+
+# 9. --base that does not resolve -> error.
+r9="$(mk_repo)"
+e9="$(call_rt "bash $STUBS/adv-zero.sh" "" "" -C "$r9" --base does-not-exist-branch)"
+check "9 unresolvable --base exits 1"  1 "$e9"
+
+# 10. --rounds 1 with a P1 -> exhausts immediately, bead filed.
+rm -f "$STUBS/bd-called"
+r10="$(mk_repo)"
+e10="$(call_rt "bash $STUBS/adv-always-p1.sh" "bash $STUBS/builder-commit.sh" "$STUBS/bd-stub.sh" -C "$r10" --base main --rounds 1)"
+sha10="$(git -C "$r10" rev-parse HEAD)"; cleanup_shas+=("$sha10")
+check "10 rounds=1 with P1 exits 4 immediately" 4 "$e10"
+check "10 verdict rounds=1"            1          "$(jq -r '.rounds // "MISSING"' "$REVIEW_DIR/$sha10.redteam.json" 2>/dev/null)"
+check "10 bead filed"                  mybd-fake1 "$(jq -r '.bead // "MISSING"' "$REVIEW_DIR/$sha10.redteam.json" 2>/dev/null)"
+
+# 11. builder that never commits -> the loop still terminates (round spent),
+#     not hangs; HEAD stays put across rounds since nothing was committed.
+rm -f "$STUBS/bd-called"
+r11="$(mk_repo)"
+sha11_before="$(git -C "$r11" rev-parse HEAD)"
+e11="$(call_rt "bash $STUBS/adv-always-p1.sh" "bash $STUBS/builder-nocommit.sh" "$STUBS/bd-stub.sh" -C "$r11" --base main --rounds 2)"
+sha11_after="$(git -C "$r11" rev-parse HEAD)"; cleanup_shas+=("$sha11_after")
+check "11 non-committing builder does not hang (no timeout/124)" yes "$([[ "$e11" != "124" ]] && echo yes || echo no)"
+check "11 exits 4 (rounds exhausted)"  4                "$e11"
+check "11 HEAD unchanged (builder never committed)" "$sha11_before" "$sha11_after"
+
+echo
+echo "pr-review-gate integration (red-team half):"
+
+# A throwaway repo with a remote naming upstream, so the gate infers the
+# target without an explicit --repo (mirrors scripts/test-pr-review-gate).
+gtmp="$(mktemp -d "$tmp/gaterepo.XXXXXX")"
+git -C "$gtmp" init -q
+echo "$gtmp" > "$gtmp/.marker"
+git -C "$gtmp" add .marker
+git -C "$gtmp" -c user.email=t@t -c user.name=t commit -q -m init-gate
+git -C "$gtmp" remote add origin git@github.com:maphew/beads.git
+gsha="$(git -C "$gtmp" rev-parse HEAD)"
+cleanup_shas+=("$gsha")
+
+run_gate() { # run_gate <cmd> <cwd> -> exit code
+  jq -nc --arg c "$1" --arg d "$2" \
+    '{hook_event_name:"PreToolUse",tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' \
+    | "$GATE" >/dev/null 2>&1
+  echo $?
+}
+
+plant_md() { # plant_md <base>
+  printf '# fixture\n\n- base: `%s`\n' "$1" > "$REVIEW_DIR/$gsha.md"
+}
+plant_rt() { # plant_rt <verdict> <base>
+  printf '{"head":"%s","base":"%s","verdict":"%s","rounds":1,"open_p0p1":0,"findings":[]}\n' "$gsha" "$2" "$1" > "$REVIEW_DIR/$gsha.redteam.json"
+}
+
+if (( have_codex )); then
+  # 12. xvendor md alone, no redteam json -> blocked.
+  plant_md main
+  check "12 md only, no redteam -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 13. md + redteam pass, matching base -> allowed.
+  plant_rt pass main
+  check "13 md + redteam pass -> allowed" 0 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 14. redteam verdict fail -> blocked.
+  plant_rt fail main
+  check "14 md + redteam fail -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 15. redteam pass but for a different base than the PR targets -> blocked.
+  plant_rt pass release
+  check "15 redteam base mismatch -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x --base main' "$gtmp")"
+
+  # Restore a matching-base passing fixture for the cases below.
+  plant_rt pass main
+
+  # 16. redteam pass alone, no md -> blocked; + skip xvendor -> allowed.
+  rm -f "$REVIEW_DIR/$gsha.md"
+  check "16 redteam alone, no md -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+  check "16 skip xvendor + redteam pass -> allowed" 0 "$(run_gate 'MYBD_SKIP_XVENDOR=1 gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 17. md alone + skip redteam -> allowed.
+  plant_md main
+  rm -f "$REVIEW_DIR/$gsha.redteam.json"
+  check "17 skip redteam + md -> allowed" 0 "$(run_gate 'MYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 18. both skips, nothing planted -> allowed.
+  rm -f "$REVIEW_DIR/$gsha.md" "$REVIEW_DIR/$gsha.redteam.json"
+  check "18 both skips, nothing planted -> allowed" 0 "$(run_gate 'MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+
+  # 19. malformed redteam json -> blocked (empty file, and valid json missing verdict).
+  plant_md main
+  : > "$REVIEW_DIR/$gsha.redteam.json"
+  check "19a empty redteam json -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+  printf '{"head":"%s","base":"main"}\n' "$gsha" > "$REVIEW_DIR/$gsha.redteam.json"
+  check "19b redteam json missing verdict -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+  # RT-002 regression: a hand-rolled {verdict,base} stub is not a verdict
+  # scripts/red-team could have written (no head/findings/rounds) - blocked.
+  printf '{"base":"main","verdict":"pass"}\n' > "$REVIEW_DIR/$gsha.redteam.json"
+  check "19c two-field verdict stub -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+  # Cross-vendor review regression: a structurally complete "pass" that still
+  # carries open P0/P1 findings is not a pass scripts/red-team could write.
+  printf '{"head":"%s","base":"main","verdict":"pass","rounds":1,"open_p0p1":1,"findings":[{"id":"f","severity":"P1","category":"other","title":"t","evidence":"e","repro":"r"}]}\n' \
+    "$gsha" > "$REVIEW_DIR/$gsha.redteam.json"
+  check "19d pass carrying open P0/P1 -> blocked" 2 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+else
+  echo "  skip  gate integration cases (codex not on PATH; the gate stands down by design)"
+  check "no codex means no block" 0 "$(run_gate 'gh pr create --repo gastownhall/beads --title x' "$gtmp")"
+fi
+
+echo
+echo "$pass passed, $fail failed"
+[[ "$fail" -eq 0 ]]

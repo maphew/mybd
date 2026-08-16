@@ -124,24 +124,40 @@ The path-scoped query matters: parallel sessions commit locally before pushing,
 so "is there an open PR for this?" and "is anyone already doing this?" are
 different questions.
 
-### Cross-vendor review before an upstream PR
+### Red-team + cross-vendor review before an upstream PR
 
-Run a second model family over the diff before `gh pr create`:
+Two verification stages run before `gh pr create`, in one verb:
 
 ```bash
 scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
 ```
 
-It runs the preflight, then `codex-agent reviewer --diff` on the branch, and
-writes findings to `.worktrees/.review-logs/<head-sha>.md`. **Reconcile the
-findings before posting** — ask of each "is this a regression or pre-existing?"
-A single reviewer's severity ranking is not a verdict.
+It runs the preflight, then **`scripts/red-team`** (adversarial verification),
+then `codex-agent reviewer --diff` on the branch, and writes findings to
+`.worktrees/.review-logs/<head-sha>.md`. **Reconcile the review findings
+before posting** — ask of each "is this a regression or pre-existing?" A
+single reviewer's severity ranking is not a verdict.
+
+`scripts/red-team` spawns an adversarial agent in a throwaway sandbox worktree
+whose only job is to break the change: write failing tests against the new
+code paths, hunt bypasses in grep/regex-based checks, verify test hermeticity
+(isolation, randomized order, different cwd), and probe for silent
+fixture-state dependence. Findings come back as structured P0–P3 JSON. While
+P0/P1 findings remain, a builder agent fixes and commits, then the adversary
+re-runs — max 3 rounds. If rounds exhaust with P0/P1 still open, the script
+files a bead with the findings and the verdict is FAIL: **do not open that
+PR; move to the next queue item.** The verdict lands in
+`.worktrees/.review-logs/<head-sha>.redteam.json`. Run it standalone with
+`scripts/red-team -C <worktree> --base main` (add `--no-fix` when the calling
+session is the builder — rounds then count across invocations).
 
 `scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json`) blocks
-`gh pr create` until a review log exists for the **exact commit** proposed;
-amending re-arms it. It stands down when codex is not on PATH. To skip
-deliberately, prefix with `MYBD_SKIP_XVENDOR=1` and say why in the handoff.
-Smoke-test with `scripts/test-pr-review-gate`.
+`gh pr create` until BOTH a review log and a passing red-team verdict exist for
+the **exact commit** proposed; amending re-arms it. It stands down when codex
+is not on PATH. To skip deliberately, prefix with `MYBD_SKIP_XVENDOR=1` (review
+half) and/or `MYBD_SKIP_REDTEAM=1` (red-team half) and say why in the handoff —
+each hatch skips only its own requirement. Smoke-test with
+`scripts/test-pr-review-gate` and `scripts/test-red-team-gate`.
 
 This matters more as a contributor than it did as a maintainer: nobody here can
 wave a rough PR through.

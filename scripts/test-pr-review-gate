@@ -21,23 +21,29 @@ have_codex=1; command -v codex >/dev/null 2>&1 || have_codex=0
 
 # A throwaway repo with one commit, so HEAD is a real sha we control.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/prgate.XXXXXX")"
-trap 'rm -rf "$tmp" "$tmp-other"; [[ -n "${planted:-}" ]] && rm -f "$REVIEW_DIR/$planted.md"' EXIT
+trap 'rm -rf "$tmp" "$tmp-other"; [[ -n "${planted:-}" ]] && rm -f "$REVIEW_DIR/$planted.md" "$REVIEW_DIR/$planted.redteam.json"' EXIT
+# The initial commit's tree contains this run's own tmp path, so the sha is
+# unique per PROCESS, not just per repo. Same-second empty commits hash
+# identically ACROSS concurrent runs of this suite too, and colliding shas
+# made parallel runs race each other through the shared sha-keyed fixture
+# files in REVIEW_DIR (red-team finding RT-004).
 git -C "$tmp" init -q
-git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+printf '%s\n' "$tmp" > "$tmp/.marker"
+git -C "$tmp" add .marker
+git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m init
 git -C "$tmp" remote add origin git@github.com:maphew/beads.git
 sha="$(git -C "$tmp" rev-parse HEAD)"
 
 # A second checkout with nothing to do with beads, for the case where only an
-# explicit -R/--repo reveals that the PR targets upstream.
-#
-# Its commit message must differ from the first repo's. Two empty-tree,
-# no-parent commits made in the same second by the same author hash
-# identically, and an $other whose HEAD collided with the reviewed $sha
+# explicit -R/--repo reveals that the PR targets upstream. Its marker differs
+# from the first repo's: an $other whose HEAD collided with the reviewed $sha
 # silently turned every deny case here into an allow.
 other="$tmp-other"
 mkdir -p "$other"
 git -C "$other" init -q
-git -C "$other" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init-unrelated
+printf '%s\n' "$other" > "$other/.marker"
+git -C "$other" add .marker
+git -C "$other" -c user.email=t@t -c user.name=t commit -q -m init-unrelated
 git -C "$other" remote add origin git@github.com:someone/unrelated.git
 
 run() { # run <cmd> <cwd> -> exit code
@@ -55,6 +61,15 @@ check() { # check <label> <expected> <actual>
   fi
 }
 
+# plant_redteam <sha> <base> [verdict] - a minimal passing (by default) red-team
+# verdict fixture, the companion to the .md fixture the gate now also requires.
+# head, findings, and rounds are all mandatory: the gate rejects anything
+# scripts/red-team could not have written (RT-002).
+plant_redteam() {
+  printf '{"head":"%s","base":"%s","verdict":"%s","rounds":1,"open_p0p1":0,"findings":[]}\n' \
+    "$1" "$2" "${3:-pass}" > "$REVIEW_DIR/$1.redteam.json"
+}
+
 echo "pr-review-gate:"
 
 # Pass-through: things the gate must never touch.
@@ -64,7 +79,7 @@ check "gh pr create, other repo" 0 "$(run 'gh pr create --repo maphew/mybd --tit
 check "gh pr create, -R other"   0 "$(run 'gh pr create -R maphew/mybd --title x' "$tmp")"
 check "substring, not a command" 0 "$(run 'echo "how to gh pr create"' "$tmp")"
 check "quoted, not a command"    0 "$(run "printf 'run gh pr create --repo gastownhall/beads now'" "$tmp")"
-check "escape hatch honored"     0 "$(run 'MYBD_SKIP_XVENDOR=1 gh pr create --repo gastownhall/beads' "$tmp")"
+check "both skip hatches honored" 0 "$(run 'MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads' "$tmp")"
 
 if (( have_codex )); then
   # Deny: upstream PR, no review log for HEAD.
@@ -76,10 +91,25 @@ if (( have_codex )); then
   check "unreviewed, inferred repo" 2 "$(run 'gh pr create --title x' "$tmp")"
   check "unreviewed, cd prefix"     2 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
 
-  # Allow: a review log for exactly this HEAD, against the base being targeted.
+  # Skipping only the xvendor half still leaves the red-team half unsatisfied
+  # (nothing planted at all here) - the dual gate must still block.
+  check "skip xvendor alone still blocked" 2 "$(run 'MYBD_SKIP_XVENDOR=1 gh pr create --repo gastownhall/beads --title x' "$tmp")"
+
+  # RT-001 regression: the hatch is =1 exactly, not any value starting with 1.
+  check "skip value 10 is not the hatch" 2 "$(run 'MYBD_SKIP_XVENDOR=10 MYBD_SKIP_REDTEAM=10 gh pr create --repo gastownhall/beads --title x' "$tmp")"
+
+  # Cross-vendor review regression: hatch text that is not an env-style
+  # prefix on the gh segment itself must not disarm the gate.
+  check "hatch after the gh word ignored" 2 "$(run 'gh pr create --repo gastownhall/beads --title x MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1' "$tmp")"
+  check "hatch in another segment ignored" 2 "$(run 'echo MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1; gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "hatch as variable suffix ignored" 2 "$(run 'FOOMYBD_SKIP_XVENDOR=1 FOOMYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads --title x' "$tmp")"
+
+  # Allow: a review log AND a passing red-team verdict for exactly this HEAD,
+  # against the base being targeted.
   mkdir -p "$REVIEW_DIR"
   planted="$sha"
   printf '# fixture\n\n- base: `main`\n' > "$REVIEW_DIR/$sha.md"
+  plant_redteam "$sha" main
   check "reviewed HEAD passes"      0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
   check "reviewed via cd prefix"    0 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
   check "reviewed, quoted repo"     0 "$(run 'gh pr create --repo "gastownhall/beads" --title x' "$tmp")"
