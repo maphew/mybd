@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# fleet - overnight lane supervisor: filter the ready queue, claim beads
+# atomically, run N budgeted fleet-lane processes in parallel, digest.
+#
+# Design + failure-mode analysis: reports/2026-08-16-overnight-fleet-architecture.md
+#
+# Order of operations, and why it is safe:
+#   1. one-fleet-at-a-time flock;
+#   2. preflight (bd, executor, disk, Go scratch dirs) BEFORE claiming
+#      anything, so an unusable night claims zero beads;
+#   3. pool = bd ready, filtered fail-closed through the gate-label
+#      primitive (labels in FLEET_GATE_LABELS excluded; epics, assigned
+#      beads, and out-of-range priorities excluded; FLEET_POOL=optin
+#      additionally requires the fleet-ok label);
+#   4. claims happen SERIALLY, here, before any lane spawns - bd's atomic
+#      --claim is the only anti-collision primitive, and the embedded Dolt
+#      store must never see parallel writers (agentbin flock shim + this
+#      centralization);
+#   5. each lane runs in its own process group with a wall-clock budget;
+#      the supervisor ceiling TERMs the group and the lane's trap owns the
+#      "never a dirty worktree" invariant;
+#   6. scripts/fleet-digest renders the run; the summary is commented on
+#      the fleet epic bead. The fleet NEVER merges anything.
+#
+# Usage:
+#   scripts/fleet [--lanes N] [--budget SECS] [--pool optin|optout]
+#                 [--dry-run] [--run-id ID]
+#
+# Env (defaults):
+#   FLEET_LANES (2)                parallel lanes
+#   FLEET_LANE_BUDGET_SECS (2700)  per-lane wall clock
+#   FLEET_POOL (optin)             optin requires FLEET_OK_LABEL on the bead
+#   FLEET_OK_LABEL (fleet-ok)
+#   FLEET_GATE_LABELS ("human human-decision gate needs-owner product-decision")
+#   FLEET_PRIORITIES ("1 2 3")     P0 stays human, P4 is not worth the night
+#   FLEET_EPIC_BEAD                bead to receive the digest comment
+#   FLEET_RUNS_DIR (<root>/.worktrees/.fleet/runs)
+#   FLEET_MIN_DISK_GB (5)          preflight floor on $HOME free space
+#
+# Test seams (not for production):
+#   MYBD_FLEET_BD_CMD    bash -c cmd replacing bd (claims, comments; also
+#                        exported to lanes)
+#   MYBD_FLEET_READY_CMD bash -c cmd emitting the ready-queue JSON array
+#   MYBD_FLEET_LANE_CMD  bash -c cmd replacing scripts/fleet-lane; gets the
+#                        bead id as $1
+#   MYBD_FLEET_SKIP_PREFLIGHT=1
+#
+# Exit codes: 0 run completed (read the digest) · 1 error · 2 usage ·
+#             3 nothing to do (empty pool after filtering) ·
+#             4 another fleet run holds the lock.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [[ -n "$_common" ]]; then ROOT="$(dirname "$_common")"; fi
+
+LANES="${FLEET_LANES:-2}"
+BUDGET="${FLEET_LANE_BUDGET_SECS:-2700}"
+POOL_MODE="${FLEET_POOL:-optin}"
+OK_LABEL="${FLEET_OK_LABEL:-fleet-ok}"
+GATE_LABELS="${FLEET_GATE_LABELS:-human human-decision gate needs-owner product-decision}"
+PRIORITIES="${FLEET_PRIORITIES:-1 2 3}"
+RUNS_DIR="${FLEET_RUNS_DIR:-$ROOT/.worktrees/.fleet/runs}"
+MIN_DISK_GB="${FLEET_MIN_DISK_GB:-5}"
+EPIC_BEAD="${FLEET_EPIC_BEAD:-}"
+DRY_RUN=0
+run_id="$(date +%Y%m%d-%H%M%S)"
+
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --lanes)  [[ $# -ge 2 ]] || { usage; exit 2; }; LANES="$2"; shift 2 ;;
+    --budget) [[ $# -ge 2 ]] || { usage; exit 2; }; BUDGET="$2"; shift 2 ;;
+    --pool)   [[ $# -ge 2 ]] || { usage; exit 2; }; POOL_MODE="$2"; shift 2 ;;
+    --run-id) [[ $# -ge 2 ]] || { usage; exit 2; }; run_id="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "fleet: unexpected argument '$1'" >&2; usage; exit 2 ;;
+  esac
+done
+case "$POOL_MODE" in optin|optout) ;; *) echo "fleet: --pool must be optin|optout" >&2; exit 2 ;; esac
+
+RUN_DIR="$RUNS_DIR/$run_id"
+mkdir -p "$RUN_DIR/lanes"
+LOG="$RUN_DIR/fleet.log"
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
+
+# ---- one fleet at a time --------------------------------------------------
+LOCK="$RUNS_DIR/../supervisor.lock"
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "fleet: another fleet run holds the lock ($LOCK)" >&2
+  exit 4
+fi
+
+# ---- bd plumbing ----------------------------------------------------------
+export PATH="$ROOT/scripts/agentbin:$PATH"
+export MYBD_BD_LOCK_WAIT="${MYBD_BD_LOCK_WAIT:-300}"
+
+fleet_bd() {
+  if [[ -n "${MYBD_FLEET_BD_CMD:-}" ]]; then
+    bash -c "$MYBD_FLEET_BD_CMD"' "$@"' bd "$@"
+  else
+    bd "$@"
+  fi
+}
+
+ready_json() {
+  if [[ -n "${MYBD_FLEET_READY_CMD:-}" ]]; then
+    bash -c "$MYBD_FLEET_READY_CMD" ready
+  else
+    "$ROOT/scripts/bdj" ready -n 0
+  fi
+}
+
+# ---- preflight (before any claim) -----------------------------------------
+if [[ "${MYBD_FLEET_SKIP_PREFLIGHT:-0}" != "1" ]]; then
+  command -v jq >/dev/null || { log "preflight: jq missing"; exit 1; }
+  if [[ -z "${MYBD_FLEET_BD_CMD:-}" ]]; then
+    command -v bd >/dev/null || { log "preflight: bd missing"; exit 1; }
+  fi
+  if [[ -z "${MYBD_FLEET_EXECUTOR_CMD:-}" ]]; then
+    command -v codex >/dev/null || { log "preflight: codex missing and no executor seam - lanes would fail all night"; exit 1; }
+  fi
+  free_gb=$(df -BG --output=avail "$HOME" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)
+  if (( ${free_gb:-0} < MIN_DISK_GB )); then
+    log "preflight: only ${free_gb}G free on \$HOME (floor ${MIN_DISK_GB}G)"; exit 1
+  fi
+  # tmpfs /tmp trap: Go scratch space on the home disk
+  export GOTMPDIR="${GOTMPDIR:-$HOME/.cache/gotmp}" GOCACHE="${GOCACHE:-$HOME/.cache/gocache}"
+  mkdir -p "$GOTMPDIR" "$GOCACHE"
+fi
+
+# ---- pool: ready queue through the gate filter, fail-closed ---------------
+pool_file="$RUN_DIR/pool.json"
+gates_json=$(printf '%s\n' $GATE_LABELS | jq -R . | jq -cs .)
+prios_json=$(printf '%s\n' $PRIORITIES | jq -R 'tonumber' | jq -cs .)
+ready_json | jq -c \
+  --argjson gates "$gates_json" --argjson prios "$prios_json" \
+  --arg mode "$POOL_MODE" --arg ok "$OK_LABEL" '
+  [ .[]
+    | select((.labels // []) | type == "array")            # unparseable labels: excluded
+    | select(((.labels // []) - ((.labels // []) - $gates)) == [])  # no gate label
+    | select((.issue_type // .type // "") != "epic")
+    | select((.assignee // "") == "")
+    | select([.priority] | inside($prios))
+    | select(if $mode == "optin" then ((.labels // []) | index($ok)) != null else true end)
+  ] | sort_by(.priority)' >"$pool_file" \
+  || { log "pool: ready-queue fetch/filter failed (fail-closed: claiming nothing)"; exit 1; }
+
+pool_n=$(jq 'length' "$pool_file")
+log "pool: $pool_n candidate(s) after gate filter (mode=$POOL_MODE)"
+jq -r '.[] | "  \(.id) p\(.priority) \(.title)"' "$pool_file" | tee -a "$LOG" >&2
+
+jq -n --arg run "$run_id" --argjson lanes "$LANES" --argjson budget "$BUDGET" \
+      --arg pool_mode "$POOL_MODE" --slurpfile pool "$pool_file" \
+      '{run:$run, lanes:$lanes, budget_secs:$budget, pool_mode:$pool_mode,
+        candidates:($pool[0] | map(.id)), claims:[], skips:[]}' >"$RUN_DIR/run.json"
+
+if (( pool_n == 0 )); then log "nothing to do"; exit 3; fi
+if (( DRY_RUN == 1 )); then log "dry-run: stopping before claims"; exit 0; fi
+
+# ---- claim serially, before any spawn -------------------------------------
+declare -a claimed=()
+while IFS= read -r id; do
+  if (( ${#claimed[@]} >= LANES )); then break; fi
+  if fleet_bd update "$id" --claim --json >>"$LOG" 2>&1; then
+    claimed+=("$id"); log "claimed $id"
+    jq --arg id "$id" '.claims += [$id]' "$RUN_DIR/run.json" >"$RUN_DIR/run.json.tmp" \
+      && mv -f "$RUN_DIR/run.json.tmp" "$RUN_DIR/run.json"
+  else
+    log "claim skipped for $id (another actor got there first, or bd refused)"
+    jq --arg id "$id" '.skips += [$id]' "$RUN_DIR/run.json" >"$RUN_DIR/run.json.tmp" \
+      && mv -f "$RUN_DIR/run.json.tmp" "$RUN_DIR/run.json"
+  fi
+done < <(jq -r '.[].id' "$pool_file")
+
+if (( ${#claimed[@]} == 0 )); then log "no claims succeeded"; exit 3; fi
+
+# ---- spawn lanes, each in its own process group ---------------------------
+declare -a pids=()
+for id in "${claimed[@]}"; do
+  mkdir -p "$RUN_DIR/lanes/$id"
+  if [[ -n "${MYBD_FLEET_LANE_CMD:-}" ]]; then
+    FLEET_RUN_DIR="$RUN_DIR" FLEET_LANE_BUDGET_SECS="$BUDGET" \
+      setsid bash -c "$MYBD_FLEET_LANE_CMD"' "$@"' lane "$id" \
+      >>"$RUN_DIR/lanes/$id/spawn.log" 2>&1 &
+  else
+    FLEET_RUN_DIR="$RUN_DIR" FLEET_LANE_BUDGET_SECS="$BUDGET" \
+      setsid "$ROOT/scripts/fleet-lane" "$id" \
+      >>"$RUN_DIR/lanes/$id/spawn.log" 2>&1 &
+  fi
+  pids+=($!)
+  log "lane spawned: $id (pid $!)"
+done
+
+# ---- wait with a ceiling; the lane trap owns the clean exit ---------------
+ceiling=$(( $(date +%s) + BUDGET + 600 ))
+for i in "${!pids[@]}"; do
+  pid="${pids[$i]}"; id="${claimed[$i]}"
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( $(date +%s) > ceiling )); then
+      log "ceiling: TERM lane $id (pgid $pid)"
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      for _ in $(seq 1 24); do kill -0 "$pid" 2>/dev/null || break; sleep 5; done
+      if kill -0 "$pid" 2>/dev/null; then
+        log "ceiling: KILL lane $id (trap did not finish; digest will flag it)"
+        kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+      fi
+      break
+    fi
+    sleep 5
+  done
+  rc=0; wait "$pid" 2>/dev/null || rc=$?
+  echo "$rc" >"$RUN_DIR/lanes/$id/exit"
+  log "lane done: $id rc=$rc"
+done
+
+# ---- digest ---------------------------------------------------------------
+"$ROOT/scripts/fleet-digest" "$RUN_DIR" >"$RUN_DIR/digest.out" 2>&1 \
+  || log "digest rendering failed (states are in $RUN_DIR/lanes/)"
+if [[ -n "$EPIC_BEAD" && -s "$RUN_DIR/digest.md" ]]; then
+  fleet_bd comment "$EPIC_BEAD" "$(cat "$RUN_DIR/digest.md")" >>"$LOG" 2>&1 \
+    || log "digest bead comment failed (digest at $RUN_DIR/digest.md)"
+fi
+log "run complete: $RUN_DIR/digest.md"
+exit 0
