@@ -184,6 +184,24 @@ unit-template change (deployed units drift — see bd memory
 `a-tracked-systemd-unit-template-under-scripts-systemd`). Smoke-test with
 `scripts/test-index-babysit`.
 
+### Overnight fleet (phase 1)
+
+`scripts/fleet` is the overnight lane supervisor (epic `mybd-vlsnv`; design and
+failure-mode analysis in
+[reports/2026-08-16-overnight-fleet-architecture.md](reports/2026-08-16-overnight-fleet-architecture.md)).
+It filters `bd ready` through the gate-label primitive (beads labeled `human`
+etc. are excluded; default pool mode `optin` additionally requires the
+`fleet-ok` label), claims beads atomically and SERIALLY before spawning, then
+runs up to `FLEET_LANES` (default 2) parallel `scripts/fleet-lane` processes,
+each in its own worktree/branch (`fleet/<bead>`) with a wall-clock budget
+(default 45min). Lanes run implement (codex builder) -> test -> `scripts/pr-open`
+(preflight + red-team + cross-vendor review) and park for ratification; the
+fleet NEVER merges, and PR creation is off (`FLEET_OPEN_PR=0`) until phase 2.
+On budget exhaustion a lane commits WIP, files a handoff bead, and removes its
+worktree - never a dirty worktree. `scripts/fleet-digest <run-dir>` renders the
+morning digest. Smoke-test with `scripts/test-fleet`; validate a night with
+`scripts/fleet --dry-run` first.
+
 ## Validation
 
 Run the suite locally before proposing a change. There is no queue and no

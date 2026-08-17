@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# fleet-lane - one bead, full autonomous pipeline, budgeted, clean-exit.
+#
+# Spawned by scripts/fleet (one process per claimed bead). Runs the pipeline:
+#
+#   setup     source worktree + branch fleet/<bead> off the base branch
+#   implement executor (default scripts/codex-agent builder) works from a spec
+#             built out of `bd show`; it must COMMIT its work
+#   test      FLEET_TEST_CMD in the worktree (default: go build ./...)
+#   review    scripts/pr-open: preflight + red-team (own fix rounds) +
+#             cross-vendor review; exit 3/4 park the lane
+#   pr        only when FLEET_OPEN_PR=1 and review evidence exists for the
+#             exact HEAD sha (mirrors scripts/pr-review-gate, which is a
+#             Claude-session hook and cannot see this bash process)
+#   finish    park for ratification; the fleet NEVER merges anything
+#
+# Invariant, enforced by the EXIT/TERM trap: this process never leaves a
+# dirty worktree. On budget exhaustion, supervisor TERM, or an unexpected
+# error it commits WIP on the lane branch, pushes best-effort, files a
+# handoff bead with a cold-start summary, removes the worktree, and writes a
+# terminal state.json. The branch is the deliverable; the handoff bead is
+# the pointer that keeps it visible.
+#
+# State machine record: $FLEET_RUN_DIR/lanes/<bead>/state.json (atomic
+# tmp+mv writes; the digest treats a missing/non-terminal state as an
+# anomaly, never as success).
+#
+# Env (defaults):
+#   FLEET_RUN_DIR (required)      run directory from the supervisor
+#   FLEET_SOURCE_REPO             source checkout for worktrees (bd-main)
+#   FLEET_WORKTREE_BASE           parent dir for lane worktrees
+#                                 (<root>/.worktrees/beads)
+#   FLEET_BASE (main)             base branch
+#   FLEET_LANE_BUDGET_SECS (2700) wall-clock budget
+#   FLEET_TEST_CMD (go build ./...)
+#   FLEET_OPEN_PR (0)             1 = open the upstream PR after green review
+#   FLEET_PUSH (1)                push lane branch to origin (fork)
+#   FLEET_PR_REPO (gastownhall/beads)
+#
+# Test seams (style of scripts/red-team; not for production):
+#   MYBD_FLEET_BD_CMD       bash -c cmd replacing bd; argv appended
+#   MYBD_FLEET_EXECUTOR_CMD bash -c cmd replacing the builder; gets
+#                           FLEET_WORKTREE, FLEET_BEAD, FLEET_SPEC; must
+#                           commit its work in $FLEET_WORKTREE
+#   MYBD_FLEET_REVIEW_CMD   bash -c cmd replacing pr-open; same exit
+#                           contract (0 pass, 3 preflight, 4 red-team FAIL)
+#   MYBD_FLEET_PR_CMD       bash -c cmd replacing `gh pr create`; must print
+#                           a PR url
+#
+# Exit codes: 0 terminal state written (ratify/parked/handoff) - read
+# state.json for the outcome; 1 setup/config error before any claim of the
+# invariant; 2 usage.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [[ -n "$_common" ]]; then ROOT="$(dirname "$_common")"; fi
+
+bead="${1:-}"
+[[ -n "$bead" ]] || { echo "usage: fleet-lane <bead-id>" >&2; exit 2; }
+
+RUN_DIR="${FLEET_RUN_DIR:?fleet-lane: FLEET_RUN_DIR is required}"
+SRC="${FLEET_SOURCE_REPO:-$ROOT/bd-main}"
+WT_BASE="${FLEET_WORKTREE_BASE:-$ROOT/.worktrees/beads}"
+BASE="${FLEET_BASE:-main}"
+BUDGET="${FLEET_LANE_BUDGET_SECS:-2700}"
+TEST_CMD="${FLEET_TEST_CMD:-go build ./...}"
+OPEN_PR="${FLEET_OPEN_PR:-0}"
+PUSH="${FLEET_PUSH:-1}"
+PR_REPO="${FLEET_PR_REPO:-gastownhall/beads}"
+
+LANE_DIR="$RUN_DIR/lanes/$bead"
+mkdir -p "$LANE_DIR"
+STATE="$LANE_DIR/state.json"
+LOG="$LANE_DIR/lane.log"
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"; }
+
+started_epoch=$(date +%s)
+deadline=$(( started_epoch + BUDGET ))
+remaining() { local r=$(( deadline - $(date +%s) )); (( r > 0 )) && echo "$r" || echo 0; }
+
+wt="$WT_BASE/fleet-$bead"
+branch="fleet/$bead"
+base_sha=""
+pr_url=""
+stage="setup"
+outcome=""
+reason=""
+diff_files=0
+diff_lines=0
+LANE_DONE=0
+TERM_REASON=""
+
+# ---- state ----------------------------------------------------------------
+state_write() { # state_write  (reads globals)
+  local tmp="$STATE.tmp.$$" ended=""
+  if [[ -n "$outcome" ]]; then ended="$(date -u +%FT%TZ)"; fi
+  jq -n \
+    --arg bead "$bead" --arg stage "$stage" --arg branch "$branch" \
+    --arg worktree "$wt" --arg base_sha "$base_sha" --arg pr "$pr_url" \
+    --arg outcome "$outcome" --arg reason "$reason" \
+    --arg started "$(date -u -d "@$started_epoch" +%FT%TZ)" --arg ended "$ended" \
+    --argjson budget "$BUDGET" --argjson used "$(( $(date +%s) - started_epoch ))" \
+    --argjson diff_files "$diff_files" --argjson diff_lines "$diff_lines" \
+    '{bead:$bead, stage:$stage, branch:$branch, worktree:$worktree,
+      base_sha:$base_sha, pr:(if $pr=="" then null else $pr end),
+      outcome:(if $outcome=="" then null else $outcome end),
+      reason:(if $reason=="" then null else $reason end),
+      started:$started, ended:(if $ended=="" then null else $ended end),
+      budget:{wall_secs:$budget, used_secs:$used},
+      diff:{files:$diff_files, lines:$diff_lines}}' >"$tmp"
+  mv -f "$tmp" "$STATE"
+}
+
+# ---- bd (always best-effort past setup: dolt may be locked) ---------------
+fleet_bd() {
+  if [[ -n "${MYBD_FLEET_BD_CMD:-}" ]]; then
+    bash -c "$MYBD_FLEET_BD_CMD"' "$@"' bd "$@"
+  else
+    bd "$@"
+  fi
+}
+
+bead_json() { # normalized single-object JSON for the bead, cached
+  local cache="$LANE_DIR/bead.json"
+  if [[ ! -s "$cache" ]]; then
+    fleet_bd show "$bead" --json 2>>"$LOG" \
+      | jq 'if type=="array" then .[0] else . end' >"$cache" || echo '{}' >"$cache"
+  fi
+  cat "$cache"
+}
+
+# ---- worktree hygiene -----------------------------------------------------
+record_diff_stats() {
+  [[ -d "$wt" && -n "$base_sha" ]] || return 0
+  local ns
+  ns=$(git -C "$wt" diff --shortstat "$base_sha" HEAD 2>/dev/null || true)
+  diff_files=$(grep -oE '[0-9]+ file' <<<"$ns" | grep -oE '[0-9]+' || echo 0)
+  diff_lines=$(( $(grep -oE '[0-9]+ insertion' <<<"$ns" | grep -oE '[0-9]+' || echo 0) \
+               + $(grep -oE '[0-9]+ deletion' <<<"$ns" | grep -oE '[0-9]+' || echo 0) ))
+  [[ -n "$diff_files" ]] || diff_files=0
+}
+
+has_commits() { # commits beyond base?
+  [[ -d "$wt" && -n "$base_sha" ]] || return 1
+  [[ -n "$(git -C "$wt" rev-list "$base_sha..HEAD" -n1 2>/dev/null)" ]]
+}
+
+# Commit anything loose, push best-effort, remove the worktree. After this,
+# the worktree is gone and every change is on the branch. Never rm -rf.
+cleanup_worktree() { # cleanup_worktree <wip-msg-or-empty>
+  local wip_msg="${1:-}"
+  [[ -d "$wt" ]] || return 0
+  if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+    git -C "$wt" add -A >>"$LOG" 2>&1 || true
+    git -C "$wt" commit -m "${wip_msg:-WIP(fleet): $bead}" >>"$LOG" 2>&1 || true
+  fi
+  record_diff_stats
+  if [[ "$PUSH" == "1" ]] && has_commits; then
+    git -C "$wt" push -u origin "$branch" >>"$LOG" 2>&1 \
+      || log "push of $branch failed (branch survives locally)"
+  fi
+  git -C "$SRC" worktree remove --force "$wt" >>"$LOG" 2>&1 \
+    || log "worktree remove failed for $wt"
+}
+
+file_handoff_bead() {
+  local tail summary
+  tail=$(tail -15 "$LOG" 2>/dev/null | sed 's/^/  /')
+  summary="Cold start for $bead (fleet lane exhausted/interrupted at stage '$stage').
+Branch: $branch (base $base_sha) - worktree removed, work is committed on the branch.
+Reason: $reason
+Next action: create a worktree from the branch, read the last commits, continue the stage.
+Recent log:
+$tail"
+  fleet_bd create "fleet handoff: $bead stalled at $stage" -t task -p 2 \
+    --description "$summary" --deps "discovered-from:$bead" --json \
+    >>"$LOG" 2>&1 || log "handoff bead creation failed (state.json is the fallback record)"
+}
+
+STAGE_PID=""
+on_term() {
+  TERM_REASON="terminated (budget ceiling or supervisor stop)"
+  # Forward into the current stage's own process group: `timeout` (run
+  # without --foreground, see run_stage) deliberately isolates its command
+  # tree into a brand-new process group so ITS OWN deadline can cascade-kill
+  # descendants; that means this signal, aimed at OUR group (e.g. the
+  # supervisor's ceiling `kill -TERM -- -PGID`), never reaches it on its own.
+  if [[ -n "$STAGE_PID" ]]; then
+    kill -TERM -- "-$STAGE_PID" 2>/dev/null || kill -TERM "$STAGE_PID" 2>/dev/null || true
+  fi
+  exit 143
+}
+trap on_term TERM INT
+
+finalize() {
+  local rc=$?
+  trap - EXIT
+  if [[ "$LANE_DONE" == "1" ]]; then state_write; exit 0; fi
+  # Unplanned exit: honour the invariant, then record a terminal state.
+  if [[ -n "$TERM_REASON" ]]; then
+    outcome="handoff"; reason="$TERM_REASON at stage '$stage'"
+  elif [[ "$(remaining)" == "0" ]]; then
+    outcome="handoff"; reason="budget exhausted at stage '$stage'"
+  else
+    outcome="failed"; reason="unexpected exit rc=$rc at stage '$stage'"
+  fi
+  log "finalize: $outcome - $reason"
+  cleanup_worktree "WIP(fleet): $bead - $reason"
+  if [[ "$outcome" == "handoff" ]]; then
+    file_handoff_bead
+  fi
+  fleet_bd comment "$bead" "fleet: $outcome - $reason (branch $branch, run $(basename "$RUN_DIR"))" \
+    >>"$LOG" 2>&1 || true
+  state_write
+  exit 0
+}
+trap finalize EXIT
+
+# run a stage command under the remaining budget; returns its rc, or 124 on
+# stage timeout. A zero remaining budget exits (trap does the handoff).
+run_stage() { # run_stage <label> <cmd...>
+  local label="$1"; shift
+  local rem; rem="$(remaining)"
+  if [[ "$rem" == "0" ]]; then log "budget exhausted before $label"; exit 96; fi
+  log "stage $label starting (${rem}s left)"
+  local rc=0
+  # Backgrounded + `wait $STAGE_PID`, not a synchronous foreground run: bash
+  # only acts on a pending trap once its CURRENT foreground command returns,
+  # so a plain foreground `timeout ...` here would make an external TERM
+  # (e.g. the supervisor's ceiling kill) invisible to on_term until this
+  # stage's OWN internal deadline (up to the full remaining lane budget)
+  # elapses on its own. `wait PID` for one specific backgrounded job is
+  # interruptible, so the trap fires promptly and can forward the signal
+  # into $STAGE_PID's process group (see on_term).
+  timeout --signal=TERM --kill-after=30 "$rem" "$@" >>"$LOG" 2>&1 &
+  STAGE_PID=$!
+  wait "$STAGE_PID" || rc=$?
+  STAGE_PID=""
+  log "stage $label rc=$rc"
+  return "$rc"
+}
+
+park() { # park <reason>
+  outcome="parked"; reason="$1"
+  log "parked: $reason"
+  cleanup_worktree ""
+  fleet_bd comment "$bead" "fleet: parked - $reason (branch $branch, run $(basename "$RUN_DIR"))" \
+    >>"$LOG" 2>&1 || true
+  LANE_DONE=1
+  exit 0
+}
+
+# ---- pipeline -------------------------------------------------------------
+stage="setup"; state_write
+log "lane start: bead=$bead budget=${BUDGET}s worktree=$wt"
+mkdir -p "$WT_BASE"
+git -C "$SRC" worktree add "$wt" -b "$branch" "$BASE" >>"$LOG" 2>&1 \
+  || { reason="worktree add failed"; outcome="failed"; state_write; trap - EXIT; exit 1; }
+base_sha="$(git -C "$wt" rev-parse HEAD)"
+state_write
+
+# spec for the executor
+title="$(bead_json | jq -r '.title // "(no title)"')"
+SPEC="$LANE_DIR/spec.md"
+{
+  echo "# Implement bead $bead: $title"
+  echo
+  echo "You are an autonomous overnight builder in the worktree $wt (a linked"
+  echo "worktree of the beads source repo, branch $branch off $BASE)."
+  echo
+  bead_json | jq -r '"## Description\n\n\(.description // "(none)")\n\n## Design\n\n\(.design // "(none)")\n\n## Acceptance criteria\n\n\(.acceptance_criteria // "(none)")"'
+  echo
+  echo "## Rules"
+  echo "- Implement the change and its tests; run the tests you touch."
+  echo "- COMMIT your work (small, well-messaged commits). Uncommitted work is discarded."
+  echo "- Do not push, do not open PRs, do not run bd/dolt commands."
+  echo "- If the task is not implementable as specified, write BLOCKED.md explaining why and commit it."
+} >"$SPEC"
+
+stage="implement"; state_write
+rc=0
+if [[ -n "${MYBD_FLEET_EXECUTOR_CMD:-}" ]]; then
+  FLEET_WORKTREE="$wt" FLEET_BEAD="$bead" FLEET_SPEC="$SPEC" \
+    run_stage implement bash -c "$MYBD_FLEET_EXECUTOR_CMD" executor || rc=$?
+else
+  run_stage implement "$ROOT/scripts/codex-agent" builder -C "$wt" \
+    -o "$LANE_DIR/executor-out.md" - <"$SPEC" || rc=$?
+fi
+if (( rc == 124 || rc == 137 )); then log "executor hit stage timeout"; exit 96; fi
+# commit anything the executor left loose, then require real commits
+if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+  git -C "$wt" add -A >>"$LOG" 2>&1 && \
+    git -C "$wt" commit -m "chore(fleet): collect uncommitted executor output for $bead" >>"$LOG" 2>&1 || true
+fi
+has_commits || park "no-change: executor produced no commits (rc=$rc)"
+if (( rc != 0 )); then park "executor failed rc=$rc (commits preserved on branch)"; fi
+if [[ -f "$wt/BLOCKED.md" ]]; then park "executor declared BLOCKED: $(head -3 "$wt/BLOCKED.md" | tr '\n' ' ')"; fi
+
+stage="test"; state_write
+rc=0
+run_stage test bash -c "cd '$wt' && $TEST_CMD" || rc=$?
+if (( rc == 124 || rc == 137 )); then exit 96; fi
+if (( rc != 0 )); then park "tests failed rc=$rc ($TEST_CMD)"; fi
+
+stage="review"; state_write
+rc=0
+if [[ -n "${MYBD_FLEET_REVIEW_CMD:-}" ]]; then
+  FLEET_WORKTREE="$wt" FLEET_BEAD="$bead" \
+    run_stage review bash -c "$MYBD_FLEET_REVIEW_CMD" review || rc=$?
+else
+  run_stage review "$ROOT/scripts/pr-open" -C "$wt" --base "$BASE" \
+    --search "$title" || rc=$?
+fi
+case "$rc" in
+  0) ;;
+  3) park "preflight objected (duplicate/parallel work suspected)" ;;
+  4) park "red-team FAIL: rounds exhausted with open P0/P1 (red-team filed its bead)" ;;
+  124|137) exit 96 ;;
+  *) park "review stage error rc=$rc" ;;
+esac
+
+stage="pr"; state_write
+if [[ "$OPEN_PR" == "1" ]]; then
+  head_sha="$(git -C "$wt" rev-parse HEAD)"
+  # The pr-review-gate hook guards Claude sessions, not this process:
+  # re-check the same evidence for the exact sha ourselves.
+  if [[ ! -s "$ROOT/.worktrees/.review-logs/$head_sha.md" ]] || \
+     ! jq -e '.verdict=="PASS"' "$ROOT/.worktrees/.review-logs/$head_sha.redteam.json" >/dev/null 2>&1; then
+    park "review evidence missing for HEAD $head_sha - refusing to open PR"
+  fi
+  git -C "$wt" push -u origin "$branch" >>"$LOG" 2>&1 || park "push failed - cannot open PR"
+  body="$LANE_DIR/pr-body.md"
+  {
+    echo "Implements bead $bead: $title"
+    echo
+    bead_json | jq -r '.description // ""' | head -30
+    echo
+    echo "Opened by the overnight fleet; review log .worktrees/.review-logs/$head_sha.md (local)."
+    echo "Awaiting ratification by maphew before any further action."
+  } >"$body"
+  rc=0
+  if [[ -n "${MYBD_FLEET_PR_CMD:-}" ]]; then
+    pr_url=$(FLEET_WORKTREE="$wt" FLEET_BEAD="$bead" FLEET_PR_BODY="$body" \
+      bash -c "$MYBD_FLEET_PR_CMD" pr 2>>"$LOG") || rc=$?
+  else
+    pr_url=$(cd "$wt" && gh pr create --repo "$PR_REPO" --base "$BASE" \
+      --title "$title" --body-file "$body" 2>>"$LOG") || rc=$?
+  fi
+  if (( rc != 0 )); then park "gh pr create failed rc=$rc (branch pushed, review green)"; fi
+  log "PR opened: $pr_url"
+fi
+
+stage="finish"
+outcome="ratify"
+if [[ -n "$pr_url" ]]; then
+  reason="review clean, PR opened - awaiting ratification"
+else
+  reason="review clean, PR not opened (FLEET_OPEN_PR=0) - awaiting ratification"
+fi
+cleanup_worktree ""
+fleet_bd comment "$bead" "fleet: ready for ratification - $reason. Branch $branch${pr_url:+, PR $pr_url}, run $(basename "$RUN_DIR")." \
+  >>"$LOG" 2>&1 || true
+LANE_DONE=1
+exit 0
