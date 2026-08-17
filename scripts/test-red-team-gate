@@ -123,6 +123,18 @@ cat > "$RT_OUT" <<'JSON'
 JSON
 STUBEOF
 
+cat > "$STUBS/adv-prior-aware.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+# Records whether the harness handed over prior-round findings, then reports
+# clean. RT_PRIOR is the continuation seam added for the PR 32 review fix.
+if [[ -n "${RT_PRIOR:-}" && -s "${RT_PRIOR:-/nonexistent}" ]]; then
+  touch "$(dirname "${BASH_SOURCE[0]}")/prior-seen"
+fi
+cat > "$RT_OUT" <<'JSON'
+{"summary":"clean","findings":[]}
+JSON
+STUBEOF
+
 cat > "$STUBS/adv-bad-json.sh" <<'STUBEOF'
 #!/usr/bin/env bash
 printf 'this is not json' > "$RT_OUT"
@@ -206,11 +218,16 @@ r5="$(mk_repo)"
 sk5="$(state_key_for "$r5")"; cleanup_states+=("$sk5")
 e5a="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
 check "5a first no-fix run exits 5"    5 "$e5a"
-check "5a state file records round 1"  1 "$(cat "$STATE_DIR/$sk5" 2>/dev/null)"
+check "5a state file records round 1"  1 "$(awk '{print $1}' "$STATE_DIR/$sk5" 2>/dev/null)"
 
+# Continuations commit between rounds, as a real session-as-builder would.
+# (Only a CLEAN rerun on an unchanged failing sha is refused; repeated P1
+# verdicts on the same sha are not - that path is covered in 5d/5e below.)
+git -C "$r5" -c user.email=t@t -c user.name=t commit -q --allow-empty -m fix-attempt-1
 e5b="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
 check "5b second no-fix run exits 5"   5 "$e5b"
-check "5b state file records round 2"  2 "$(cat "$STATE_DIR/$sk5" 2>/dev/null)"
+check "5b state file records round 2"  2 "$(awk '{print $1}' "$STATE_DIR/$sk5" 2>/dev/null)"
+git -C "$r5" -c user.email=t@t -c user.name=t commit -q --allow-empty -m fix-attempt-2
 
 e5c="$(call_rt "bash $STUBS/adv-always-p1.sh" "" "$STUBS/bd-stub.sh" -C "$r5" --base main --rounds 3 --no-fix)"
 sha5="$(git -C "$r5" rev-parse HEAD)"; cleanup_shas+=("$sha5")
@@ -221,13 +238,29 @@ check "5c state file removed"          no "$([[ -e "$STATE_DIR/$sk5" ]] && echo 
 r5b="$(mk_repo)"
 sk5b="$(state_key_for "$r5b")"; cleanup_states+=("$sk5b")
 e5d="$(call_rt "bash $STUBS/adv-p1-round1.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
+sha5d="$(git -C "$r5b" rev-parse HEAD)"; cleanup_shas+=("$sha5d")
 check "5d no-fix round1 P1 exits 5"    5 "$e5d"
-check "5d state file records round 1"  1 "$(cat "$STATE_DIR/$sk5b" 2>/dev/null)"
+check "5d state file records round 1"  1 "$(awk '{print $1}' "$STATE_DIR/$sk5b" 2>/dev/null)"
+check "5d state file records the sha"  "$sha5d" "$(awk '{print $2}' "$STATE_DIR/$sk5b" 2>/dev/null)"
+
+# PR 32 review regression: a clean rerun on the SAME commit a previous round
+# found failing is refused (exit 6) - flakiness must not launder the recorded
+# FAIL into a PASS - and the FAIL verdict stays in place.
+e5e0="$(call_rt "bash $STUBS/adv-p1-round1.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
+check "5e clean rerun w/o commit refused (6)" 6 "$e5e0"
+check "5e FAIL verdict left in place"  fail "$(jq -r '.verdict' "$REVIEW_DIR/$sha5d.redteam.json" 2>/dev/null)"
+
+# After the session commits a fix, the clean rerun mints the pass, keyed to
+# the new sha - and the continuation hands the prior round's findings to the
+# adversary for re-verification (RT_PRIOR seam).
+rm -f "$STUBS/prior-seen"
+git -C "$r5b" -c user.email=t@t -c user.name=t commit -q --allow-empty -m fix
 sha5b="$(git -C "$r5b" rev-parse HEAD)"; cleanup_shas+=("$sha5b")
-e5e="$(call_rt "bash $STUBS/adv-p1-round1.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
-check "5e no-fix round2 clean exits 0" 0 "$e5e"
+e5e="$(call_rt "bash $STUBS/adv-prior-aware.sh" "" "" -C "$r5b" --base main --rounds 3 --no-fix)"
+check "5e clean rerun after commit exits 0" 0 "$e5e"
 check "5e a passing run removes state file" no "$([[ -e "$STATE_DIR/$sk5b" ]] && echo yes || echo no)"
 check "5e verdict pass, rounds=2"      "pass:2" "$(jq -r '"\(.verdict):\(.rounds)"' "$REVIEW_DIR/$sha5b.redteam.json" 2>/dev/null)"
+check "5e prior findings handed to adversary" yes "$([[ -f "$STUBS/prior-seen" ]] && echo yes || echo no)"
 
 # RT-003 regression: two unrelated repos with the same directory basename AND
 # the same branch must not share a --no-fix round counter (the state key
@@ -305,6 +338,14 @@ sha11_after="$(git -C "$r11" rev-parse HEAD)"; cleanup_shas+=("$sha11_after")
 check "11 non-committing builder does not hang (no timeout/124)" yes "$([[ "$e11" != "124" ]] && echo yes || echo no)"
 check "11 exits 4 (rounds exhausted)"  4                "$e11"
 check "11 HEAD unchanged (builder never committed)" "$sha11_before" "$sha11_after"
+
+# PR 32 review regression, in-process flavor: the builder spends its round
+# without committing and the adversary then goes clean on the same sha - no
+# pass may be minted from that; refused with exit 6.
+r11b="$(mk_repo)"; sha11b="$(git -C "$r11b" rev-parse HEAD)"; cleanup_shas+=("$sha11b")
+e11b="$(call_rt "bash $STUBS/adv-p1-round1.sh" "bash $STUBS/builder-nocommit.sh" "" -C "$r11b" --base main --rounds 3)"
+check "11b clean after non-committing builder refused (6)" 6 "$e11b"
+check "11b no pass verdict written" no "$(jq -r 'select(.verdict=="pass") | "yes"' "$REVIEW_DIR/$sha11b.redteam.json" 2>/dev/null | grep -q yes && echo yes || echo no)"
 
 echo
 echo "pr-review-gate integration (red-team half):"

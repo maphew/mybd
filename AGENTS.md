@@ -149,7 +149,9 @@ files a bead with the findings and the verdict is FAIL: **do not open that
 PR; move to the next queue item.** The verdict lands in
 `.worktrees/.review-logs/<head-sha>.redteam.json`. Run it standalone with
 `scripts/red-team -C <worktree> --base main` (add `--no-fix` when the calling
-session is the builder — rounds then count across invocations).
+session is the builder — rounds then count across invocations, prior findings
+are re-injected for re-verification, and a clean rerun on an unchanged
+previously-failing commit is refused rather than trusted).
 
 `scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json`) blocks
 `gh pr create` until BOTH a review log and a passing red-team verdict exist for

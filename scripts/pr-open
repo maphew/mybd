@@ -155,6 +155,9 @@ if (( ! skip_redteam )); then
       echo "  the next queue item." >&2
     elif (( rt_rc == 5 )); then
       echo "pr-open: red-team found open P0/P1 findings; fix, commit, and re-run." >&2
+    elif (( rt_rc == 6 )); then
+      echo "pr-open: red-team refused a clean rerun on an unchanged previously-failing" >&2
+      echo "  commit. Commit a fix before re-running." >&2
     else
       echo "pr-open: red-team failed (exit $rt_rc); not proceeding to review." >&2
     fi
