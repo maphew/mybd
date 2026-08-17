@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# destructive-guard - PreToolUse(Bash) hook: block the three destructive
+# shapes that have actually destroyed state in this repo's history, before
+# the shell ever sees them. Part of the postmortem-to-guardrail pipeline
+# (bead mybd-uqzt8); regression-tested by scripts/test-guardrails.
+#
+# Reads the PreToolUse JSON on stdin. Exit 0 allows; exit 2 blocks and hands
+# the stderr message to the model.
+#
+# Blocked shapes (each with its own inline escape hatch, on the command line
+# so the excuse is visible in the transcript next to the act it excuses):
+#
+#   1. `rm -r*` aimed at a .bare path - deleting the bare object store kills
+#      every worktree at once (2026-08-10 incident, AGENTS.md). Real removal
+#      of a bare repo is MYBD_ALLOW_BARE_DELETE=1 territory.
+#   2. `rm -r*` in the same command as `git worktree list` - the delete-loop-
+#      over-worktree-list shape is exactly how incident 1 happened; the list
+#      includes the bare repo. Use `git worktree remove` per entry instead.
+#      Escape: MYBD_ALLOW_WORKTREE_RM=1.
+#   3. merge auto-resolution aimed at memory-bearing files (`git checkout
+#      --theirs/--ours`, `git merge/pull -X theirs/ours`, `git checkout
+#      <ref> -- <memory path>`) - silently clobbers append-only memory
+#      (MEMORY.md, memory/, retro ledgers, .beads/issues.jsonl). Resolve
+#      those by hand. Escape: MYBD_ALLOW_MEMORY_CLOBBER=1.
+#
+# Matching runs on a copy of the command with quoted string BODIES blanked,
+# so `echo "rm -rf .bare"` is not an invocation and cannot false-positive.
+set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
+input="$(cat)"
+cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
+[[ -n "$cmd" ]] || exit 0
+
+# Blank quoted spans (single- and double-quoted) so string literals cannot
+# trigger the guard; flatten newlines so shape checks see one stream.
+code="$(sed -E "s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd" | tr '\n' ' ')"
+
+block() {
+  {
+    echo "destructive-guard: BLOCKED - $1"
+    echo "$2"
+  } >&2
+  exit 2
+}
+
+# Escape hatches are read from the COMMAND TEXT (an inline VAR=1 prefix),
+# not this hook's environment: an env var exported earlier in the session
+# would silently disarm every later command too, and would not show up in
+# the transcript next to the act it excused (same design as pr-review-gate).
+excused() { grep -Eq "(^|[;&| ])$1=1( |	)" <<<"$cmd"; }
+
+has_rm_r() { grep -Eq '(^|[;&| ])rm +(-[a-zA-Z]*r[a-zA-Z]* +)+' <<<"$1"; }
+
+# --- shape 1: rm -r on a .bare path -----------------------------------------
+if ! excused MYBD_ALLOW_BARE_DELETE && has_rm_r "$code" \
+   && grep -Eq '(^|[/ ])\.bare(/|[; &|]|$)' <<<"$code"; then
+  block "rm -r targeting a .bare path" \
+"Deleting the bare object store destroys every worktree at once (2026-08-10).
+Use 'git worktree remove' for worktrees and take a 'git bundle create <f>
+--branches' snapshot first. Deliberate bare-repo removal:
+MYBD_ALLOW_BARE_DELETE=1 <command>"
+fi
+
+# --- shape 2: rm -r composed with git worktree list -------------------------
+if ! excused MYBD_ALLOW_WORKTREE_RM && has_rm_r "$code" \
+   && grep -Eq 'git( -C [^ ]+)? worktree list' <<<"$code"; then
+  block "rm -r driven by 'git worktree list' output" \
+"'git worktree list' includes the bare repo/object store; a delete loop over
+it is the exact shape of the 2026-08-10 data-loss incident. Iterate with
+'git worktree remove' (skips/refuses bare) and skip entries flagged 'bare'.
+Deliberate override: MYBD_ALLOW_WORKTREE_RM=1 <command>"
+fi
+
+# --- shape 3: merge auto-resolution over memory-bearing files ---------------
+memory_paths='(MEMORY\.md|(^|[/ ])memory/|retro/[^ ]*\.tsv|retro/findings\.md|\.beads/issues\.jsonl)'
+if ! excused MYBD_ALLOW_MEMORY_CLOBBER; then
+  # A repo-wide -X theirs/ours merge blocks UNCONDITIONALLY: it auto-resolves
+  # every conflicted file, memory files included, without naming any of them.
+  if grep -Eq 'git([^;&|]*) (merge|pull|rebase)([^;&|]*) (-X ?|--strategy-option[= ])(theirs|ours)' <<<"$code"; then
+    block "repo-wide -X theirs/ours auto-resolution" \
+"-X theirs/ours silently auto-resolves EVERY conflicted file, including
+memory-bearing ones (MEMORY.md, memory/, retro ledgers, .beads/issues.jsonl).
+Merge without it and resolve conflicts by hand, keeping both sides' additions.
+Deliberate override: MYBD_ALLOW_MEMORY_CLOBBER=1 <command>"
+  fi
+  # Per-path takeovers block only when a memory-bearing path is named.
+  if { grep -Eq 'git([^;&|]*) checkout([^;&|]*) --(theirs|ours)' <<<"$code" \
+       || grep -Eq 'git([^;&|]*) (checkout|restore)([^;&|]*) -- ' <<<"$code"; } \
+     && grep -Eq "$memory_paths" <<<"$code"; then
+    block "checkout/restore takeover aimed at memory-bearing files" \
+"MEMORY.md / memory/ / retro ledgers / .beads/issues.jsonl are append-only
+memory; --theirs/--ours (or restoring over them from another ref) silently
+drops one side's lines. Resolve by hand, keeping both sides' additions.
+Deliberate override: MYBD_ALLOW_MEMORY_CLOBBER=1 <command>"
+  fi
+fi
+
+exit 0

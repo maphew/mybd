@@ -32,6 +32,32 @@ if [ -z "$real" ]; then
   exit 127
 fi
 
+# --- repo-root assertion (bead mybd-uqzt8) ----------------------------------
+# bd invoked outside a beads repo silently binds the empty bootstrap database
+# (or creates stray state) instead of failing - the recurring "bd outside the
+# repo root" trap (see the index-babysit cwd fix, mybd-tshg3). Refuse unless
+# a .beads/ directory exists in cwd or an ancestor. Location-independent
+# subcommands pass through; MYBD_BD_ANYWHERE=1 is the deliberate override.
+case "${1:-}" in
+  --version|version|--help|help|-h|"") : ;;  # location-independent
+  *)
+    if [ "${MYBD_BD_ANYWHERE:-0}" != "1" ]; then
+      probe="$PWD"
+      found=""
+      while :; do
+        if [ -d "$probe/.beads" ]; then found="$probe"; break; fi
+        [ "$probe" = "/" ] && break
+        probe="$(dirname "$probe")"
+      done
+      if [ -z "$found" ]; then
+        echo "bd shim: no .beads/ in $PWD or any ancestor - refusing to run '$*' outside a beads repo." >&2
+        echo "bd shim: cd to the repo root (e.g. $root) first, or override with MYBD_BD_ANYWHERE=1." >&2
+        exit 198
+      fi
+    fi
+    ;;
+esac
+
 if ! command -v flock >/dev/null 2>&1; then
   echo "bd shim: flock unavailable - running without serialization" >&2
   exec "$real" "$@"
