@@ -69,10 +69,20 @@ covers the deeper history the miner's heuristics can't reach):
 - `git worktree remove` was deliberately exempted from the miner's
   destructive set after the first 20-session pass flagged only landing
   sequences — the safe verb refuses dirty/bare worktrees.
-- destructive-guard matches on a quote-blanked copy of the command, so
-  string literals can't false-positive; heredoc BODIES are still scanned
-  (a heredoc writing a script that itself contains `rm -rf .bare` will
-  block — take the inline escape hatch in that case).
+- destructive-guard uses two views of the command (same design as
+  pr-review-gate): verbs are detected on a quote-blanked copy (so `echo
+  "rm -rf .bare"` is not an invocation), target paths on a quote-stripped
+  copy (so `rm -rf ".bare"` cannot hide behind quoting). Heredoc BODIES are
+  still scanned — a heredoc writing a script that itself contains
+  `rm -rf .bare` will block; take the inline escape hatch. Known residual:
+  a destructive command wrapped entirely in `bash -c "..."` reads as a
+  quoted string and passes; mined, not blocked.
+- Cross-vendor review (codex reviewer, pre-PR) found 2 P1 bypasses (quoted
+  paths defeated the matcher; `-R`/`--recursive` spellings unrecognized)
+  and 3 P2s (restore --ours/--source uncovered; miner mined the wrong
+  transcript dir from linked-worktree sessions; bare test runners
+  unattributed). All five fixed with regression cases named for the
+  finding. The gate earned its keep again (F-009).
 - The hook layer only defends Claude Code sessions. If Codex/Amp sessions
   recur in the destructive-op mining, the next mechanical step is a `git`
   shim in `scripts/agentbin` mirroring destructive-guard's shapes.

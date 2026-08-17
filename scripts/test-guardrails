@@ -96,6 +96,12 @@ declare -A blocked=(
   ["git merge -X theirs origin/main"]="repo-wide merge -X theirs"
   ["git pull --strategy-option=ours"]="pull --strategy-option=ours"
   ["git checkout main -- MEMORY.md"]="checkout <ref> -- MEMORY.md"
+  ["rm -rf \".bare\""]="rm -rf on a QUOTED .bare path (codex review P1)"
+  ["rm -R .bare"]="rm -R spelling (codex review P1)"
+  ["rm --recursive --force .bare"]="rm --recursive long spelling (codex review P1)"
+  ["git checkout --theirs \"retro/ledger.tsv\""]="checkout --theirs on a QUOTED ledger path (codex review P1)"
+  ["git restore --source=main retro/ledger.tsv"]="restore --source over a ledger (codex review P2)"
+  ["git restore --ours retro/amp-close-ledger.tsv"]="restore --ours on a ledger (codex review P2)"
 )
 for cmd in "${!blocked[@]}"; do
   rc="$(run_guard "$cmd")"
@@ -216,6 +222,8 @@ mkdir -p "$tdir"
 synth="$tdir/00000000-dead-beef-0000-000000000000.jsonl"
 mk_use() { jq -nc --arg id "$1" --arg c "$2" \
   '{type:"assistant",message:{content:[{type:"tool_use",id:$id,name:"Bash",input:{command:$c}}]}}'; }
+mk_write() { jq -nc --arg id "$1" --arg p "$2" \
+  '{type:"assistant",message:{content:[{type:"tool_use",id:$id,name:"Write",input:{file_path:$p}}]}}'; }
 mk_res() { jq -nc --arg id "$1" --argjson e "$2" --arg m "$3" \
   '{type:"user",message:{content:[{type:"tool_result",tool_use_id:$id,is_error:$e,content:$m}]}}'; }
 {
@@ -227,10 +235,15 @@ mk_res() { jq -nc --arg id "$1" --argjson e "$2" --arg m "$3" \
   mk_res t3 false ""
   mk_use t4 "git -C bd-main status"
   mk_res t4 true "fatal: not a git repository (or any of the parent directories)"
+  # bare-runner first-run failure (codex review P2): the failing command
+  # never names the test file it exercises
+  mk_write t5 "/proj/pkg/foo_test.go"
+  mk_use t6 "go test ./pkg/..."
+  mk_res t6 true "FAIL: TestFoo"
 } >"$synth"
 
 mined="$("$root/scripts/session-mine" --dir "$tdir" --last 1 --tsv 2>&1)"
-for want in redo-after-error destructive-unguarded wrong-cwd; do
+for want in redo-after-error destructive-unguarded wrong-cwd new-test-first-fail; do
   if grep -q "	$want	" <<<"$mined"; then
     pass "session-mine detects $want"
   else

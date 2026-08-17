@@ -56,18 +56,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Transcript dir: Claude Code munges the project cwd into a dirname by
-# replacing every / and . with '-'. Derive from the repo root so the miner
-# works from worktrees too.
+# Transcript dir: Claude Code munges the SESSION's starting cwd into a
+# dirname by replacing every / and . with '-'. A session started in a linked
+# worktree gets its own project dir, so probe candidates from most to least
+# specific: cwd, cwd's git toplevel, then the main checkout.
 if [[ -z "$tdir" ]]; then
-  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  # From a linked worktree, mine the MAIN checkout's transcripts.
+  candidates=("$PWD")
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" ]] && candidates+=("$top")
   common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  case "$common" in */.git) root="${common%/.git}" ;; esac
-  munged="$(printf '%s' "$root" | tr '/.' '--')"
-  tdir="$HOME/.claude/projects/$munged"
+  case "$common" in */.git) candidates+=("${common%/.git}") ;; esac
+  for c in "${candidates[@]}"; do
+    probe="$HOME/.claude/projects/$(printf '%s' "$c" | tr '/.' '--')"
+    if [[ -d "$probe" ]]; then tdir="$probe"; break; fi
+  done
 fi
-[[ -d "$tdir" ]] || die "no transcript dir: $tdir (pass --dir)"
+[[ -n "$tdir" && -d "$tdir" ]] || die "no transcript dir found (pass --dir)"
 
 # Pick transcript files, newest first by mtime.
 files=()
@@ -161,17 +165,24 @@ mine_one() {
       }
       # redo detection: this exact command errored before
       if (n in erred) { redo[n]++ }
-      # new-test first run: command mentions a recently written test file
+      # new-test first run: command mentions a recently written test file,
+      # or is a bare test runner (go test ./..., pytest, npm test...) - then
+      # attribute to the most recently written pending test file.
       for (p in newtest)
         if (index($4, p) > 0 || (basename_of[p] != "" && index($4, basename_of[p]) > 0)) {
           testrun[id] = p
           break
         }
+      if (!(id in testrun) && lastnewtest != "" && (lastnewtest in newtest) \
+          && n ~ /(^|[;&| ])(go test|pytest|npm (run )?test|yarn test|cargo test|make [a-z-]*test|bats )/) {
+        testrun[id] = lastnewtest
+      }
       next
     }
     $1 == "USE" && ($3 == "Write" || $3 == "Edit") {
       if (istestfile($4) && !($4 in tested_ok)) {
         newtest[$4] = 1
+        lastnewtest = $4
         nb = $4; sub(/.*\//, "", nb); basename_of[$4] = nb
       }
       next
