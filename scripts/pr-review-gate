@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# pr-review-gate - PreToolUse hook: no `gh pr create` upstream without a
-# cross-vendor review of the exact commit being proposed.
+# pr-review-gate - PreToolUse hook: no `gh pr create` upstream without BOTH a
+# cross-vendor review AND a passing red-team verdict for the exact commit
+# being proposed.
 #
 # Why this is a hook and not a sentence in AGENTS.md: it was a sentence in
 # AGENTS.md, and compliance turned out to track the session model rather than
@@ -18,14 +19,17 @@
 #   - the command runs `gh pr create`
 #   - it targets gastownhall/beads (named with --repo, or inferred from the
 #     remotes of the checkout it runs in)
-#   - no review log exists for the HEAD sha of any checkout the command
-#     plausibly runs in
+#   - no review log (.review-logs/<sha>.md) or no PASSING red-team verdict
+#     (.review-logs/<sha>.redteam.json, written by scripts/red-team) exists
+#     for the HEAD sha of any checkout the command plausibly runs in
 #   - codex is on PATH (no codex, no gate — it degrades instead of deadlocking)
 #
-# Escape hatch: prefix the command with MYBD_SKIP_XVENDOR=1. It lives in the
-# command line on purpose. An env var exported earlier in the session would
-# silently disarm every later PR too, and would not show up in the transcript
-# next to the PR it excused.
+# Escape hatches: prefix the command with MYBD_SKIP_XVENDOR=1 (skips only the
+# cross-vendor review requirement) and/or MYBD_SKIP_REDTEAM=1 (skips only the
+# red-team requirement); a full bypass needs both, so each skip is a separate
+# deliberate act. They live in the command line on purpose. An env var
+# exported earlier in the session would silently disarm every later PR too,
+# and would not show up in the transcript next to the PR it excused.
 
 set -uo pipefail
 
@@ -55,7 +59,20 @@ cmd_flags="$(tr -d "'\\\"" <<<"$cmd")"
 # for `gh pr create`, so gating only the latter leaves the rule one word away
 # from being bypassed.
 grep -qE '(^|[;&|(]|&&|\|\||[[:space:]])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]]|$)' <<<"$cmd_code" || exit 0
-grep -q 'MYBD_SKIP_XVENDOR=1' <<<"$cmd_code" && exit 0
+# A hatch only counts where the docs put it: as an env-style prefix riding
+# the SAME command segment as the gh invocation, before the `gh` word.
+# Hatch text elsewhere - another segment of a chained command, a trailing
+# comment, an echo - is not a decision about THIS PR. Boundary-anchored on
+# both sides: red-teaming this gate with itself read MYBD_SKIP_XVENDOR=10 as
+# the =1 hatch (RT-001), and the cross-vendor review of the same branch
+# found the whole-command substring match (bypass via any mention anywhere).
+gh_seg="$(tr ';&|' '\n' <<<"$cmd_code" \
+  | grep -E '(^|[;&|(]|[[:space:]])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]]|$)' | head -1)"
+hatch_zone="$(sed -E 's/(^|[[:space:](])gh[[:space:]]+pr[[:space:]]+(create|new)([[:space:]].*)?$//' <<<"$gh_seg")"
+skip_x=0; skip_rt=0
+grep -qE '(^|[[:space:]])MYBD_SKIP_XVENDOR=1([^[:alnum:]]|$)' <<<"$hatch_zone" && skip_x=1
+grep -qE '(^|[[:space:]])MYBD_SKIP_REDTEAM=1([^[:alnum:]]|$)' <<<"$hatch_zone" && skip_rt=1
+(( skip_x && skip_rt )) && exit 0
 
 # Without codex there is no second vendor to consult, so the gate stands down
 # rather than blocking work it cannot offer a path through.
@@ -166,19 +183,63 @@ if [[ -z "$want_base" ]]; then
   [[ -n "$cur" ]] && want_base="$(git -C "$effective_dir" config --get "branch.$cur.gh-merge-base" 2>/dev/null || true)"
   want_base="${want_base:-main}"
 fi
+# Both requirements are judged per sha: the same commit needs a cross-vendor
+# review log AND a passing red-team verdict, each covering the same base. A
+# sha that satisfies only one of the two is still blocked — a clean static
+# review says nothing about whether the change survives an adversary, and
+# vice versa.
 base_mismatch=""
+rt_problem=""
+x_ok=0; rt_ok=0
 for s in ${shas[@]+"${shas[@]}"}; do
-  log="$REVIEW_DIR/$s.md"
-  [[ -s "$log" ]] || continue
-  logged_base="$(sed -nE 's/^- base: `(.*)`$/\1/p' "$log" | head -1)"
-  if [[ -z "$logged_base" ]]; then
-    # No base line means a truncated or hand-rolled log. It cannot say which
-    # diff was read, so it does not count as having read one.
-    base_mismatch="the log for ${s:0:12} records no base — treating it as incomplete"
-    continue
+  x_ok=$skip_x; rt_ok=$skip_rt
+  if (( ! x_ok )); then
+    log="$REVIEW_DIR/$s.md"
+    if [[ -s "$log" ]]; then
+      logged_base="$(sed -nE 's/^- base: `(.*)`$/\1/p' "$log" | head -1)"
+      if [[ -z "$logged_base" ]]; then
+        # No base line means a truncated or hand-rolled log. It cannot say
+        # which diff was read, so it does not count as having read one.
+        base_mismatch="the log for ${s:0:12} records no base — treating it as incomplete"
+      elif [[ "$logged_base" == "$want_base" ]]; then
+        x_ok=1
+      else
+        base_mismatch="reviewed against \`$logged_base\`, but this PR targets \`$want_base\`"
+      fi
+    fi
   fi
-  [[ "$logged_base" == "$want_base" ]] && exit 0
-  base_mismatch="reviewed against \`$logged_base\`, but this PR targets \`$want_base\`"
+  if (( ! rt_ok )); then
+    rt="$REVIEW_DIR/$s.redteam.json"
+    if [[ -s "$rt" ]]; then
+      rt_verdict="$(jq -r '.verdict // empty' "$rt" 2>/dev/null)"
+      rt_base="$(jq -r '.base // empty' "$rt" 2>/dev/null)"
+      # A pass must be a verdict scripts/red-team could have written: head
+      # matching the filename, a findings array, a numeric round count, AND
+      # internally consistent - zero open P0/P1, none in the findings list.
+      # A two-field {verdict,base} stub satisfied the first cut of this check
+      # (red-team RT-002), and a "pass" carrying P0/P1 findings satisfied the
+      # second (cross-vendor review of the same branch).
+      rt_complete="$(jq -r --arg s "$s" \
+        'select(.head == $s and (.findings | type == "array") and (.rounds | type == "number")
+                and ((.open_p0p1 // 1) == 0)
+                and ([.findings[] | select(.severity == "P0" or .severity == "P1")] | length == 0)) | "yes"' \
+        "$rt" 2>/dev/null)"
+      if [[ "$rt_verdict" == "pass" && "$rt_base" == "$want_base" && "$rt_complete" == "yes" ]]; then
+        rt_ok=1
+      elif [[ "$rt_verdict" == "fail" ]]; then
+        rt_problem="the red-team verdict for ${s:0:12} is FAIL ($(jq -r '.open_p0p1 // "?"' "$rt" 2>/dev/null) open P0/P1, bead $(jq -r '.bead // "not filed"' "$rt" 2>/dev/null)) — this PR should not be opened"
+      elif [[ "$rt_verdict" == "pass" && "$rt_complete" != "yes" ]]; then
+        rt_problem="the red-team log for ${s:0:12} is not a verdict scripts/red-team could have written (incomplete, or a pass carrying open P0/P1) — treating it as absent"
+      elif [[ "$rt_verdict" == "pass" ]]; then
+        rt_problem="the red-team run for ${s:0:12} covered base \`$rt_base\`, but this PR targets \`$want_base\`"
+      else
+        # A verdict that parses to neither pass nor fail is a truncated or
+        # hand-rolled log; it does not count as having run the adversary.
+        rt_problem="the red-team log for ${s:0:12} is malformed — treating it as absent"
+      fi
+    fi
+  fi
+  (( x_ok && rt_ok )) && exit 0
 done
 
 reviewed_hint=""
@@ -189,26 +250,44 @@ if [[ -d "$REVIEW_DIR" ]]; then
 fi
 
 proposed="${shas[0]:-unknown}"
-headline="no cross-vendor review for the commit this PR would propose"
-[[ -n "$base_mismatch" ]] && headline="the review for this commit does not cover this PR — $base_mismatch"
+# Name what is actually missing for the commit checked last: both halves, or
+# just the one that failed. The two requirements have different remedies.
+missing=""
+if (( ! x_ok )); then
+  missing="cross-vendor review"
+  [[ -n "$base_mismatch" ]] && missing="cross-vendor review ($base_mismatch)"
+fi
+if (( ! rt_ok )); then
+  rt_part="passing red-team verdict"
+  [[ -n "$rt_problem" ]] && rt_part="passing red-team verdict ($rt_problem)"
+  [[ -n "$missing" ]] && missing="$missing AND $rt_part" || missing="$rt_part"
+fi
+headline="no $missing for the commit this PR would propose"
 [[ -n "$unresolved_head" ]] && headline="--head names \`$unresolved_head\`, which does not resolve in $effective_dir, so the commit it would propose cannot be checked"
 cat >&2 <<EOF
 Blocked: $headline.
 
   head:   ${proposed:0:12}
-  wanted: $REVIEW_DIR/${proposed:0:12}....md$reviewed_hint
+  wanted: $REVIEW_DIR/${proposed:0:12}....md (cross-vendor review)
+     and: $REVIEW_DIR/${proposed:0:12}....redteam.json with verdict "pass"$reviewed_hint
 
-AGENTS.md requires a second model family on the diff before an upstream PR —
-an independent vendor catches what same-family agents miss, and this gate
-exists because the prose version of the rule was followed unevenly. Run:
+AGENTS.md requires, before an upstream PR: a second model family on the diff
+(an independent vendor catches what same-family agents miss) AND a passing
+red-team verdict (an adversary that tried to break the change — failing
+tests, regex bypasses, test hermeticity, fixture-state coupling — and
+failed). Run:
 
   scripts/pr-open -C <worktree> --base $want_base --search "<topic keywords>"
 
-then reconcile the findings and retry this command. If HEAD moved since the
-last review, that is the gate working: review the commit you are actually
-proposing.
+which runs the red-team loop and then the review, then reconcile the findings
+and retry this command. To run only the missing half: scripts/red-team -C
+<worktree> --base $want_base. If HEAD moved since the last run, that is the
+gate working: verify the commit you are actually proposing. A red-team FAIL
+verdict means do NOT open this PR — a bead with the findings was filed; move
+to the next queue item.
 
 Deliberately skipping (codex down, trivial docs typo, owner said so): prefix
-this command with MYBD_SKIP_XVENDOR=1 and say why in the handoff.
+this command with MYBD_SKIP_XVENDOR=1 and/or MYBD_SKIP_REDTEAM=1 — each skips
+only its own requirement — and say why in the handoff.
 EOF
 exit 2

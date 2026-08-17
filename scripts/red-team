@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# red-team - adversarial verification loop, before a PR exists.
+#
+# A builder that wrote a patch is the wrong agent to ask whether the patch
+# survives contact with an adversary: it optimizes for the tests it already
+# wrote. This script spawns a separate adversarial agent whose ONLY job is to
+# break the change:
+#
+#   1. write failing tests against the new code paths
+#   2. hunt for bypasses in any grep/regex/string-match logic the patch touches
+#   3. check test hermeticity: isolation, randomized order, different cwd
+#   4. check for silent dependence on fixture state
+#
+# The adversary works in a throwaway detached worktree of HEAD - it may edit
+# and run anything there; nothing it writes survives. It returns structured
+# findings with severities P0-P3. While P0/P1 findings remain, a builder agent
+# is given the findings as a spec, commits a fix, and the adversary re-runs on
+# the new HEAD - up to --rounds (default 3) rounds. If rounds are exhausted
+# with P0/P1 still open, the findings are filed as a bead and the verdict is
+# FAIL: scripts/pr-review-gate will then refuse `gh pr create` for that
+# commit, which is the point - move to the next queue item instead.
+#
+# The verdict is written to .worktrees/.review-logs/<sha>.redteam.json, keyed
+# by HEAD sha exactly like the cross-vendor review log, and read by the same
+# PreToolUse gate. Amending after a pass re-arms the gate.
+#
+# Usage:
+#   scripts/red-team [-C <dir>] [--base <branch>] [--rounds N] [--no-fix]
+#                    [--allow-dirty]
+#
+#   --no-fix: run the adversary but never spawn the fixer - the calling
+#     session is the builder. Rounds are then counted across invocations on
+#     the same branch, so three no-fix runs with open P1s still exhaust, the
+#     prior round's findings are re-injected for re-verification, and a
+#     clean rerun on the exact commit a previous round found failing is
+#     refused (exit 6) rather than trusted - flakiness must not launder a
+#     FAIL into a PASS.
+#
+# Exit codes: 0 pass · 1 error · 2 usage · 4 rounds exhausted, P0/P1 open
+#             (bead filed) · 5 P0/P1 open, rounds remain (--no-fix only) ·
+#             6 clean rerun refused on an unchanged previously-failing commit.
+#
+# Test seams (used by scripts/test-red-team-gate, not for production):
+#   MYBD_REDTEAM_ADVERSARY_CMD - bash -c command run instead of the codex
+#     adversary; gets RT_SANDBOX, RT_BASE, RT_ROUND, RT_PRIOR (path to the
+#     prior round's findings JSON, empty on a fresh campaign), must write
+#     findings JSON to $RT_OUT.
+#   MYBD_REDTEAM_BUILDER_CMD - run instead of the codex fixer; gets
+#     RT_WORKDIR, RT_BASE, RT_FINDINGS (path), and must commit its fix.
+#   MYBD_REDTEAM_BD_CMD - run instead of `bd` when filing the exhaustion bead.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Anchor on the MAIN checkout, same as pr-open: the log must land where
+# scripts/pr-review-gate reads, even when this copy runs from a linked worktree.
+_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
+REVIEW_DIR="$ROOT/.worktrees/.review-logs"
+STATE_DIR="$REVIEW_DIR/redteam-rounds"
+
+workdir="$PWD"
+base="main"
+max_rounds=3
+do_fix=1
+allow_dirty=0
+
+usage() { sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C|--cd)     [[ $# -ge 2 ]] || { usage; exit 2; }; workdir="$2"; shift 2 ;;
+    --base)      [[ $# -ge 2 ]] || { usage; exit 2; }; base="$2"; shift 2 ;;
+    --rounds)    [[ $# -ge 2 ]] || { usage; exit 2; }; max_rounds="$2"; shift 2 ;;
+    --no-fix)    do_fix=0; shift ;;
+    --allow-dirty) allow_dirty=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
+    *) echo "red-team: unexpected argument '$1'" >&2; usage; exit 2 ;;
+  esac
+done
+
+[[ "$max_rounds" =~ ^[1-9][0-9]*$ ]] || { echo "red-team: --rounds must be a positive integer" >&2; exit 2; }
+
+workdir="$(cd "$workdir" 2>/dev/null && pwd)" || { echo "red-team: no such directory: $workdir" >&2; exit 1; }
+git -C "$workdir" rev-parse --git-dir >/dev/null 2>&1 || { echo "red-team: not a git checkout: $workdir" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "red-team: jq is required" >&2; exit 1; }
+
+# The verdict is keyed by sha, so the tree must BE that sha - same rule and
+# same reason as pr-open.
+if (( ! allow_dirty )) && [[ -n "$(git -C "$workdir" status --porcelain)" ]]; then
+  echo "red-team: working tree is dirty in $workdir." >&2
+  echo "  Commit first - the verdict is keyed to HEAD, and a run over" >&2
+  echo "  uncommitted work would vouch for a commit that does not contain it." >&2
+  echo "  (--allow-dirty to override deliberately.)" >&2
+  exit 1
+fi
+
+git -C "$workdir" rev-parse --verify --quiet "$base" >/dev/null \
+  || git -C "$workdir" rev-parse --verify --quiet "origin/$base" >/dev/null \
+  || git -C "$workdir" rev-parse --verify --quiet "upstream/$base" >/dev/null \
+  || { echo "red-team: base '$base' does not resolve in $workdir" >&2; exit 1; }
+
+if [[ -z "${MYBD_REDTEAM_ADVERSARY_CMD:-}" ]] && ! command -v codex >/dev/null 2>&1; then
+  echo "red-team: codex CLI not on PATH - cannot run the adversary." >&2
+  echo "  Install/authenticate codex, or skip deliberately with an explicit" >&2
+  echo "  MYBD_SKIP_REDTEAM=1 prefix on the gh pr create and say why." >&2
+  exit 1
+fi
+
+mkdir -p "$REVIEW_DIR" "$STATE_DIR"
+
+tmpd="$(mktemp -d "${TMPDIR:-/tmp}/redteam.XXXXXX")"
+sandbox=""
+cleanup() {
+  # git worktree remove, never a bare rm over a worktree path (AGENTS.md).
+  [[ -n "$sandbox" ]] && git -C "$workdir" worktree remove --force "$sandbox" >/dev/null 2>&1
+  rm -rf "$tmpd"
+}
+trap cleanup EXIT
+
+schema_file="$tmpd/findings.schema.json"
+cat > "$schema_file" <<'EOF'
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings", "summary"],
+  "properties": {
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "category", "title", "evidence", "repro"],
+        "properties": {
+          "id":       { "type": "string" },
+          "severity": { "enum": ["P0", "P1", "P2", "P3"] },
+          "category": { "enum": ["failing-test", "regex-bypass", "hermeticity", "fixture-state", "other"] },
+          "title":    { "type": "string" },
+          "evidence": { "type": "string" },
+          "repro":    { "type": "string" }
+        }
+      }
+    }
+  }
+}
+EOF
+
+adversary_prompt() { # adversary_prompt <base> <round> <prior_findings_file_or_empty>
+  local prior=""
+  [[ -n "$3" && -s "$3" ]] && prior="
+A previous round reported the findings below; the code may or may not have
+changed since. Re-verify each one against the CURRENT code first - a finding
+that still reproduces stays open at the same or higher severity. Then hunt
+for anything a fix newly broke.
+
+Prior findings:
+$(jq -c '.findings' "$3")
+"
+  cat <<EOF
+You are an adversarial red-team agent. This worktree is a THROWAWAY sandbox
+checked out at the exact commit under test - edit files, write scratch tests,
+and run anything freely; nothing you write here is kept. You get zero credit
+for praising the change. Your only job is to break it.
+
+The change under test is the diff against '$1':
+  git diff \$(git merge-base $1 HEAD)..HEAD
+(If '$1' does not resolve, try origin/$1 or upstream/$1.)
+
+Attack it four ways, in order:
+
+1. failing-test: write NEW tests against the changed code paths - edge
+   inputs, error paths, boundary values the author's own tests avoid. Run
+   them. A test that a correct implementation should pass, failing here, is
+   a finding (severity P0 if it demonstrates wrong behavior a user would
+   hit, P1 otherwise).
+2. regex-bypass: for every grep/regex/string-match decision the diff adds or
+   modifies, construct bypass inputs: quoting, case, unicode lookalikes,
+   embedded newlines, flag reordering, path tricks, values-that-look-like-
+   flags. Demonstrate any bypass with a concrete input (P1).
+3. hermeticity: for each test the diff adds or modifies, run it (a) alone
+   via the framework's single-test selector, (b) with its suite in
+   randomized order (Go: go test -shuffle=on -count=1), (c) from a
+   different working directory. Any pass/fail difference is a finding (P1).
+4. fixture-state: check whether those tests silently depend on pre-existing
+   fixture files, shared temp state, ambient env vars, network, or the
+   repo's own git state. Mutate or remove the suspected dependency and
+   re-run; a flipped result is a finding (P1).
+
+P2 = plausible weakness you could not demonstrate; P3 = hardening/polish.
+Report ONLY what you evidenced or concretely reasoned; every finding needs a
+repro (commands + input). If the change genuinely holds up, an empty
+findings list is the correct answer - do not invent findings to look busy.
+$prior
+Return ONLY a JSON object conforming to the output schema.
+EOF
+}
+
+run_adversary() { # run_adversary <sandbox> <round> <prior> -> writes $tmpd/findings.json
+  local out="$tmpd/findings.json"
+  rm -f "$out"
+  if [[ -n "${MYBD_REDTEAM_ADVERSARY_CMD:-}" ]]; then
+    RT_SANDBOX="$1" RT_BASE="$base" RT_ROUND="$2" RT_OUT="$out" RT_PRIOR="$3" \
+      bash -c "$MYBD_REDTEAM_ADVERSARY_CMD" </dev/null || return 1
+  else
+    # codex exec directly, not via codex-agent: the adversary needs the
+    # builder tier's workspace-write sandbox but the flagship model at high
+    # reasoning (breaking things is the hard kind of review), and the wrapper
+    # pins -m per tier - passing -m again is a duplicate-flag error (found by
+    # running this script on its own branch). Sandbox stays explicit, and the
+    # wrapper's Go-cache guard is replicated so go test in the sandbox never
+    # fills /tmp (bd memory codex-builder-tmp-quota).
+    if [[ "${CODEX_AGENT_KEEP_GO_ENV:-0}" != "1" ]]; then
+      : "${GOCACHE:=$1/.tmp/gocache}"
+      : "${GOTMPDIR:=$1/.tmp/gotmp}"
+      mkdir -p "$GOCACHE" "$GOTMPDIR"
+      export GOCACHE GOTMPDIR
+    fi
+    codex exec -s workspace-write --cd "$1" \
+      -m gpt-5.6-sol -c model_reasoning_effort='"high"' \
+      --output-schema "$schema_file" -o "$out" \
+      "$(adversary_prompt "$base" "$2" "$3")" </dev/null || return 1
+  fi
+  jq -e '(.findings | type == "array")
+         and ([.findings[] | select(.severity | test("^P[0-3]$") | not)] | length == 0)' \
+    "$out" >/dev/null 2>&1 || {
+    echo "red-team: adversary output is not valid findings JSON ($out)" >&2
+    return 1
+  }
+}
+
+run_builder_fix() { # run_builder_fix <findings_file> <round>
+  if [[ -n "${MYBD_REDTEAM_BUILDER_CMD:-}" ]]; then
+    RT_WORKDIR="$workdir" RT_BASE="$base" RT_FINDINGS="$1" \
+      bash -c "$MYBD_REDTEAM_BUILDER_CMD" </dev/null || return 1
+  else
+    "$ROOT/scripts/codex-agent" builder -C "$workdir" \
+      "Red-team round $2 found the P0/P1 issues below in the diff against
+'$base'. Fix each one properly (no test deletion, no check weakening to make
+a finding disappear), keep the existing tests passing, and COMMIT the fix to
+the current branch with a trailer generated by:
+  AGENT_MODEL=gpt-5.6-terra AGENT_REASONING=medium $ROOT/scripts/agent-sig.sh codex --trailer
+
+Findings (JSON):
+$(jq -c '[.findings[] | select(.severity == "P0" or .severity == "P1")]' "$1")" \
+      </dev/null || return 1
+  fi
+}
+
+write_verdict() { # write_verdict <sha> <verdict> <rounds> <findings_file> <bead>
+  local staged="$REVIEW_DIR/$1.redteam.json.staging.$$"
+  jq -n --arg head "$1" --arg base "$base" --arg verdict "$2" \
+        --argjson rounds "$3" --arg bead "$5" \
+        --slurpfile f "$4" \
+        '{head:$head, base:$base, verdict:$verdict, rounds:$rounds,
+          open_p0p1:([$f[0].findings[] | select(.severity=="P0" or .severity=="P1")] | length),
+          bead:(if $bead == "" then null else $bead end),
+          summary:$f[0].summary, findings:$f[0].findings}' > "$staged"
+  # Publish by rename, same as pr-open: a half-written verdict must not sit
+  # there satisfying the gate.
+  mv -f "$staged" "$REVIEW_DIR/$1.redteam.json"
+}
+
+file_bead() { # file_bead <sha> <findings_file> -> echoes bead id or ""
+  local branch bd_out bead_id body
+  branch="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+  body="red-team gate exhausted $max_rounds rounds with open P0/P1 findings on branch '$branch' @ $1 (base $base) in $workdir. PR was NOT opened. Verdict log: .worktrees/.review-logs/$1.redteam.json
+
+Open P0/P1 findings:
+$(jq -r '.findings[] | select(.severity=="P0" or .severity=="P1") | "- [\(.severity)/\(.category)] \(.title)\n  evidence: \(.evidence)\n  repro: \(.repro)"' "$2")"
+  bd_out="$(${MYBD_REDTEAM_BD_CMD:-bd} create \
+    "red-team: unresolved P0/P1 on $branch @ ${1:0:12}" \
+    -t bug -p 1 --description="$body" --json 2>/dev/null)" || { echo ""; return 0; }
+  # bd's JSON shape drifts between object and array (retro F-004).
+  bead_id="$(jq -r 'if type=="array" then .[0].id else .id end // empty' <<<"$bd_out" 2>/dev/null)"
+  echo "$bead_id"
+}
+
+# --no-fix counts rounds across invocations: the branch, not the sha, names
+# the campaign, because every fix moves HEAD. The readable part is for
+# humans; uniqueness comes from a checksum over the absolute toplevel path
+# AND the raw branch name — basename+branch alone made two unrelated repos
+# with the same directory name share a round counter (RT-003), and the
+# slash-to-underscore sanitizing alone made foo/bar collide with foo_bar
+# (cross-vendor review of this branch).
+_toplevel="$(git -C "$workdir" rev-parse --show-toplevel)"
+_branch_raw="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+state_key="$(basename "$_toplevel")-$(tr '/' '_' <<<"$_branch_raw")-$(printf '%s@%s' "$_toplevel" "$_branch_raw" | cksum | awk '{print $1}')"
+state_file="$STATE_DIR/$state_key"
+start_round=1
+known_failed_sha=""
+prior_findings=""
+if (( ! do_fix )) && [[ -s "$state_file" ]]; then
+  # State is "<round> <sha>". The sha does two jobs a bare round count could
+  # not (PR 32 review): the continuation re-injects that round's findings so
+  # the adversary must re-verify them instead of rediscovering from scratch,
+  # and a clean rerun on that exact unchanged commit is refused below rather
+  # than laundering the recorded FAIL into a PASS.
+  read -r prev prev_sha < "$state_file" || true
+  if [[ "$prev" =~ ^[0-9]+$ ]]; then
+    start_round=$((prev + 1))
+    if [[ -n "${prev_sha:-}" ]]; then
+      known_failed_sha="$prev_sha"
+      prev_verdict="$REVIEW_DIR/$prev_sha.redteam.json"
+      if [[ -s "$prev_verdict" ]] && jq -e '.findings | type == "array"' "$prev_verdict" >/dev/null 2>&1; then
+        jq '{summary: (.summary // ""), findings}' "$prev_verdict" > "$tmpd/findings-prior.json" 2>/dev/null \
+          && prior_findings="$tmpd/findings-prior.json"
+      fi
+    fi
+  fi
+fi
+
+round=$start_round
+while :; do
+  head_sha="$(git -C "$workdir" rev-parse HEAD)"
+  branch="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+  echo "== red-team round $round/$max_rounds on $branch @ ${head_sha:0:12} vs $base"
+
+  sandbox="$tmpd/sandbox-r$round"
+  git -C "$workdir" worktree add --detach "$sandbox" "$head_sha" >/dev/null 2>&1 \
+    || { echo "red-team: could not create sandbox worktree" >&2; exit 1; }
+
+  run_adversary "$sandbox" "$round" "$prior_findings" || exit 1
+  git -C "$workdir" worktree remove --force "$sandbox" >/dev/null 2>&1
+  sandbox=""
+
+  findings="$tmpd/findings-r$round.json"
+  mv -f "$tmpd/findings.json" "$findings"
+  p01="$(jq '[.findings[] | select(.severity=="P0" or .severity=="P1")] | length' "$findings")"
+  total="$(jq '.findings | length' "$findings")"
+  echo "   findings: $total total, $p01 at P0/P1"
+  jq -r '.findings[] | "   [\(.severity)/\(.category)] \(.title)"' "$findings"
+
+  if (( p01 == 0 )); then
+    # A clean round only mints a PASS if this commit was not already found
+    # failing. The adversary retracting its own P0/P1s with zero code change
+    # in between is indistinguishable from adversary flakiness, and "re-run
+    # until it comes back clean" must not be a path past the gate (PR 32
+    # review). The recorded FAIL verdict stays in place.
+    if [[ -n "$known_failed_sha" && "$known_failed_sha" == "$head_sha" ]]; then
+      echo
+      echo "red-team: adversary returned clean on ${head_sha:0:12}, but an earlier round" >&2
+      echo "  found P0/P1 on this exact commit and nothing has been committed since." >&2
+      echo "  A retraction without a code change does not mint a PASS. Commit a fix" >&2
+      echo "  and re-run; if the findings are genuinely wrong, skip deliberately with" >&2
+      echo "  MYBD_SKIP_REDTEAM=1 on the gh pr create and say why in the handoff." >&2
+      exit 6
+    fi
+    write_verdict "$head_sha" "pass" "$round" "$findings" ""
+    rm -f "$state_file"
+    echo
+    echo "red-team: PASS after $round round(s). Verdict: $REVIEW_DIR/$head_sha.redteam.json"
+    (( total > 0 )) && echo "  (P2/P3 findings recorded in the verdict - worth reading, not blocking.)"
+    exit 0
+  fi
+
+  known_failed_sha="$head_sha"
+
+  if (( round >= max_rounds )); then
+    bead="$(file_bead "$head_sha" "$findings")"
+    write_verdict "$head_sha" "fail" "$round" "$findings" "$bead"
+    rm -f "$state_file"
+    echo
+    echo "red-team: FAIL - $max_rounds rounds exhausted with $p01 open P0/P1 finding(s)." >&2
+    if [[ -n "$bead" ]]; then
+      echo "  Filed $bead with the findings. Do not open this PR; move to the next queue item." >&2
+    else
+      echo "  WARNING: could not file a bead (bd unavailable?) - findings live in" >&2
+      echo "  $REVIEW_DIR/$head_sha.redteam.json; file the bead manually." >&2
+    fi
+    exit 4
+  fi
+
+  if (( ! do_fix )); then
+    write_verdict "$head_sha" "fail" "$round" "$findings" ""
+    printf '%s %s\n' "$round" "$head_sha" > "$state_file"
+    echo
+    echo "red-team: $p01 open P0/P1 finding(s) after round $round; --no-fix, so the" >&2
+    echo "  calling session is the builder. Fix, commit, and re-run - $((max_rounds - round))" >&2
+    echo "  round(s) remain before this branch exhausts and files a bead." >&2
+    echo "  Findings: $REVIEW_DIR/$head_sha.redteam.json" >&2
+    exit 5
+  fi
+
+  echo "== builder fix, round $round"
+  pre_fix="$head_sha"
+  run_builder_fix "$findings" "$round" || { echo "red-team: builder fix failed" >&2; exit 1; }
+  if [[ "$(git -C "$workdir" rev-parse HEAD)" == "$pre_fix" ]]; then
+    echo "red-team: builder did not commit a fix; treating the round as spent." >&2
+  fi
+  prior_findings="$findings"
+  round=$((round + 1))
+done

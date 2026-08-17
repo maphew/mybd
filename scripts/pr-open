@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# pr-open - upstream preflight + cross-vendor review, before a PR exists.
+# pr-open - upstream preflight + red-team loop + cross-vendor review, before a
+# PR exists.
 #
-# The two things that must happen before `gh pr create` against
+# The three things that must happen before `gh pr create` against
 # gastownhall/beads, in one verb:
 #
 #   1. bd-main/scripts/pr-preflight.sh --search "<topic>"   (is someone already
 #      doing this? is the base green?)
-#   2. scripts/codex-agent reviewer --diff --base <base>    (a second model
+#   2. scripts/red-team -C <dir> --base <base>              (an adversary tries
+#      to break the change; builder fixes P0/P1 findings, max 3 rounds; an
+#      exhausted branch files a bead and this script stops - do not open)
+#   3. scripts/codex-agent reviewer --diff --base <base>    (a second model
 #      family on the diff, per AGENTS.md "Second opinion across model vendors")
+#
+# Red-team runs BEFORE the review: its fix rounds move HEAD, and the review
+# log must vouch for the commit actually being proposed.
 #
 # The review is written to a log keyed by the HEAD sha. scripts/pr-review-gate
 # reads that log: `gh pr create` is blocked until one exists for the exact
@@ -24,8 +31,17 @@
 #   scripts/pr-open [-C <dir>] [--base <branch>] [--repo owner/repo]
 #                   [--search "<topic keywords>"] [--skip-preflight]
 #                   [--allow-dirty] [--prompt "<extra review focus>"]
+#                   [--skip-redteam] [--redteam-no-fix]
 #
-# Exit codes: 0 review written · 1 error · 2 usage · 3 preflight objected.
+#   --skip-redteam:   skip the adversarial stage (MYBD_SKIP_REDTEAM=1 does the
+#                     same); the gate will then require the same skip spelled
+#                     out on the gh pr create command line.
+#   --redteam-no-fix: run the adversary but leave fixing to the calling
+#                     session (passes --no-fix through to scripts/red-team).
+#
+# Exit codes: 0 review written · 1 error · 2 usage · 3 preflight objected ·
+#             4 red-team exhausted with open P0/P1 (bead filed - do not open) ·
+#             5 red-team findings open, rounds remain (--redteam-no-fix).
 
 set -euo pipefail
 
@@ -44,8 +60,11 @@ search=""
 prompt=""
 skip_preflight=0
 allow_dirty=0
+skip_redteam=0
+redteam_no_fix=0
+[[ "${MYBD_SKIP_REDTEAM:-0}" == "1" ]] && skip_redteam=1
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//' >&2; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     --prompt)  [[ $# -ge 2 ]] || { usage; exit 2; }; prompt="$2"; shift 2 ;;
     --skip-preflight) skip_preflight=1; shift ;;
     --allow-dirty)    allow_dirty=1; shift ;;
+    --skip-redteam)   skip_redteam=1; shift ;;
+    --redteam-no-fix) redteam_no_fix=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "pr-open: unexpected argument '$1'" >&2; usage; exit 2 ;;
   esac
@@ -120,6 +141,35 @@ if (( ! skip_preflight )); then
   else
     echo "  undetermined — check $base manually before opening" >&2
   fi
+fi
+
+if (( ! skip_redteam )); then
+  rt_args=(-C "$workdir" --base "$base")
+  (( redteam_no_fix )) && rt_args+=(--no-fix)
+  (( allow_dirty ))    && rt_args+=(--allow-dirty)
+  "$ROOT/scripts/red-team" "${rt_args[@]}" || {
+    rt_rc=$?
+    if (( rt_rc == 4 )); then
+      echo "pr-open: red-team exhausted its rounds with open P0/P1 findings." >&2
+      echo "  A bead was filed with the findings. Do NOT open this PR; move to" >&2
+      echo "  the next queue item." >&2
+    elif (( rt_rc == 5 )); then
+      echo "pr-open: red-team found open P0/P1 findings; fix, commit, and re-run." >&2
+    elif (( rt_rc == 6 )); then
+      echo "pr-open: red-team refused a clean rerun on an unchanged previously-failing" >&2
+      echo "  commit. Commit a fix before re-running." >&2
+    else
+      echo "pr-open: red-team failed (exit $rt_rc); not proceeding to review." >&2
+    fi
+    exit "$rt_rc"
+  }
+  # Red-team fix rounds commit, so HEAD may have moved: the review below must
+  # cover the commit the PR will actually propose.
+  head_sha="$(git -C "$workdir" rev-parse HEAD)"
+  branch="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+else
+  echo "pr-open: skipping red-team stage (deliberate); the gate will ask for" >&2
+  echo "  MYBD_SKIP_REDTEAM=1 on the gh pr create command line." >&2
 fi
 
 if ! command -v codex >/dev/null 2>&1; then
