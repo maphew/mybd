@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# test-guardrails - regression tests for the postmortem-to-guardrail set
+# (bead mybd-uqzt8). Every test here fails if its guardrail is removed or
+# neutered:
+#
+#   1. agentbin/bd shim refuses to run outside a beads repo (exit 198)
+#   2. destructive-guard blocks .bare deletion, worktree-list delete loops,
+#      and memory-file merge clobbers; allows benign commands
+#   3. .githooks/pre-commit blocks staged conflict markers in ANY worktree
+#   4. .gitattributes merge=binary makes memory-file merges conflict loudly
+#      instead of silently auto-resolving
+#   5. session-mine detects redo-after-error / destructive-unguarded /
+#      wrong-cwd in a synthetic transcript
+#   6. wiring: settings.json registers destructive-guard; session-close-check
+#      invokes session-mine
+#
+# PASS/FAIL style and throwaway-tempdir safety borrowed from
+# scripts/test-git-hooks. No real bd/dolt command ever runs.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+tmp="$(mktemp -d)"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# 1. bd shim repo-root assertion
+# ---------------------------------------------------------------------------
+stubdir="$tmp/stub-bin"
+mkdir -p "$stubdir"
+cat >"$stubdir/bd" <<'EOF'
+#!/bin/sh
+echo "real-bd ran: $*"
+exit 0
+EOF
+chmod +x "$stubdir/bd"
+
+# The shim derives its lock root from its own location (../../ from agentbin),
+# so give it a fake repo home with a .beads dir for the in-repo case.
+fakerepo="$tmp/fakerepo"
+mkdir -p "$fakerepo/scripts/agentbin" "$fakerepo/.beads"
+cp -f "$root/scripts/agentbin/bd" "$fakerepo/scripts/agentbin/bd"
+chmod +x "$fakerepo/scripts/agentbin/bd"
+
+nowhere="$tmp/nowhere"
+mkdir -p "$nowhere"
+shim_path="$fakerepo/scripts/agentbin:$stubdir:$PATH"
+
+out="$(cd "$nowhere" && PATH="$shim_path" bd list 2>&1)"; rc=$?
+if [[ $rc -eq 198 && "$out" == *"refusing to run"* && "$out" != *"real-bd ran"* ]]; then
+  pass "bd shim refuses 'bd list' outside a beads repo (exit 198, real bd never ran)"
+else
+  fail "bd shim outside repo: rc=$rc out=$out"
+fi
+
+out="$(cd "$fakerepo" && PATH="$shim_path" bd list 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$out" == *"real-bd ran: list"* ]]; then
+  pass "bd shim passes 'bd list' through inside a beads repo"
+else
+  fail "bd shim inside repo: rc=$rc out=$out"
+fi
+
+out="$(cd "$nowhere" && PATH="$shim_path" bd --version 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$out" == *"real-bd ran: --version"* ]]; then
+  pass "bd shim allows location-independent 'bd --version' anywhere"
+else
+  fail "bd shim --version outside repo: rc=$rc out=$out"
+fi
+
+out="$(cd "$nowhere" && PATH="$shim_path" MYBD_BD_ANYWHERE=1 bd list 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$out" == *"real-bd ran: list"* ]]; then
+  pass "bd shim honours MYBD_BD_ANYWHERE=1 override"
+else
+  fail "bd shim override: rc=$rc out=$out"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. destructive-guard hook
+# ---------------------------------------------------------------------------
+guard="$root/scripts/destructive-guard"
+run_guard() {  # $1 = command string; echoes rc
+  jq -n --arg c "$1" '{tool_input:{command:$c}}' | "$guard" >/dev/null 2>&1
+  echo $?
+}
+
+declare -A blocked=(
+  ["rm -rf .bare"]="rm -rf on .bare"
+  ["rm -rf /var/home/matt/dev/mybd/.bare/"]="rm -rf on absolute .bare path"
+  ["git worktree list | while read -r w _; do rm -rf \$w; done"]="delete loop over git worktree list"
+  ["git checkout --theirs retro/ledger.tsv && git add retro/ledger.tsv"]="checkout --theirs on a retro ledger"
+  ["git merge -X theirs origin/main"]="repo-wide merge -X theirs"
+  ["git pull --strategy-option=ours"]="pull --strategy-option=ours"
+  ["git checkout main -- MEMORY.md"]="checkout <ref> -- MEMORY.md"
+  ["rm -rf \".bare\""]="rm -rf on a QUOTED .bare path (codex review P1)"
+  ["rm -R .bare"]="rm -R spelling (codex review P1)"
+  ["rm --recursive --force .bare"]="rm --recursive long spelling (codex review P1)"
+  ["git checkout --theirs \"retro/ledger.tsv\""]="checkout --theirs on a QUOTED ledger path (codex review P1)"
+  ["git restore --source=main retro/ledger.tsv"]="restore --source over a ledger (codex review P2)"
+  ["git restore --ours retro/amp-close-ledger.tsv"]="restore --ours on a ledger (codex review P2)"
+  ["rm \"-rf\" .bare"]="rm with QUOTED -rf flag (codex round-2 P1)"
+  ["git checkout \"--theirs\" retro/ledger.tsv"]="checkout with QUOTED --theirs (codex round-2 P1)"
+  ["git merge \"-Xtheirs\" main"]="merge with QUOTED -Xtheirs (codex round-2 P1)"
+  ["git restore -s main retro/ledger.tsv"]="restore -s short --source (codex round-2 P1)"
+  ["git restore -3 retro/ledger.tsv"]="restore -3 short --theirs (codex round-2 P1)"
+  ["git restore -W -2 retro/ledger.tsv"]="restore -2 short --ours (codex round-2 P1)"
+  ["git restore -smain MEMORY.md"]="restore with value-attached -smain (codex round-2 P1)"
+)
+for cmd in "${!blocked[@]}"; do
+  rc="$(run_guard "$cmd")"
+  if [[ "$rc" == 2 ]]; then
+    pass "destructive-guard blocks: ${blocked[$cmd]}"
+  else
+    fail "destructive-guard did NOT block (rc=$rc): $cmd"
+  fi
+done
+
+declare -A allowed=(
+  ["rm -rf /tmp/scratch/build"]="rm -rf outside protected paths"
+  ["git worktree remove .worktrees/mybd/foo"]="git worktree remove (the safe verb)"
+  ["echo \"rm -rf .bare\""]="quoted string mentioning rm -rf .bare"
+  ["git checkout --theirs src/main.go"]="checkout --theirs on a non-memory file"
+  ["git worktree list"]="bare git worktree list"
+  ["MYBD_ALLOW_BARE_DELETE=1 rm -rf .bare"]="inline MYBD_ALLOW_BARE_DELETE=1 escape"
+  ["MYBD_ALLOW_MEMORY_CLOBBER=1 git merge -X theirs origin/main"]="inline MYBD_ALLOW_MEMORY_CLOBBER=1 escape"
+  ["git restore --staged retro/ledger.tsv"]="restore --staged (index-only, not a takeover)"
+  ["grep -r \"-rf\" scripts/"]="quoted option token without a guarded verb"
+)
+for cmd in "${!allowed[@]}"; do
+  rc="$(run_guard "$cmd")"
+  if [[ "$rc" == 0 ]]; then
+    pass "destructive-guard allows: ${allowed[$cmd]}"
+  else
+    fail "destructive-guard wrongly blocked (rc=$rc): $cmd"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 3. conflict-marker guard in .githooks/pre-commit
+# ---------------------------------------------------------------------------
+hookbin="$tmp/hook-stub-bin"
+mkdir -p "$hookbin"
+cat >"$hookbin/bd" <<'EOF'
+#!/bin/sh
+exit 3
+EOF
+chmod +x "$hookbin/bd"
+
+mkrepo() {  # $1 = path
+  mkdir -p "$1"
+  git init -q -b main "$1"
+  git -C "$1" config user.name t
+  git -C "$1" config user.email t@t.invalid
+  git -C "$1" config commit.gpgsign false
+  cp -r "$root/.githooks" "$1/.githooks"
+  git -C "$1" config core.hooksPath .githooks
+}
+
+hr="$tmp/hookrepo"
+mkrepo "$hr"
+printf 'clean\n' >"$hr/ok.txt"
+git -C "$hr" add ok.txt
+if PATH="$hookbin:$PATH" git -C "$hr" commit -q -m base >/dev/null 2>&1; then
+  pass "pre-commit: clean commit proceeds"
+else
+  fail "pre-commit: clean commit was blocked"
+fi
+
+printf '<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n' >"$hr/conflicted.txt"
+git -C "$hr" add conflicted.txt
+err="$tmp/marker.stderr"
+if PATH="$hookbin:$PATH" git -C "$hr" commit -q -m bad >/dev/null 2>"$err"; then
+  fail "pre-commit: commit with conflict markers was ALLOWED"
+else
+  if grep -q 'leftover conflict marker' "$err"; then
+    pass "pre-commit: blocks staged conflict markers with git's own detector"
+  else
+    fail "pre-commit: marker commit blocked but not by the marker guard: $(cat "$err")"
+  fi
+fi
+
+if PATH="$hookbin:$PATH" MYBD_ALLOW_CONFLICT_MARKERS=1 git -C "$hr" commit -q -m deliberate >/dev/null 2>&1; then
+  pass "pre-commit: MYBD_ALLOW_CONFLICT_MARKERS=1 escape hatch works"
+else
+  fail "pre-commit: escape hatch did not allow deliberate marker commit"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. merge=binary on memory files forces a visible conflict
+# ---------------------------------------------------------------------------
+mr="$tmp/mergerepo"
+mkdir -p "$mr"
+git init -q -b main "$mr"
+git -C "$mr" config user.name t
+git -C "$mr" config user.email t@t.invalid
+git -C "$mr" config commit.gpgsign false
+mkdir -p "$mr/retro"
+# Only the memory-file attributes; the beads merge driver is not configured
+# in this throwaway repo and is not under test.
+grep -E '^(retro/|MEMORY|memory/)' "$root/.gitattributes" >"$mr/.gitattributes"
+seq 1 10 | sed 's/^/row /' >"$mr/retro/ledger.tsv"
+git -C "$mr" add -A
+git -C "$mr" commit -q -m base
+git -C "$mr" checkout -q -b side
+sed -i 's/^row 2$/row 2 SIDE/' "$mr/retro/ledger.tsv"
+git -C "$mr" commit -aqm side-edit
+git -C "$mr" checkout -q main
+sed -i 's/^row 9$/row 9 MAIN/' "$mr/retro/ledger.tsv"
+git -C "$mr" commit -aqm main-edit
+# Distant-region edits: a plain text merge auto-resolves this SILENTLY, which
+# is exactly the failure mode; merge=binary must surface a conflict instead.
+if git -C "$mr" merge -q side >/dev/null 2>&1; then
+  fail "merge=binary: memory-file merge auto-resolved silently (attribute removed?)"
+else
+  if [[ -n "$(git -C "$mr" ls-files -u -- retro/ledger.tsv)" ]]; then
+    pass "merge=binary: memory-file merge conflicts loudly instead of auto-resolving"
+  else
+    fail "merge=binary: merge failed but not with an index conflict on the ledger"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5. session-mine detects the synthetic friction classes
+# ---------------------------------------------------------------------------
+tdir="$tmp/transcripts"
+mkdir -p "$tdir"
+synth="$tdir/00000000-dead-beef-0000-000000000000.jsonl"
+mk_use() { jq -nc --arg id "$1" --arg c "$2" \
+  '{type:"assistant",message:{content:[{type:"tool_use",id:$id,name:"Bash",input:{command:$c}}]}}'; }
+mk_write() { jq -nc --arg id "$1" --arg p "$2" \
+  '{type:"assistant",message:{content:[{type:"tool_use",id:$id,name:"Write",input:{file_path:$p}}]}}'; }
+mk_res() { jq -nc --arg id "$1" --argjson e "$2" --arg m "$3" \
+  '{type:"user",message:{content:[{type:"tool_result",tool_use_id:$id,is_error:$e,content:$m}]}}'; }
+{
+  mk_use t1 "make flaky-target"
+  mk_res t1 true "Error: exit 2"
+  mk_use t2 "make flaky-target"
+  mk_res t2 false "ok"
+  mk_use t3 "rm -rf /var/precious/data"
+  mk_res t3 false ""
+  mk_use t4 "git -C bd-main status"
+  mk_res t4 true "fatal: not a git repository (or any of the parent directories)"
+  # bare-runner first-run failure (codex review P2): the failing command
+  # never names the test file it exercises
+  mk_write t5 "/proj/pkg/foo_test.go"
+  mk_use t6 "go test ./pkg/..."
+  mk_res t6 true "FAIL: TestFoo"
+} >"$synth"
+
+mined="$("$root/scripts/session-mine" --dir "$tdir" --last 1 --tsv 2>&1)"
+for want in redo-after-error destructive-unguarded wrong-cwd new-test-first-fail; do
+  if grep -q "	$want	" <<<"$mined"; then
+    pass "session-mine detects $want"
+  else
+    fail "session-mine missed $want; output: $mined"
+  fi
+done
+
+# --session must pin to the NAMED transcript, not the mtime-newest one
+# (codex round-2 P2: concurrent sessions made --last 1 blame the wrong agent).
+other="$tdir/11111111-dead-beef-1111-111111111111.jsonl"
+{
+  mk_use o1 "cargo test"
+  mk_res o1 true "error: failed"
+  mk_use o2 "cargo test"
+  mk_res o2 false "ok"
+} >"$other"
+touch -d '+5 seconds' "$other" 2>/dev/null || touch "$other"  # ensure newer mtime
+pinned="$("$root/scripts/session-mine" --dir "$tdir" \
+  --session 00000000-dead-beef-0000-000000000000 --tsv 2>&1)"
+if grep -q "	wrong-cwd	" <<<"$pinned" && ! grep -q "cargo test" <<<"$pinned"; then
+  pass "session-mine --session pins to the named transcript despite a newer one"
+else
+  fail "session-mine --session did not pin to the named transcript; output: $pinned"
+fi
+
+if grep -q 'CLAUDE_CODE_SESSION_ID' "$root/scripts/session-close-check"; then
+  pass "session-close-check pins the miner to the calling session's id"
+else
+  fail "session-close-check no longer passes CLAUDE_CODE_SESSION_ID to session-mine"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. wiring regressions
+# ---------------------------------------------------------------------------
+if jq -e '.hooks.PreToolUse[].hooks[] | select(.command | test("destructive-guard"))' \
+     "$root/.claude/settings.json" >/dev/null 2>&1; then
+  pass "settings.json registers destructive-guard as a PreToolUse hook"
+else
+  fail "settings.json does not register destructive-guard (hook unwired)"
+fi
+
+if grep -q 'session-mine' "$root/scripts/session-close-check"; then
+  pass "session-close-check invokes session-mine (check 6 wired)"
+else
+  fail "session-close-check no longer invokes session-mine"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+if [[ $fails -eq 0 ]]; then
+  echo "test-guardrails: all checks passed"
+else
+  echo "test-guardrails: $fails check(s) FAILED" >&2
+  exit 1
+fi

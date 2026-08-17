@@ -310,6 +310,27 @@ if [[ "$bd_ok" == 1 ]]; then
   fi
 fi
 
+# --- Check 6: session friction (postmortem miner, bead mybd-uqzt8) ----------
+# Runs scripts/session-mine over the most recent transcript so recurring
+# friction (redo-after-error, unguarded destructive ops, wrong-cwd, first-run
+# test failures) surfaces at close time, when filing a guardrail bead is
+# cheapest. Soft: skipped silently when the miner or a transcript dir is
+# absent (non-Claude runtimes), and each finding is one warning line.
+miner="$root/scripts/session-mine"
+if [[ -x "$miner" ]] && command -v jq >/dev/null 2>&1; then
+  # Pin mining to THIS session's transcript when the id is known. mtime-newest
+  # (--last 1) is only a fallback: with concurrent sessions it selects whoever
+  # wrote last, blaming another agent's friction and failing --strict for the
+  # wrong session (codex review P2).
+  miner_sel=(--last 1)
+  [[ -n "${CLAUDE_CODE_SESSION_ID:-}" ]] && miner_sel=(--session "$CLAUDE_CODE_SESSION_ID")
+  while IFS=$'\t' read -r m_sid m_class m_ev; do
+    [[ -n "${m_class:-}" ]] || continue
+    case "$m_class" in *-count) continue ;; esac  # informational tallies
+    warn "session friction ($m_class): $m_ev - if recurring, file a guardrail bead (mechanical fix > docs)"
+  done < <("$miner" "${miner_sel[@]}" --tsv 2>/dev/null || true)
+fi
+
 if [[ "$warns" -eq 0 ]]; then
   echo "session-close-check: clean" >&2
 else

@@ -498,6 +498,36 @@ that drift and `--fix` restores `.githooks`. Smoke-test with
 - `MYBD_ENFORCE_ROOT_GUARD=1` — make a root commit a hard block.
 - `MYBD_ALLOW_ROOT_COMMIT=1` — escape hatch for a deliberate root commit.
 
+## Postmortem-to-guardrail pipeline
+
+Recurring session friction gets a MECHANICAL guard, not a paragraph (bead
+mybd-uqzt8; docs are the fallback, not the fix). The pieces:
+
+- **`scripts/session-mine`** — mines session transcripts for friction:
+  commands redone after an error, destructive ops without a pre-flight
+  inspect, first-run failures of newly written tests, wrong-cwd errors.
+  `--last N` / `--session <id>` / `--summary`. session-close-check runs it
+  over the current session as its check 6; findings that recur should
+  become a wrapper assertion, hook, or gitattribute — file a bead.
+- **`scripts/destructive-guard`** — PreToolUse(Bash) hook (wired in
+  `.claude/settings.json`) that blocks: `rm -r` on `.bare` paths, `rm -r`
+  composed with `git worktree list` output, repo-wide `-X theirs/ours`
+  merges, and checkout/restore takeovers of memory-bearing files. Inline
+  escape hatches (`MYBD_ALLOW_BARE_DELETE=1`, `MYBD_ALLOW_WORKTREE_RM=1`,
+  `MYBD_ALLOW_MEMORY_CLOBBER=1`) go on the command line so the excuse is in
+  the transcript next to the act.
+- **`scripts/agentbin/bd` shim** — besides serializing Dolt, refuses to run
+  bd with no `.beads/` in cwd or any ancestor (exit 198;
+  `MYBD_BD_ANYWHERE=1` to override).
+- **`.githooks/pre-commit`** — blocks staged conflict markers in every
+  worktree (`MYBD_ALLOW_CONFLICT_MARKERS=1` for a deliberate literal).
+- **`.gitattributes`** — memory-bearing files (`retro/*.tsv`,
+  `retro/findings.md`, `MEMORY.md`, `memory/**`) carry `merge=binary`: a
+  both-sides merge conflicts loudly instead of silently interleaving.
+
+Smoke-test the whole set with `scripts/test-guardrails` — every test fails
+if its guardrail is removed.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations. `cp`, `mv`, and `rm`
