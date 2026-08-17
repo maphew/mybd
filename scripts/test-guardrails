@@ -102,6 +102,13 @@ declare -A blocked=(
   ["git checkout --theirs \"retro/ledger.tsv\""]="checkout --theirs on a QUOTED ledger path (codex review P1)"
   ["git restore --source=main retro/ledger.tsv"]="restore --source over a ledger (codex review P2)"
   ["git restore --ours retro/amp-close-ledger.tsv"]="restore --ours on a ledger (codex review P2)"
+  ["rm \"-rf\" .bare"]="rm with QUOTED -rf flag (codex round-2 P1)"
+  ["git checkout \"--theirs\" retro/ledger.tsv"]="checkout with QUOTED --theirs (codex round-2 P1)"
+  ["git merge \"-Xtheirs\" main"]="merge with QUOTED -Xtheirs (codex round-2 P1)"
+  ["git restore -s main retro/ledger.tsv"]="restore -s short --source (codex round-2 P1)"
+  ["git restore -3 retro/ledger.tsv"]="restore -3 short --theirs (codex round-2 P1)"
+  ["git restore -W -2 retro/ledger.tsv"]="restore -2 short --ours (codex round-2 P1)"
+  ["git restore -smain MEMORY.md"]="restore with value-attached -smain (codex round-2 P1)"
 )
 for cmd in "${!blocked[@]}"; do
   rc="$(run_guard "$cmd")"
@@ -120,6 +127,8 @@ declare -A allowed=(
   ["git worktree list"]="bare git worktree list"
   ["MYBD_ALLOW_BARE_DELETE=1 rm -rf .bare"]="inline MYBD_ALLOW_BARE_DELETE=1 escape"
   ["MYBD_ALLOW_MEMORY_CLOBBER=1 git merge -X theirs origin/main"]="inline MYBD_ALLOW_MEMORY_CLOBBER=1 escape"
+  ["git restore --staged retro/ledger.tsv"]="restore --staged (index-only, not a takeover)"
+  ["grep -r \"-rf\" scripts/"]="quoted option token without a guarded verb"
 )
 for cmd in "${!allowed[@]}"; do
   rc="$(run_guard "$cmd")"
@@ -250,6 +259,30 @@ for want in redo-after-error destructive-unguarded wrong-cwd new-test-first-fail
     fail "session-mine missed $want; output: $mined"
   fi
 done
+
+# --session must pin to the NAMED transcript, not the mtime-newest one
+# (codex round-2 P2: concurrent sessions made --last 1 blame the wrong agent).
+other="$tdir/11111111-dead-beef-1111-111111111111.jsonl"
+{
+  mk_use o1 "cargo test"
+  mk_res o1 true "error: failed"
+  mk_use o2 "cargo test"
+  mk_res o2 false "ok"
+} >"$other"
+touch -d '+5 seconds' "$other" 2>/dev/null || touch "$other"  # ensure newer mtime
+pinned="$("$root/scripts/session-mine" --dir "$tdir" \
+  --session 00000000-dead-beef-0000-000000000000 --tsv 2>&1)"
+if grep -q "	wrong-cwd	" <<<"$pinned" && ! grep -q "cargo test" <<<"$pinned"; then
+  pass "session-mine --session pins to the named transcript despite a newer one"
+else
+  fail "session-mine --session did not pin to the named transcript; output: $pinned"
+fi
+
+if grep -q 'CLAUDE_CODE_SESSION_ID' "$root/scripts/session-close-check"; then
+  pass "session-close-check pins the miner to the calling session's id"
+else
+  fail "session-close-check no longer passes CLAUDE_CODE_SESSION_ID to session-mine"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. wiring regressions

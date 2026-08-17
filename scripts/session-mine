@@ -76,7 +76,16 @@ fi
 # Pick transcript files, newest first by mtime.
 files=()
 if [[ -n "$session" ]]; then
-  [[ -f "$tdir/$session.jsonl" ]] || die "no transcript for session $session"
+  if [[ ! -f "$tdir/$session.jsonl" ]]; then
+    # A transcript lives under the project dir of its session's STARTING cwd,
+    # which can differ from every candidate probed above (session launched in
+    # a worktree, close-check run elsewhere). Same fallback as agent-sig.sh:
+    # the exact session file anywhere under projects/ beats a wrong-session
+    # mtime guess.
+    found="$(ls -t "$HOME"/.claude/projects/*/"$session".jsonl 2>/dev/null | head -1 || true)"
+    [[ -n "$found" ]] || die "no transcript for session $session"
+    tdir="$(dirname "$found")"
+  fi
   files=("$tdir/$session.jsonl")
 else
   while IFS= read -r f; do files+=("$f"); done < <(

@@ -37,7 +37,11 @@ cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
 # that ignores quotes entirely would let `rm -rf ".bare"` through.
 #   code  - quoted span BODIES blanked; used to decide "is this verb invoked?"
 #   flags - quote characters removed;  used to read target PATHS.
-code="$(sed -E "s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd" | tr '\n' ' ')"
+# Quoted spans whose body IS an option token (`rm "-rf"`, checkout "--theirs")
+# are unwrapped, not blanked: quoting leaves their argv semantics unchanged,
+# so blanking them was a bypass (codex review P1). This cannot un-blank string
+# data - the verb itself must still appear unquoted for any shape to fire.
+code="$(sed -E "s/'(-[^']*)'/\1/g; s/\"(-[^\"]*)\"/\1/g; s/'[^']*'/''/g; s/\"[^\"]*\"/\"\"/g" <<<"$cmd" | tr '\n' ' ')"
 flags="$(tr -d "'\\\"" <<<"$cmd" | tr '\n' ' ')"
 
 block() {
@@ -95,8 +99,12 @@ Deliberate override: MYBD_ALLOW_MEMORY_CLOBBER=1 <command>"
   fi
   # Per-path takeovers block only when a memory-bearing path is named.
   # Verbs are read from the blanked view, paths from the quote-stripped one.
+  # restore's short takeover spellings (codex review P1): -s/--source,
+  # -2/--ours, -3/--theirs - clustered (-Ws) or value-attached (-smain) too.
+  # -S/--staged is a different option (index-only) and must not match.
   if { grep -Eq 'git([^;&|]*) (checkout|restore)([^;&|]*) --(theirs|ours)' <<<"$code" \
        || grep -Eq 'git([^;&|]*) restore([^;&|]*) --source' <<<"$code" \
+       || grep -Eq 'git([^;&|]*) restore([^;&|]*) -[A-Za-z0-9]*(s|2|3)' <<<"$code" \
        || grep -Eq 'git([^;&|]*) (checkout|restore)([^;&|]*) -- ' <<<"$code"; } \
      && grep -Eq "$memory_paths" <<<"$flags"; then
     block "checkout/restore takeover aimed at memory-bearing files" \
