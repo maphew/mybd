@@ -94,9 +94,19 @@ git worktree remove .worktrees/mybd/<short-purpose>
 git branch -d <branch>
 ```
 
-This is a single-owner repo: a PR here has no reviewer, so it is a queue with
-nobody serving it. Reports in particular go straight to `main`. PRs remain
-right for `gastownhall/beads`, where there genuinely is review.
+This is a single-owner repo: a PR here has no *human* reviewer, so it is a
+queue with nobody serving it. Reports in particular go straight to `main`.
+PRs remain right for `gastownhall/beads`, where there genuinely is review.
+
+**Standing exception (owner directive maphew, 2026-08-17): open a PR here
+deliberately to summon the automated reviewers** (Codex, Kilo) **when the
+change warrants adversarial eyes** — guardrail/hook scripts, anything
+security-adjacent, or logic where a bypass would be silent. Precedent: PR 33,
+where two review rounds caught real quoted-option and short-flag bypasses in
+`scripts/destructive-guard`. A PR opened under this exception is still yours
+to serve: address findings, merge when green, delete the branch — do not
+leave it queued. Plain doc/report/bead changes keep using the local
+merge above.
 
 If you cannot land — dirty tree, a decision you need the owner to make — say so
 in the handoff **and** file a bead naming the branch. An unlanded branch that
