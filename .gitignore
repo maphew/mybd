@@ -15,6 +15,7 @@ scratch/cleanroom/
 *.gate.lock*
 .beads/proxieddb/
 .beads/backup/
+.beads.backup-*/
 .beads/embeddeddolt/
 .beads/interactions.jsonl
 .beads/last-touched
