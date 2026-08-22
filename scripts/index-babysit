@@ -24,7 +24,8 @@
 # Env knobs (defaults in parens): INDEX_BABYSIT_REPO (gastownhall/beads),
 # INDEX_BABYSIT_ISSUE (5711), INDEX_BABYSIT_GATE_PR (4720),
 # INDEX_BABYSIT_GATE_BEAD (mybd-jart4), INDEX_BABYSIT_EPIC_BEAD (mybd-ykt9f),
-# INDEX_BABYSIT_AUTHOR (maphew), INDEX_BABYSIT_DRY_RUN (0).
+# INDEX_BABYSIT_AUTHOR (maphew), INDEX_BABYSIT_DRY_RUN (0),
+# INDEX_BABYSIT_FLAG_TTL (86400 s - suppress identical re-flags this long).
 # INDEX_BABYSIT_TEST=1 sources the functions without running main (tests).
 set -uo pipefail
 
@@ -35,6 +36,7 @@ GATE_BEAD="${INDEX_BABYSIT_GATE_BEAD:-mybd-jart4}"
 EPIC_BEAD="${INDEX_BABYSIT_EPIC_BEAD:-mybd-ykt9f}"
 AUTHOR="${INDEX_BABYSIT_AUTHOR:-maphew}"
 DRY_RUN="${INDEX_BABYSIT_DRY_RUN:-0}"
+FLAG_TTL="${INDEX_BABYSIT_FLAG_TTL:-86400}"
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/index-babysit"
 mkdir -p "$STATE_DIR"
@@ -157,6 +159,26 @@ watch_gate() {
   fi
 }
 
+# The sig != prev guard alone is not enough to dedup flag notes: GitHub's
+# `mergeable` flips to UNKNOWN whenever the base branch moves, then back to
+# CONFLICTING, and every round trip looked like a fresh regression (observed
+# 2026-08-20..22: ~15 identical notes for PRs 5064/5202, mybd-r0v04).  So a
+# successful note is recorded per PR, and identical flags re-post only after
+# FLAG_TTL; changed flags (new failure type, new PR) still post immediately.
+
+# should_flag <pr> <flags>: 0 = post a note, 1 = suppress as a duplicate.
+should_flag() {
+  local flagfile="$STATE_DIR/pr-$1.flagged" age
+  [[ -f "$flagfile" ]] || return 0
+  [[ "$(cat "$flagfile" 2>/dev/null)" == "$2" ]] || return 0
+  age=$(( $(date +%s) - $(stat -c %Y "$flagfile" 2>/dev/null || echo 0) ))
+  (( age < FLAG_TTL )) && return 1
+  return 0
+}
+
+# record_flag <pr> <flags>: remember a successfully posted note (mtime = when).
+record_flag() { printf '%s' "$2" >"$STATE_DIR/pr-$1.flagged"; }
+
 check_fleet() {
   local prs
   prs="$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open \
@@ -181,9 +203,14 @@ check_fleet() {
     [[ -n "$prev" && "$d" == "CHANGES_REQUESTED" && "$prev" != *"CHANGES_REQUESTED"* ]] \
       && flags="$flags; review requested changes"
     if [[ -n "$flags" ]]; then
-      log "PR $n attention:${flags} (was: ${prev:-first-seen})"
-      if [[ "$DRY_RUN" != 1 ]]; then
-        bd_note "$EPIC_BEAD" "[index-babysit] PR $n needs a session:${flags}. Babysitter only flags; a session should rebase/fix/respond." || true
+      if ! should_flag "$n" "$flags"; then
+        log "PR $n attention:${flags} (already flagged <${FLAG_TTL}s ago, note suppressed)"
+      else
+        log "PR $n attention:${flags} (was: ${prev:-first-seen})"
+        if [[ "$DRY_RUN" != 1 ]]; then
+          bd_note "$EPIC_BEAD" "[index-babysit] PR $n needs a session:${flags}. Babysitter only flags; a session should rebase/fix/respond." \
+            && record_flag "$n" "$flags"
+        fi
       fi
     else
       log "PR $n state change: ${prev:-first-seen} -> $sig (benign)"

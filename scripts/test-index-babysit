@@ -29,4 +29,17 @@ t "outcome-issue"      "$(outcome_for '{"state":"closed","closed_at":"2026-08-13
 t "outcome-notplanned" "$(outcome_for '{"state":"closed","closed_at":"2026-08-13T10:00:00Z","state_reason":"not_planned"}')" "$(printf 'closed not-planned\t2026-08-13')"
 t "outcome-open"       "$(outcome_for '{"state":"open"}')" ""
 
+# flag dedup: should_flag/record_flag suppress identical re-flags inside
+# FLAG_TTL, still post on changed flags, a new PR, or an expired TTL
+sf() { should_flag "$1" "$2" && echo post || echo suppress; }
+t "flag-new-pr"        "$(sf 1234 '; merge conflict with base')" "post"
+record_flag 1234 '; merge conflict with base'
+t "flag-dup-in-ttl"    "$(sf 1234 '; merge conflict with base')" "suppress"
+t "flag-changed-cond"  "$(sf 1234 '; merge conflict with base; 2 FAILURE check(s) (cancelled ignored)')" "post"
+t "flag-other-pr"      "$(sf 5678 '; merge conflict with base')" "post"
+touch -d '25 hours ago' "$STATE_DIR/pr-1234.flagged"
+t "flag-ttl-expired"   "$(sf 1234 '; merge conflict with base')" "post"
+record_flag 1234 '; merge conflict with base'
+t "flag-rerecorded"    "$(sf 1234 '; merge conflict with base')" "suppress"
+
 (( fails == 0 )) && echo "all tests passed" || { echo "$fails test(s) failed"; exit 1; }
