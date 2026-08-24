@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/session-start-stamp"
+            "command": "bash -c 'd=$PWD; while [ \"$d\" != / ] && [ \"$d\" != . ] && [ ! -f \"$d/scripts/session-start-stamp\" ]; do d=$(dirname \"$d\"); done; [ -f \"$d/scripts/session-start-stamp\" ] && exec bash \"$d/scripts/session-start-stamp\"; echo \"codex SessionStart: could not resolve scripts/session-start-stamp from $PWD\" >&2'"
           }
         ]
       },
@@ -51,6 +51,21 @@
           {
             "type": "command",
             "command": "bd codex-hook UserPromptSubmit"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'd=$PWD; while [ \"$d\" != / ] && [ \"$d\" != . ] && [ ! -f \"$d/scripts/pr-review-gate\" ]; do d=$(dirname \"$d\"); done; [ -f \"$d/scripts/pr-review-gate\" ] && exec bash \"$d/scripts/pr-review-gate\"; echo \"codex PreToolUse: could not resolve scripts/pr-review-gate from $PWD; allowing\" >&2'"
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'd=$PWD; while [ \"$d\" != / ] && [ \"$d\" != . ] && [ ! -f \"$d/scripts/destructive-guard\" ]; do d=$(dirname \"$d\"); done; [ -f \"$d/scripts/destructive-guard\" ] && exec bash \"$d/scripts/destructive-guard\"; echo \"codex PreToolUse: could not resolve scripts/destructive-guard from $PWD; allowing\" >&2'"
           }
         ]
       }

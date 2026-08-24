@@ -27,10 +27,24 @@
 # so `echo "rm -rf .bare"` is not an invocation and cannot false-positive.
 set -uo pipefail
 
-command -v jq >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || {
+  echo "destructive-guard: WARNING: jq is unavailable; allowing command" >&2
+  exit 0
+}
 input="$(cat)"
-cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
-[[ -n "$cmd" ]] || exit 0
+lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/hook-payload.sh"
+[[ -r "$lib" ]] || { echo "destructive-guard: WARNING: missing scripts/lib/hook-payload.sh; allowing command" >&2; exit 0; }
+source "$lib"
+hook_payload_extract "$input"
+payload_rc=$?
+case "$payload_rc" in
+  0) cmd="$HOOK_PAYLOAD_COMMAND" ;;
+  2) exit 0 ;;
+  *)
+    echo "destructive-guard: WARNING: unrecognized Bash PreToolUse payload; allowing command" >&2
+    exit 0
+    ;;
+esac
 
 # Two views of the command, same design as pr-review-gate: a guard that
 # fires on text inside a string would block `echo "rm -rf .bare"`, and one

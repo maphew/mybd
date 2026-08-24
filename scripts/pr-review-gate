@@ -33,7 +33,8 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Same main-checkout anchoring as scripts/pr-open, for the same reason.
 _common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 [[ -n "$_common" ]] && ROOT="$(dirname "$_common")"
@@ -41,11 +42,27 @@ REVIEW_DIR="$ROOT/.worktrees/.review-logs"
 UPSTREAM_REPO="gastownhall/beads"
 
 input="$(cat)"
-command -v jq >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || {
+  echo "pr-review-gate: WARNING: jq is unavailable; allowing command" >&2
+  exit 0
+}
 
-cmd="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)"
-hook_cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
-[[ -n "$cmd" ]] || exit 0
+lib="$SCRIPT_DIR/lib/hook-payload.sh"
+[[ -r "$lib" ]] || { echo "pr-review-gate: WARNING: missing scripts/lib/hook-payload.sh; allowing command" >&2; exit 0; }
+source "$lib"
+hook_payload_extract "$input"
+payload_rc=$?
+case "$payload_rc" in
+  0)
+    cmd="$HOOK_PAYLOAD_COMMAND"
+    hook_cwd="$HOOK_PAYLOAD_CWD"
+    ;;
+  2) exit 0 ;;
+  *)
+    echo "pr-review-gate: WARNING: unrecognized Bash PreToolUse payload; allowing command" >&2
+    exit 0
+    ;;
+esac
 
 # Two views of the command, because a gate that fires on text inside a string
 # would block `printf 'run gh pr create ...'`, and one that ignores quotes

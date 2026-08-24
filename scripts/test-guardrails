@@ -86,8 +86,10 @@ fi
 # 2. destructive-guard hook
 # ---------------------------------------------------------------------------
 guard="$root/scripts/destructive-guard"
-run_guard() {  # $1 = command string; echoes rc
-  jq -n --arg c "$1" '{tool_input:{command:$c}}' | "$guard" >/dev/null 2>&1
+claude_fixture="$root/scripts/fixtures/claude-pretooluse-bash.json"
+codex_fixture="$root/scripts/fixtures/codex-pretooluse-shell.json"
+run_guard() {  # $1 = fixture; $2 = command string; echoes rc
+  jq --arg c "$2" '.tool_input.command = $c' "$1" | "$guard" >/dev/null 2>&1
   echo $?
 }
 
@@ -114,11 +116,19 @@ declare -A blocked=(
   ["git restore -smain MEMORY.md"]="restore with value-attached -smain (codex round-2 P1)"
 )
 for cmd in "${!blocked[@]}"; do
-  rc="$(run_guard "$cmd")"
+  rc="$(run_guard "$claude_fixture" "$cmd")"
   if [[ "$rc" == 2 ]]; then
     pass "destructive-guard blocks: ${blocked[$cmd]}"
   else
     fail "destructive-guard did NOT block (rc=$rc): $cmd"
+  fi
+done
+for cmd in "${!blocked[@]}"; do
+  rc="$(run_guard "$codex_fixture" "$cmd")"
+  if [[ "$rc" == 2 ]]; then
+    pass "destructive-guard blocks through Codex: ${blocked[$cmd]}"
+  else
+    fail "destructive-guard did NOT block Codex payload (rc=$rc): $cmd"
   fi
 done
 
@@ -134,13 +144,93 @@ declare -A allowed=(
   ["grep -r \"-rf\" scripts/"]="quoted option token without a guarded verb"
 )
 for cmd in "${!allowed[@]}"; do
-  rc="$(run_guard "$cmd")"
+  rc="$(run_guard "$claude_fixture" "$cmd")"
   if [[ "$rc" == 0 ]]; then
     pass "destructive-guard allows: ${allowed[$cmd]}"
   else
     fail "destructive-guard wrongly blocked (rc=$rc): $cmd"
   fi
 done
+for cmd in "${!allowed[@]}"; do
+  rc="$(run_guard "$codex_fixture" "$cmd")"
+  if [[ "$rc" == 0 ]]; then
+    pass "destructive-guard allows through Codex: ${allowed[$cmd]}"
+  else
+    fail "destructive-guard wrongly blocked Codex payload (rc=$rc): $cmd"
+  fi
+done
+
+for fixture in "$claude_fixture" "$codex_fixture"; do
+  name="${fixture##*/}"
+  rc="$(run_guard "$fixture" 'rm -rf .bare')"
+  [[ "$rc" == 2 ]] && pass "destructive-guard blocks .bare through $name" \
+    || fail "destructive-guard did not block .bare through $name (rc=$rc)"
+done
+legacy_rc="$(jq -n --arg c 'rm -rf .bare' '{tool_input:{command:$c}}' | "$guard" >/dev/null 2>&1; echo $?)"
+[[ "$legacy_rc" == 2 ]] && pass "destructive-guard preserves legacy Claude command-only payload" \
+  || fail "destructive-guard regressed legacy Claude payload (rc=$legacy_rc)"
+rc="$(run_guard "$codex_fixture" 'MYBD_ALLOW_BARE_DELETE=1 rm -rf .bare')"
+[[ "$rc" == 0 ]] && pass "destructive-guard preserves bare-delete hatch through Codex payload" \
+  || fail "destructive-guard lost bare-delete hatch through Codex payload (rc=$rc)"
+rc="$(run_guard "$codex_fixture" 'MYBD_ALLOW_MEMORY_CLOBBER=1 git merge -X theirs origin/main')"
+[[ "$rc" == 0 ]] && pass "destructive-guard preserves memory-clobber hatch through Codex payload" \
+  || fail "destructive-guard lost memory-clobber hatch through Codex payload (rc=$rc)"
+unknown_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:["rm","-rf",".bare"]}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$unknown_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns and allows an unknown Bash PreToolUse payload"
+else
+  fail "destructive-guard unknown-payload behavior: rc=$rc out=$unknown_out"
+fi
+malformed_out="$(printf '%s' '{not-json' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$malformed_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns and allows malformed hook JSON"
+else
+  fail "destructive-guard malformed-payload behavior: rc=$rc out=$malformed_out"
+fi
+missing_tool_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_input:{command:"rm -rf .bare"}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$missing_tool_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns when tool_name is missing from a partial payload"
+else
+  fail "destructive-guard missing-tool behavior: rc=$rc out=$missing_tool_out"
+fi
+null_tool_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:null,tool_input:{command:"rm -rf .bare"}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$null_tool_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns when tool_name is null"
+else
+  fail "destructive-guard null-tool behavior: rc=$rc out=$null_tool_out"
+fi
+renamed_shell_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"shell",tool_input:{command:"rm -rf .bare"}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$renamed_shell_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns on an unknown tool carrying a shell command"
+else
+  fail "destructive-guard renamed-shell behavior: rc=$rc out=$renamed_shell_out"
+fi
+renamed_array_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"shell",tool_input:{command:["rm","-rf",".bare"]}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$renamed_array_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns on an unknown tool carrying a non-string command"
+else
+  fail "destructive-guard renamed-shell array behavior: rc=$rc out=$renamed_array_out"
+fi
+renamed_scalar_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"shell",tool_input:"rm -rf .bare"}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$renamed_scalar_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  pass "destructive-guard warns on an unknown tool carrying non-object input"
+else
+  fail "destructive-guard renamed-shell scalar behavior: rc=$rc out=$renamed_scalar_out"
+fi
+nonbash_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{path:"x"}}' | "$guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && -z "$nonbash_out" ]]; then
+  pass "destructive-guard silently allows a known non-Bash tool"
+else
+  fail "destructive-guard non-Bash behavior: rc=$rc out=$nonbash_out"
+fi
+mkdir -p "$tmp/missing-guard-lib"
+cp -f "$guard" "$tmp/missing-guard-lib/destructive-guard"
+missing_lib_out="$(jq --arg c 'rm -rf .bare' '.tool_input.command=$c' "$codex_fixture" | "$tmp/missing-guard-lib/destructive-guard" 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$missing_lib_out" == *"missing scripts/lib/hook-payload.sh"* ]]; then
+  pass "destructive-guard reports a missing payload adapter honestly"
+else
+  fail "destructive-guard missing-adapter behavior: rc=$rc out=$missing_lib_out"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. conflict-marker guard in .githooks/pre-commit
@@ -341,7 +431,7 @@ guard_cmd="$(jq -r '[.hooks.PreToolUse[].hooks[]
 if [[ -z "$guard_cmd" ]]; then
   fail "settings.json registers no destructive-guard PreToolUse command to exercise"
 else
-  out="$(cd "$nested" && jq -n --arg c "echo hello" '{tool_input:{command:$c}}' \
+  out="$(cd "$nested" && jq --arg c "echo hello" '.tool_input.command=$c' "$claude_fixture" \
     | CLAUDE_PROJECT_DIR="$root" bash -c "$guard_cmd" 2>&1)"; rc=$?
   if [[ $rc -eq 0 ]]; then
     pass "destructive-guard as registered allows a benign command from a cwd with no scripts/ dir"
@@ -349,7 +439,7 @@ else
     fail "destructive-guard as registered failed from a nested cwd (rc=$rc): $out"
   fi
 
-  out="$(cd "$nested" && jq -n --arg c "rm -rf $root/.bare" '{tool_input:{command:$c}}' \
+  out="$(cd "$nested" && jq --arg c "rm -rf $root/.bare" '.tool_input.command=$c' "$claude_fixture" \
     | CLAUDE_PROJECT_DIR="$root" bash -c "$guard_cmd" 2>&1)"; rc=$?
   if [[ $rc -eq 2 && "$out" == *".bare"* ]]; then
     pass "destructive-guard as registered still BLOCKS a .bare delete from a cwd with no scripts/ dir"

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# check-codex-hook-trust - ask Codex which project hooks it will actually run.
+#
+# This deliberately uses Codex's app-server trustStatus rather than parsing
+# ~/.codex/config.toml: the latter cannot distinguish an obsolete hash from a
+# currently trusted command. Run manually after changing .codex/hooks.json.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+read_timeout="${MYBD_CODEX_HOOK_CHECK_TIMEOUT:-10}"
+[[ "$read_timeout" =~ ^[1-9][0-9]*$ ]] || {
+  echo "check-codex-hook-trust: MYBD_CODEX_HOOK_CHECK_TIMEOUT must be a positive integer" >&2
+  exit 2
+}
+command -v codex >/dev/null 2>&1 || { echo "check-codex-hook-trust: codex is not on PATH" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "check-codex-hook-trust: jq is required" >&2; exit 2; }
+
+coproc CODEX_APP { exec codex app-server --stdio; }
+app_pid="$CODEX_APP_PID"
+in_fd="${CODEX_APP[1]}"
+out_fd="${CODEX_APP[0]}"
+cleanup() {
+  exec {in_fd}>&- 2>/dev/null || true
+  exec {out_fd}>&- 2>/dev/null || true
+  if kill -0 "$app_pid" 2>/dev/null; then
+    kill "$app_pid" 2>/dev/null || true
+    for _ in {1..10}; do
+      kill -0 "$app_pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    kill -KILL "$app_pid" 2>/dev/null || true
+  fi
+  wait "$app_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+request() { # request <id> <method> <params-json>
+  local id="$1" method="$2" params="$3" line remaining
+  local deadline=$((SECONDS + read_timeout))
+  jq -cn --argjson id "$id" --arg method "$method" --argjson params "$params" \
+    '{id:$id,method:$method,params:$params}' >&"$in_fd"
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    IFS= read -r -t "$remaining" line <&"$out_fd" || break
+    if jq -e --argjson id "$id" '.id == $id' <<<"$line" >/dev/null 2>&1; then
+      if jq -e 'has("error") or (has("result") | not)' <<<"$line" >/dev/null 2>&1; then
+        return 1
+      fi
+      printf '%s\n' "$line"
+      return
+    fi
+  done
+  return 1
+}
+
+init='{"clientInfo":{"name":"mybd-hook-check","version":"0.1.0"},"capabilities":{"experimentalApi":true}}'
+request 1 initialize "$init" >/dev/null || { echo "check-codex-hook-trust: initialize failed" >&2; exit 2; }
+printf '%s\n' '{"method":"initialized"}' >&"$in_fd"
+result="$(request 2 hooks/list "$(jq -cn --arg cwd "$root" '{cwds:[$cwd]}')")" || {
+  echo "check-codex-hook-trust: hooks/list failed" >&2; exit 2;
+}
+
+hooks="$(jq -c '[.result.data[]?.hooks[]? | select(.eventName == "preToolUse")]' <<<"$result" 2>/dev/null)" || {
+  echo "check-codex-hook-trust: hooks/list returned invalid data" >&2; exit 2;
+}
+[[ "$hooks" != "[]" ]] || { echo "check-codex-hook-trust: no PreToolUse hooks registered for $root" >&2; exit 1; }
+
+guard_hooks="$(jq -c '[.[] | select((.command // "") | test("scripts/(pr-review-gate|destructive-guard)"))]' <<<"$hooks")"
+for guard in pr-review-gate destructive-guard; do
+  count="$(jq --arg guard "$guard" '[.[] | select((.command // "") | contains($guard))] | length' <<<"$guard_hooks")"
+  [[ "$count" == 1 ]] || {
+    echo "check-codex-hook-trust: expected exactly one registered $guard command, found $count" >&2
+    exit 1
+  }
+done
+
+expected_source="$root/.codex/hooks.json"
+bad=0
+while IFS=$'\t' read -r status enabled source command; do
+  if [[ "$enabled" != true ]]; then
+    printf 'disabled: %s\n' "$command" >&2
+    bad=1
+  fi
+  if [[ "$source" != "$expected_source" ]]; then
+    printf 'wrong source (%s, expected %s): %s\n' "$source" "$expected_source" "$command" >&2
+    bad=1
+  fi
+  case "$status" in
+    trusted|managed) printf '%s [%s]: %s\n' "$status" "$source" "$command" ;;
+    untrusted|modified) printf '%s: %s\n' "$status" "$command" >&2; bad=1 ;;
+    *) printf 'unknown trust status (%s): %s\n' "$status" "$command" >&2; bad=1 ;;
+  esac
+done < <(jq -r '.[] | [.trustStatus, .enabled, .sourcePath, .command] | @tsv' <<<"$guard_hooks")
+
+(( bad == 0 )) || exit 1
