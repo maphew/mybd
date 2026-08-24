@@ -311,23 +311,51 @@ fi
 #    cwd-relative "bash scripts/foo" dies there with a non-blocking error
 #    and the guard silently never runs.
 # ---------------------------------------------------------------------------
-if jq -e '[.hooks.PreToolUse[].hooks[], .hooks.SessionStart[].hooks[]]
-            | map(select(.command | test("scripts/")))
-            | all(.command | test("\\$CLAUDE_PROJECT_DIR"))' \
-     "$root/.claude/settings.json" >/dev/null 2>&1; then
-  pass "settings.json scripts/ hook commands resolve via \$CLAUDE_PROJECT_DIR, not cwd"
+# `all` over an empty array is true, so the registration assertion has to be
+# separate from the $CLAUDE_PROJECT_DIR assertion: deleting a hook outright
+# would otherwise pass this check silently.
+if ! jq -e . "$root/.claude/settings.json" >/dev/null 2>&1; then
+  fail "settings.json is not valid JSON (cannot check hook paths)"
+elif jq -e '[.hooks.PreToolUse[].hooks[], .hooks.SessionStart[].hooks[]]
+              | map(select(.command | test("scripts/")) | .command) as $c
+              | (["session-start-stamp", "pr-review-gate", "destructive-guard"]
+                   | all(. as $n | $c | any(test($n))))
+                and ($c | all(test("\\$CLAUDE_PROJECT_DIR")))' \
+     "$root/.claude/settings.json" >/dev/null; then
+  pass "settings.json registers all three scripts/ hooks and resolves them via \$CLAUDE_PROJECT_DIR"
 else
-  fail "settings.json has a cwd-relative scripts/ hook command (silently disabled outside the project root)"
+  fail "settings.json has a missing or cwd-relative scripts/ hook command (silently disabled outside the project root)"
 fi
 
+# Drive the guard through the command string settings.json actually registers,
+# not a hardcoded copy of it - a hardcoded copy passes even when the wiring
+# regresses. Assert the BLOCK path too: a guard that degraded to
+# allow-everything from a nested cwd is the exact silent-disable class this
+# check exists to catch, and it returns 0 on the allow case just like a
+# healthy one.
 nested="$tmp/nested-no-scripts"
 mkdir -p "$nested"
-out="$(cd "$nested" && jq -n --arg c "echo hello" '{tool_input:{command:$c}}' \
-  | CLAUDE_PROJECT_DIR="$root" bash -c 'bash "$CLAUDE_PROJECT_DIR/scripts/destructive-guard"' 2>&1)"; rc=$?
-if [[ $rc -eq 0 ]]; then
-  pass "destructive-guard invoked via \$CLAUDE_PROJECT_DIR runs from a cwd with no scripts/ dir"
+guard_cmd="$(jq -r '[.hooks.PreToolUse[].hooks[]
+                       | select(.command | test("destructive-guard"))][0].command // empty' \
+              "$root/.claude/settings.json")"
+if [[ -z "$guard_cmd" ]]; then
+  fail "settings.json registers no destructive-guard PreToolUse command to exercise"
 else
-  fail "destructive-guard via \$CLAUDE_PROJECT_DIR failed from a nested cwd (rc=$rc): $out"
+  out="$(cd "$nested" && jq -n --arg c "echo hello" '{tool_input:{command:$c}}' \
+    | CLAUDE_PROJECT_DIR="$root" bash -c "$guard_cmd" 2>&1)"; rc=$?
+  if [[ $rc -eq 0 ]]; then
+    pass "destructive-guard as registered allows a benign command from a cwd with no scripts/ dir"
+  else
+    fail "destructive-guard as registered failed from a nested cwd (rc=$rc): $out"
+  fi
+
+  out="$(cd "$nested" && jq -n --arg c "rm -rf $root/.bare" '{tool_input:{command:$c}}' \
+    | CLAUDE_PROJECT_DIR="$root" bash -c "$guard_cmd" 2>&1)"; rc=$?
+  if [[ $rc -eq 2 && "$out" == *".bare"* ]]; then
+    pass "destructive-guard as registered still BLOCKS a .bare delete from a cwd with no scripts/ dir"
+  else
+    fail "destructive-guard as registered did not block a .bare delete from a nested cwd (rc=$rc): $out"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
