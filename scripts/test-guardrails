@@ -13,6 +13,9 @@
 #      wrong-cwd in a synthetic transcript
 #   6. wiring: settings.json registers destructive-guard; session-close-check
 #      invokes session-mine
+#   7. settings.json hook commands resolve scripts/ via $CLAUDE_PROJECT_DIR,
+#      not a cwd-relative path (mybd-edh52); a guard invoked that way still
+#      fires from a cwd with no scripts/ of its own
 #
 # PASS/FAIL style and throwaway-tempdir safety borrowed from
 # scripts/test-git-hooks. No real bd/dolt command ever runs.
@@ -298,6 +301,33 @@ if grep -q 'session-mine' "$root/scripts/session-close-check"; then
   pass "session-close-check invokes session-mine (check 6 wired)"
 else
   fail "session-close-check no longer invokes session-mine"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. nested-cwd regression (mybd-edh52): hook commands that shell out to
+#    scripts/ must resolve via $CLAUDE_PROJECT_DIR, not a cwd-relative path.
+#    Sessions routinely cd into nested checkouts (bd-main,
+#    .worktrees/beads/<branch>) that have no scripts/ of their own; a
+#    cwd-relative "bash scripts/foo" dies there with a non-blocking error
+#    and the guard silently never runs.
+# ---------------------------------------------------------------------------
+if jq -e '[.hooks.PreToolUse[].hooks[], .hooks.SessionStart[].hooks[]]
+            | map(select(.command | test("scripts/")))
+            | all(.command | test("\\$CLAUDE_PROJECT_DIR"))' \
+     "$root/.claude/settings.json" >/dev/null 2>&1; then
+  pass "settings.json scripts/ hook commands resolve via \$CLAUDE_PROJECT_DIR, not cwd"
+else
+  fail "settings.json has a cwd-relative scripts/ hook command (silently disabled outside the project root)"
+fi
+
+nested="$tmp/nested-no-scripts"
+mkdir -p "$nested"
+out="$(cd "$nested" && jq -n --arg c "echo hello" '{tool_input:{command:$c}}' \
+  | CLAUDE_PROJECT_DIR="$root" bash -c 'bash "$CLAUDE_PROJECT_DIR/scripts/destructive-guard"' 2>&1)"; rc=$?
+if [[ $rc -eq 0 ]]; then
+  pass "destructive-guard invoked via \$CLAUDE_PROJECT_DIR runs from a cwd with no scripts/ dir"
+else
+  fail "destructive-guard via \$CLAUDE_PROJECT_DIR failed from a nested cwd (rc=$rc): $out"
 fi
 
 # ---------------------------------------------------------------------------
