@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/session-start-stamp"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/session-start-stamp\""
           }
         ]
       },
@@ -26,11 +26,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/pr-review-gate"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-review-gate\""
           },
           {
             "type": "command",
-            "command": "bash scripts/destructive-guard"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/destructive-guard\""
           }
         ]
       }
