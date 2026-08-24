@@ -20,6 +20,8 @@ cd "$root"
 CODEX_HOOKS="$root/.codex/hooks.json"
 CLAUDE_SETTINGS="$root/.claude/settings.json"
 STAMP_SCRIPT="$root/scripts/session-start-stamp"
+CLAUDE_FIXTURE="$root/scripts/fixtures/claude-pretooluse-bash.json"
+CODEX_FIXTURE="$root/scripts/fixtures/codex-pretooluse-shell.json"
 
 fails=0
 pass() { printf 'PASS: %s\n' "$*"; }
@@ -65,6 +67,16 @@ else
   fail "$CODEX_HOOKS: SessionStart is missing the session-start-stamp hook"
 fi
 
+if jq -e '.hooks.PreToolUse | length == 1
+          and .[0].matcher == ".*"
+          and ([.[0].hooks[].command | test("pr-review-gate|destructive-guard")] | length == 2 and all)
+          and (.[] | .hooks | map(.command) | .[0] | test("pr-review-gate"))' \
+     "$CODEX_HOOKS" >/dev/null 2>&1; then
+  pass "$CODEX_HOOKS: PreToolUse covers all tools and orders both guards correctly"
+else
+  fail "$CODEX_HOOKS: PreToolUse is missing, mismatched, or orders its guards incorrectly"
+fi
+
 # --- Group 2: cross-platform command resolution -----------------------------
 
 for file in "$CODEX_HOOKS" "$CLAUDE_SETTINGS"; do
@@ -106,6 +118,144 @@ for file in "$CODEX_HOOKS" "$CLAUDE_SETTINGS"; do
     done <<<"$bad_commands"
   fi
 done
+
+# Codex does not provide a project-root environment variable to hooks. Its
+# commands must locate scripts from PWD so nested worktree directories work.
+if jq -e '[.hooks.PreToolUse[].hooks[].command, .hooks.SessionStart[].hooks[].command]
+          | map(select(test("scripts/(session-start-stamp|pr-review-gate|destructive-guard)")))
+          | length >= 3 and all(test("d=\\$PWD") and test("dirname"))' "$CODEX_HOOKS" >/dev/null 2>&1; then
+  pass "$CODEX_HOOKS: repo scripts self-resolve upward from PWD"
+else
+  fail "$CODEX_HOOKS: a repo script hook is cwd-relative or lacks PWD resolution"
+fi
+
+nested="$root/scripts/fixtures"
+run_codex_hook() { # command fixture [cwd] [PATH] -> CODEX_HOOK_RC/OUT
+  local command="$1" fixture="$2" hook_cwd="${3:-$nested}" hook_path="${4:-$PATH}" hook
+  CODEX_HOOK_RC=0
+  CODEX_HOOK_OUT=""
+  while IFS= read -r hook; do
+    CODEX_HOOK_OUT="$(cd "$hook_cwd" && jq --arg c "$command" --arg d "$hook_cwd" '.tool_input.command=$c | .cwd=$d' "$fixture" | PATH="$hook_path" bash -c "$hook" 2>&1)"
+    CODEX_HOOK_RC=$?
+    [[ $CODEX_HOOK_RC -eq 0 ]] || break
+  done < <(jq -r '.hooks.PreToolUse[0].hooks[].command' "$CODEX_HOOKS")
+}
+for fixture in "$CLAUDE_FIXTURE" "$CODEX_FIXTURE"; do
+  fixture_name="${fixture##*/}"
+  run_codex_hook 'echo nested-hook-ok' "$fixture"; rc=$CODEX_HOOK_RC
+  [[ $rc -eq 0 ]] && pass "Codex registered guards allow benign $fixture_name from nested cwd" \
+    || fail "Codex registered guards failed benign $fixture_name from nested cwd (rc=$rc)"
+  run_codex_hook 'rm -rf .bare' "$fixture"; rc=$CODEX_HOOK_RC
+  [[ $rc -eq 2 && "${CODEX_HOOK_OUT,,}" == *"block"* ]] \
+    && pass "Codex registered guards block .bare with a reason through $fixture_name from nested cwd" \
+    || fail "Codex registered guards missed .bare or its blocking reason through $fixture_name from nested cwd (rc=$rc out=$CODEX_HOOK_OUT)"
+done
+
+# Isolate this check from the live worktree's HEAD and review-log state. A
+# unique throwaway commit can never inherit a prior review verdict. Supplying
+# a stub codex binary also tests the gate's active branch on hosts where the
+# real CLI is not installed.
+pr_hook_repo="$(mktemp -d "$root/.test-pr-hook.XXXXXX")"
+pr_hook_bin="$(mktemp -d)"
+cleanup_pr_hook() { rm -rf "$pr_hook_repo" "$pr_hook_bin"; }
+trap cleanup_pr_hook EXIT
+git init -q -b main "$pr_hook_repo"
+git -C "$pr_hook_repo" config user.name test-agent-hooks
+git -C "$pr_hook_repo" config user.email test-agent-hooks@example.invalid
+git -C "$pr_hook_repo" config commit.gpgsign false
+printf '%s\n' "unique gate fixture $$ $RANDOM" >"$pr_hook_repo/fixture"
+git -C "$pr_hook_repo" add fixture
+git -C "$pr_hook_repo" commit -q -m fixture
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$pr_hook_bin/codex"
+chmod +x "$pr_hook_bin/codex"
+run_codex_hook 'gh pr create --repo gastownhall/beads --title x' "$CODEX_FIXTURE" "$pr_hook_repo" "$pr_hook_bin:$PATH"; rc=$CODEX_HOOK_RC
+[[ $rc -eq 2 && "${CODEX_HOOK_OUT,,}" == *"block"* ]] \
+  && pass "Codex registered pr-review-gate blocks an unreviewed upstream PR with a reason" \
+  || fail "Codex registered pr-review-gate missed an unreviewed upstream PR or its blocking reason (rc=$rc out=$CODEX_HOOK_OUT)"
+cleanup_pr_hook
+trap - EXIT
+
+# A session outside the project tree must warn and return instead of looping
+# forever while trying to walk above a path like /tmp.
+if command -v timeout >/dev/null 2>&1; then
+  no_match_runner=(timeout 3s)
+elif command -v gtimeout >/dev/null 2>&1; then
+  no_match_runner=(gtimeout 3s)
+else
+  no_match_runner=(perl -e 'alarm shift; exec @ARGV' 3)
+fi
+for hook in $(jq -r '.hooks.PreToolUse[0].hooks[].command | @base64' "$CODEX_HOOKS"); do
+  hook="$(printf '%s' "$hook" | base64 -d)"
+  no_match_out="$(cd /tmp && "${no_match_runner[@]}" bash -c "$hook" </dev/null 2>&1)"; no_match_rc=$?
+  if [[ $no_match_rc -eq 0 && "$no_match_out" == *"could not resolve"* ]]; then
+    pass "Codex registered guard terminates loudly when no project script is discoverable"
+  else
+    fail "Codex registered guard no-match resolution failed (rc=$no_match_rc out=$no_match_out)"
+  fi
+done
+
+# This scripted app-server response proves the manual diagnostic reports the
+# important state without requiring an untrusted hook to run first.
+fakebin="$(mktemp -d)"
+cat >"$fakebin/codex" <<'EOF'
+#!/usr/bin/env bash
+while IFS= read -r line; do
+  id="$(jq -r '.id // empty' <<<"$line")"
+  case "$id" in
+    1) echo '{"id":1,"result":{}}' ;;
+    2) case "${FAKE_CODEX_MODE:-good}" in
+         good|disabled|wrong) source="$PWD/.codex/hooks.json"; enabled=true; first='bash scripts/pr-review-gate'; second='bash scripts/destructive-guard'
+           [[ "$FAKE_CODEX_MODE" == disabled ]] && enabled=false
+           [[ "$FAKE_CODEX_MODE" == wrong ]] && first=true
+           jq -cn --arg source "$source" --arg first "$first" --arg second "$second" --argjson enabled "$enabled" \
+             '{id:2,result:{data:[{hooks:[
+               {eventName:"preToolUse",command:$first,trustStatus:"untrusted",enabled:$enabled,sourcePath:$source},
+               {eventName:"preToolUse",command:$second,trustStatus:"untrusted",enabled:true,sourcePath:$source}
+             ]}]}}' ;;
+         error) echo '{"id":2,"error":{"code":-32603,"message":"probe failure"}}' ;;
+         stall) : ;;
+         notify) while :; do echo '{"method":"probe/notification","params":{}}'; sleep 0.05; done ;;
+         stubborn) trap '' TERM; while :; do sleep 1; done ;;
+       esac ;;
+  esac
+done
+EOF
+chmod +x "$fakebin/codex"
+trust_out="$(PATH="$fakebin:$PATH" "$root/scripts/check-codex-hook-trust" 2>&1)"; trust_rc=$?
+if [[ $trust_rc -eq 1 && "$trust_out" == *"untrusted: bash scripts/pr-review-gate"* ]]; then
+  pass "check-codex-hook-trust reports registered-but-untrusted PreToolUse commands"
+else
+  fail "check-codex-hook-trust did not expose untrusted state (rc=$trust_rc out=$trust_out)"
+fi
+for fake_mode in disabled wrong; do
+  trust_out="$(FAKE_CODEX_MODE="$fake_mode" PATH="$fakebin:$PATH" "$root/scripts/check-codex-hook-trust" 2>&1)"; trust_rc=$?
+  if [[ $trust_rc -eq 1 ]]; then
+    pass "check-codex-hook-trust rejects $fake_mode guard registration"
+  else
+    fail "check-codex-hook-trust accepted $fake_mode guard registration (rc=$trust_rc out=$trust_out)"
+  fi
+done
+trust_out="$(FAKE_CODEX_MODE=error MYBD_CODEX_HOOK_CHECK_TIMEOUT=1 PATH="$fakebin:$PATH" "$root/scripts/check-codex-hook-trust" 2>&1)"; trust_rc=$?
+if [[ $trust_rc -eq 2 && "$trust_out" == *"hooks/list failed"* ]]; then
+  pass "check-codex-hook-trust rejects app-server JSON-RPC errors"
+else
+  fail "check-codex-hook-trust mishandled app-server error (rc=$trust_rc out=$trust_out)"
+fi
+trust_out="$(FAKE_CODEX_MODE=stall MYBD_CODEX_HOOK_CHECK_TIMEOUT=1 PATH="$fakebin:$PATH" "$root/scripts/check-codex-hook-trust" 2>&1)"; trust_rc=$?
+if [[ $trust_rc -eq 2 && "$trust_out" == *"hooks/list failed"* ]]; then
+  pass "check-codex-hook-trust times out when app-server stalls"
+else
+  fail "check-codex-hook-trust stall handling failed (rc=$trust_rc out=$trust_out)"
+fi
+for fake_mode in notify stubborn; do
+  trust_out="$("${no_match_runner[@]}" env FAKE_CODEX_MODE="$fake_mode" MYBD_CODEX_HOOK_CHECK_TIMEOUT=1 PATH="$fakebin:$PATH" "$root/scripts/check-codex-hook-trust" 2>&1)"; trust_rc=$?
+  if [[ $trust_rc -eq 2 && "$trust_out" == *"hooks/list failed"* ]]; then
+    pass "check-codex-hook-trust bounds $fake_mode app-server behavior"
+  else
+    fail "check-codex-hook-trust $fake_mode handling failed (rc=$trust_rc out=$trust_out)"
+  fi
+done
+rm -rf "$fakebin"
 
 # --- Group 3: Beads hook wrapper portability -------------------------------
 

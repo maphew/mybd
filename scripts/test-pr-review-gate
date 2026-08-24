@@ -10,6 +10,8 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE="$ROOT/scripts/pr-review-gate"
+CLAUDE_FIXTURE="$ROOT/scripts/fixtures/claude-pretooluse-bash.json"
+CODEX_FIXTURE="$ROOT/scripts/fixtures/codex-pretooluse-shell.json"
 # Resolve the log dir the way the gate does, so a run from a linked worktree
 # plants its fixture where the gate will actually look.
 _common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
@@ -46,9 +48,8 @@ git -C "$other" add .marker
 git -C "$other" -c user.email=t@t -c user.name=t commit -q -m init-unrelated
 git -C "$other" remote add origin git@github.com:someone/unrelated.git
 
-run() { # run <cmd> <cwd> -> exit code
-  jq -nc --arg c "$1" --arg d "$2" \
-    '{hook_event_name:"PreToolUse",tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' \
+run() { # run <cmd> <cwd> [fixture] -> exit code
+  jq --arg c "$1" --arg d "$2" '.tool_input.command=$c | .cwd=$d' "${3:-$CLAUDE_FIXTURE}" \
     | "$GATE" >/dev/null 2>&1
   echo $?
 }
@@ -80,10 +81,49 @@ check "gh pr create, -R other"   0 "$(run 'gh pr create -R maphew/mybd --title x
 check "substring, not a command" 0 "$(run 'echo "how to gh pr create"' "$tmp")"
 check "quoted, not a command"    0 "$(run "printf 'run gh pr create --repo gastownhall/beads now'" "$tmp")"
 check "both skip hatches honored" 0 "$(run 'MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads' "$tmp")"
+check "Codex fixture keeps both skip hatches" 0 "$(run 'MYBD_SKIP_XVENDOR=1 MYBD_SKIP_REDTEAM=1 gh pr create --repo gastownhall/beads' "$tmp" "$CODEX_FIXTURE")"
+unknown_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:["gh","pr","create"]}}' | "$GATE" 2>&1)"; unknown_rc=$?
+if [[ $unknown_rc -eq 0 && "$unknown_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  check "unknown Bash payload warns visibly" 0 0
+else
+  printf '  FAIL  unknown Bash payload behavior (rc=%s out=%s)\n' "$unknown_rc" "$unknown_out"; fail=$((fail+1))
+fi
+for bad_payload in \
+  '{not-json' \
+  '{"hook_event_name":"PreToolUse","tool_input":{"command":"gh pr create"}}' \
+  '{"hook_event_name":"PreToolUse","tool_name":null,"tool_input":{"command":"gh pr create"}}'; do
+  bad_out="$(printf '%s' "$bad_payload" | "$GATE" 2>&1)"; bad_rc=$?
+  if [[ $bad_rc -eq 0 && "$bad_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+    check "malformed/partial payload warns visibly" 0 0
+  else
+    printf '  FAIL  malformed/partial payload behavior (rc=%s out=%s)\n' "$bad_rc" "$bad_out"; fail=$((fail+1))
+  fi
+done
+renamed_shell_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"shell",tool_input:{command:"gh pr create"}}' | "$GATE" 2>&1)"; renamed_shell_rc=$?
+if [[ $renamed_shell_rc -eq 0 && "$renamed_shell_out" == *"WARNING: unrecognized Bash PreToolUse payload"* ]]; then
+  check "unknown tool carrying a shell command warns" 0 0
+else
+  printf '  FAIL  renamed-shell payload behavior (rc=%s out=%s)\n' "$renamed_shell_rc" "$renamed_shell_out"; fail=$((fail+1))
+fi
+nonbash_out="$(jq -nc '{hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{path:"x"}}' | "$GATE" 2>&1)"; nonbash_rc=$?
+if [[ $nonbash_rc -eq 0 && -z "$nonbash_out" ]]; then
+  check "known non-Bash silently allows" 0 0
+else
+  printf '  FAIL  known non-Bash behavior (rc=%s out=%s)\n' "$nonbash_rc" "$nonbash_out"; fail=$((fail+1))
+fi
+mkdir -p "$tmp/missing-gate-lib"
+cp -f "$GATE" "$tmp/missing-gate-lib/pr-review-gate"
+missing_lib_out="$(jq --arg c 'gh pr create --repo gastownhall/beads' '.tool_input.command=$c' "$CODEX_FIXTURE" | "$tmp/missing-gate-lib/pr-review-gate" 2>&1)"; missing_lib_rc=$?
+if [[ $missing_lib_rc -eq 0 && "$missing_lib_out" == *"missing scripts/lib/hook-payload.sh"* ]]; then
+  check "pr-review-gate reports a missing payload adapter honestly" 0 0
+else
+  printf '  FAIL  missing payload adapter behavior (rc=%s out=%s)\n' "$missing_lib_rc" "$missing_lib_out"; fail=$((fail+1))
+fi
 
 if (( have_codex )); then
   # Deny: upstream PR, no review log for HEAD.
   check "unreviewed, --repo named"  2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "Codex fixture, unreviewed named" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp" "$CODEX_FIXTURE")"
   check "unreviewed, -R named"      2 "$(run 'gh pr create -R gastownhall/beads --title x' "$tmp")"
   # The bypass -R has to close: an upstream PR opened from a checkout whose
   # remotes are NOT beads, where remote inference alone would wave it through.
@@ -111,6 +151,7 @@ if (( have_codex )); then
   printf '# fixture\n\n- base: `main`\n' > "$REVIEW_DIR/$sha.md"
   plant_redteam "$sha" main
   check "reviewed HEAD passes"      0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  check "Codex fixture, reviewed HEAD passes" 0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp" "$CODEX_FIXTURE")"
   check "reviewed via cd prefix"    0 "$(run "cd $tmp && gh pr create --repo gastownhall/beads" "$ROOT")"
   check "reviewed, quoted repo"     0 "$(run 'gh pr create --repo "gastownhall/beads" --title x' "$tmp")"
 

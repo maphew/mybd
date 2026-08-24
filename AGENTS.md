@@ -163,12 +163,17 @@ session is the builder — rounds then count across invocations, prior findings
 are re-injected for re-verification, and a clean rerun on an unchanged
 previously-failing commit is refused rather than trusted).
 
-`scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json`) blocks
-`gh pr create` until BOTH a review log and a passing red-team verdict exist for
-the **exact commit** proposed; amending re-arms it. It stands down when codex
-is not on PATH. To skip deliberately, prefix with `MYBD_SKIP_XVENDOR=1` (review
-half) and/or `MYBD_SKIP_REDTEAM=1` (red-team half) and say why in the handoff —
-each hatch skips only its own requirement. Smoke-test with
+`scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json` and
+`.codex/hooks.json`) blocks `gh pr create` until BOTH a review log and a
+passing red-team verdict exist for the **exact commit** proposed; amending
+re-arms it. It stands down when codex is not on PATH. Codex hook trust is
+per-machine and command-hash-specific: after changing `.codex/hooks.json`,
+review and trust the changed hooks in an interactive Codex `/hooks` screen,
+then run `scripts/check-codex-hook-trust`. A registered but untrusted, modified,
+disabled, or wrong-source hook does not count as active. To skip deliberately,
+prefix with `MYBD_SKIP_XVENDOR=1` (review half) and/or `MYBD_SKIP_REDTEAM=1`
+(red-team half) and say why in the handoff. Each hatch skips only its own
+requirement. Smoke-test with
 `scripts/test-pr-review-gate` and `scripts/test-red-team-gate`.
 
 This matters more as a contributor than it did as a maintainer: nobody here can
@@ -519,10 +524,11 @@ mybd-uqzt8; docs are the fallback, not the fix). The pieces:
   `--last N` / `--session <id>` / `--summary`. session-close-check runs it
   over the current session as its check 6; findings that recur should
   become a wrapper assertion, hook, or gitattribute — file a bead.
-- **`scripts/destructive-guard`** — PreToolUse(Bash) hook (wired in
-  `.claude/settings.json`) that blocks: `rm -r` on `.bare` paths, `rm -r`
-  composed with `git worktree list` output, repo-wide `-X theirs/ours`
-  merges, and checkout/restore takeovers of memory-bearing files. Inline
+- **`scripts/destructive-guard`** - PreToolUse shell hook (wired in
+  `.claude/settings.json` and `.codex/hooks.json`) that blocks: `rm -r` on
+  `.bare` paths, `rm -r` composed with `git worktree list` output, repo-wide
+  `-X theirs/ours` merges, and checkout/restore takeovers of memory-bearing
+  files. Inline
   escape hatches (`MYBD_ALLOW_BARE_DELETE=1`, `MYBD_ALLOW_WORKTREE_RM=1`,
   `MYBD_ALLOW_MEMORY_CLOBBER=1`) go on the command line so the excuse is in
   the transcript next to the act.
