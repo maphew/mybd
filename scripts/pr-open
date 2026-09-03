@@ -44,6 +44,8 @@
 #             5 red-team findings open, rounds remain (--redteam-no-fix).
 
 set -euo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Anchor on the MAIN checkout: a copy of this script running from a linked

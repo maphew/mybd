@@ -31,6 +31,8 @@
 #     is always set explicitly here.
 
 set -euo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 

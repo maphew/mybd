@@ -5,6 +5,8 @@
 # scripts/test-pr-review-gate.
 
 set -uo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RT="$ROOT/scripts/red-team"

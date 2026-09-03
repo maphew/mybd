@@ -166,7 +166,10 @@ previously-failing commit is refused rather than trusted).
 `scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json` and
 `.codex/hooks.json`) blocks `gh pr create` until BOTH a review log and a
 passing red-team verdict exist for the **exact commit** proposed; amending
-re-arms it. It stands down when codex is not on PATH. Codex hook trust is
+re-arms it. Scripts source `scripts/lib/brew-path.sh` to re-add linuxbrew to
+non-interactive PATHs (Bluefin's brew.sh is interactive-only since 2026-09);
+if codex is still missing on a host with `~/.codex`, the gate BLOCKS rather
+than standing down (mybd-zvups). Only a host with no codex at all stands down. Codex hook trust is
 per-machine and command-hash-specific: after changing `.codex/hooks.json`,
 review and trust the changed hooks in an interactive Codex `/hooks` screen,
 then run `scripts/check-codex-hook-trust`. A registered but untrusted, modified,

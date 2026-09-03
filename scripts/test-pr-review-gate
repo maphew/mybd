@@ -7,6 +7,8 @@
 # an unreviewed upstream PR must pass through untouched.
 
 set -uo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE="$ROOT/scripts/pr-review-gate"
@@ -214,8 +216,35 @@ if (( have_codex )); then
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
   check "amended HEAD re-arms gate" 2 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
 else
-  echo "  skip  deny cases (codex not on PATH; the gate stands down by design)"
-  check "no codex means no block"   0 "$(run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+  echo "  skip  deny cases (codex not installed on this host)"
+fi
+
+# Codex missing from PATH is two different situations (bead mybd-zvups):
+# a host that never had codex stands down; a host with ~/.codex is a broken
+# shell PATH and must BLOCK, because standing down there disarmed the gate
+# silently for every session on 2026-09-02. Simulate both with a PATH that
+# drops every directory holding a codex binary (re-linking the tools the gate
+# itself needs) and a bogus brew prefix so the shared probe cannot re-add it.
+mkdir -p "$tmp/nocodex-bin" "$tmp/home-codex/.codex" "$tmp/home-none"
+for t in bash jq git sed grep awk tr head tail cat dirname mktemp; do
+  src="$(command -v "$t" 2>/dev/null)" && [[ -n "$src" ]] && ln -sf "$src" "$tmp/nocodex-bin/$t"
+done
+nocodex_path="$tmp/nocodex-bin"
+while IFS= read -r d; do
+  [[ -n "$d" && ! -x "$d/codex" ]] && nocodex_path="$nocodex_path:$d"
+done < <(tr ':' '\n' <<<"$PATH")
+check "codex absent, ~/.codex present: blocks loudly" 2 \
+  "$(HOME="$tmp/home-codex" PATH="$nocodex_path" MYBD_BREW_PREFIX="$tmp/no-such-prefix" \
+     run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+check "codex absent, never configured: stands down" 0 \
+  "$(HOME="$tmp/home-none" PATH="$nocodex_path" MYBD_BREW_PREFIX="$tmp/no-such-prefix" \
+     run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
+# The shared probe must be able to REPAIR the PATH: with codex reachable only
+# through the brew prefix, the gate arms rather than blocking.
+if [[ -x /home/linuxbrew/.linuxbrew/bin/codex ]]; then
+  check "codex via brew prefix probe: gate arms (unreviewed blocks)" 2 \
+    "$(HOME="$tmp/home-none" PATH="$nocodex_path" MYBD_BREW_PREFIX=/home/linuxbrew/.linuxbrew \
+       run 'gh pr create --repo gastownhall/beads --title x' "$tmp")"
 fi
 
 echo
