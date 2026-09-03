@@ -2,6 +2,8 @@
 # check-beads-config - fail fast if bd is pointed at the wrong local DB.
 
 set -euo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 QUIET=0
 FIX=0

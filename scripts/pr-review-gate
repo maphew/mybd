@@ -22,7 +22,9 @@
 #   - no review log (.review-logs/<sha>.md) or no PASSING red-team verdict
 #     (.review-logs/<sha>.redteam.json, written by scripts/red-team) exists
 #     for the HEAD sha of any checkout the command plausibly runs in
-#   - codex is on PATH (no codex, no gate — it degrades instead of deadlocking)
+#   - codex is on PATH, or ~/.codex exists (codex configured but missing from
+#     PATH is a broken shell, so that BLOCKS; a host with neither degrades
+#     instead of deadlocking)
 #
 # Escape hatches: prefix the command with MYBD_SKIP_XVENDOR=1 (skips only the
 # cross-vendor review requirement) and/or MYBD_SKIP_REDTEAM=1 (skips only the
@@ -91,9 +93,29 @@ grep -qE '(^|[[:space:]])MYBD_SKIP_XVENDOR=1([^[:alnum:]]|$)' <<<"$hatch_zone" &
 grep -qE '(^|[[:space:]])MYBD_SKIP_REDTEAM=1([^[:alnum:]]|$)' <<<"$hatch_zone" && skip_rt=1
 (( skip_x && skip_rt )) && exit 0
 
-# Without codex there is no second vendor to consult, so the gate stands down
-# rather than blocking work it cannot offer a path through.
-command -v codex >/dev/null 2>&1 || exit 0
+# Without codex there is no second vendor to consult. On a host that never
+# had codex the gate stands down rather than blocking work it cannot offer a
+# path through. On a host that HAS codex configured (~/.codex exists) a missing
+# binary is a broken PATH, not a policy choice, and standing down would disarm
+# the gate silently - exactly what happened on 2026-09-02 when Bluefin made
+# /etc/profile.d/brew.sh interactive-only (bead mybd-zvups). The shared probe
+# repairs the common case; what it cannot repair, it refuses loudly.
+source "$SCRIPT_DIR/lib/brew-path.sh" 2>/dev/null || true
+if ! command -v codex >/dev/null 2>&1; then
+  if [[ -d "$HOME/.codex" ]]; then
+    cat >&2 <<MSG
+pr-review-gate: BLOCKED. codex is not on PATH but ~/.codex exists, so this host
+  is codex-configured and the cross-vendor gate cannot verify the PR.
+  Likely cause: a non-interactive shell without linuxbrew on PATH. Fix with
+    export PATH="\$PATH:/home/linuxbrew/.linuxbrew/bin"
+  and re-run. To open the PR without codex, put BOTH MYBD_SKIP_XVENDOR=1 and
+  MYBD_SKIP_REDTEAM=1 in front of the gh command and say why in the handoff.
+MSG
+    exit 2
+  fi
+  echo "pr-review-gate: codex not installed on this host; cross-vendor gate stands down" >&2
+  exit 0
+fi
 
 # Which checkouts might this run in? A leading `cd X &&`, an explicit `git -C X`,
 # and the session cwd. Any of them having a reviewed HEAD is enough.

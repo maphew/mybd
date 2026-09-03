@@ -50,6 +50,8 @@
 #   MYBD_REDTEAM_BD_CMD - run instead of `bd` when filing the exhaustion bead.
 
 set -euo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Anchor on the MAIN checkout, same as pr-open: the log must land where
