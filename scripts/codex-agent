@@ -22,7 +22,9 @@
 #
 # Extra flags are passed through to codex verbatim (e.g. -o FILE to capture
 # the final message, --json for JSONL events, --output-schema FILE for
-# structured output, -m/-c to override the tier defaults).
+# structured output). The tier model can be overridden with -m <model>
+# (or -c model='"<model>"'): when either is present among the pass-through
+# args, the wrapper omits its own -m instead of emitting a second one.
 #
 # Guard rails:
 #   - builder must target a linked worktree, never a main checkout
@@ -122,9 +124,28 @@ $last"
   fi
 fi
 
+# Let a caller escalate/override the tier's default model: a second -m
+# makes codex error ("cannot be used multiple times"), and -c model=...
+# is outranked by our own -m (mybd-cfex). Detect either among the
+# pass-through args and, if present, omit the wrapper's -m.
+caller_has_model=0
+model_args=("$@")
+for ((mi = 0; mi < ${#model_args[@]}; mi++)); do
+  case "${model_args[$mi]}" in
+    -m|--model) caller_has_model=1 ;;
+    --model=*) caller_has_model=1 ;;
+    -c|--config)
+      case "${model_args[$((mi + 1))]:-}" in
+        model=*) caller_has_model=1 ;;
+      esac
+      ;;
+  esac
+done
+
 case "$tier" in
   scout)
-    exec codex exec -s read-only -m gpt-5.6-terra \
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-terra)
+    exec codex exec -s read-only ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"medium"' --ephemeral "$@" ;;
   builder)
     # Go build caches from delegated builds stay under the target worktree,
@@ -138,9 +159,11 @@ case "$tier" in
       mkdir -p "$GOCACHE" "$GOTMPDIR"
       export GOCACHE GOTMPDIR
     fi
-    exec codex exec -s workspace-write -m gpt-5.6-terra \
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-terra)
+    exec codex exec -s workspace-write ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"medium"' "$@" ;;
   reviewer)
-    exec codex exec -s read-only -m gpt-5.6-sol \
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-sol)
+    exec codex exec -s read-only ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"high"' "$@" ;;
 esac
