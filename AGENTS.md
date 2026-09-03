@@ -467,6 +467,13 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
 - Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt
   text, or memory. If reliable metadata is unavailable, keep the
   `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
+- A Claude Code subagent inherits the parent's `CLAUDE_CODE_SESSION_ID`, so a
+  transcript lookup there would return the orchestrator's model, not the
+  subagent's. `agent-sig.sh` detects subagent shells via
+  `CLAUDE_CODE_CHILD_SESSION=1` and signs with the `unknown-*` placeholders
+  unless the orchestrator passes `AGENT_MODEL` / `AGENT_REASONING`
+  explicitly — the orchestrator knows which tier it spawned; the child
+  cannot see its own model. Covered by `scripts/test-agent-sig`.
 
 For Amp, run `scripts/agent-sig.sh amp` (auto-detected when
 `AMP_CURRENT_THREAD_ID` is set). Amp threads are server-resident (orb /
