@@ -21,6 +21,19 @@ When scripting over bd output, prefer `scripts/bdj <args>` over `bd <args>
 [object], empty -> []), ending the jq shape-guessing failures (retro F-004).
 For any counting, pass `-n 0` - bd listing commands silently cap at 100 rows.
 
+## Global conventions
+
+Cross-project agent policy (delegation tiers, Codex routing, the Workflow
+standing opt-in, worktree and stash cautions, non-interactive shell flags,
+signing format, GitHub etiquette, validation posture, session handoff) lives
+canonically in `~/.config/agents/AGENTS.md`. On generic policy that file wins;
+on repo specifics (scripts, paths, layout, bd/Dolt rules) this one does.
+
+Claude Code imports it via `~/.claude/CLAUDE.md`, Codex via the
+`~/.codex/AGENTS.md` symlink. **Amp and Kilo read only this file**, so those
+sessions must open `~/.config/agents/AGENTS.md` themselves before relying on
+any pointer below.
+
 ## Repository Layout
 
 The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo,
@@ -41,12 +54,11 @@ the remotes live in `.bare/config`.
 In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin`
 (the fork). Do not add a `gastownhall` remote to the cwd repo.
 
-**Never `rm -rf` a path that came out of `git worktree list`.** That list
-includes the bare repo itself (`.bare`), and a delete-loop over it destroys the
-object store for every worktree at once. Use `git worktree remove`, skip any
-entry flagged `bare`, and take a `git bundle create <file> --branches` snapshot
-before any bulk prune. Written down 2026-08-10 because exactly this happened;
-the bundle is what made it recoverable.
+**Never `rm -rf` a path that came out of `git worktree list`.** Here that list
+includes the bare repo itself (`.bare`), so a delete-loop over it destroys the
+object store for every worktree at once. Procedure and the `git bundle`
+snapshot rule: "Git worktrees" in `~/.config/agents/AGENTS.md`. Written down
+2026-08-10 because exactly this happened; the bundle made it recoverable.
 
 ### Worktree Location
 
@@ -112,9 +124,8 @@ If you cannot land — dirty tree, a decision you need the owner to make — say
 in the handoff **and** file a bead naming the branch. An unlanded branch that
 nothing points at is invisible to the cold-start path (`bd ready`).
 
-Worktrees do NOT isolate `git stash`: the stash stack is shared repo-wide.
-Agents working in parallel worktrees must not use bare `git stash` — use
-`git stash push -m "<branch>-<purpose>"` and apply by exact ref, or commit WIP.
+Never use bare `git stash` while parallel worktrees may be live: the stash
+stack is shared repo-wide. See "Git worktrees" in `~/.config/agents/AGENTS.md`.
 
 ## Contributing upstream
 
@@ -122,8 +133,8 @@ We open PRs against `gastownhall/beads` like any other contributor. We do not
 merge, close, label, or request-changes on anyone's PR, and we do not triage
 the upstream issue queue.
 
-Before opening a PR, check whether the work already exists — including in this
-machine's own unpushed state, which `gh pr list` cannot see:
+Preflight for duplicate work first (see "Cross-vendor review before a PR" in
+`~/.config/agents/AGENTS.md`). Here that means both of:
 
 ```bash
 bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
@@ -131,8 +142,7 @@ git -C bd-main log --all --oneline --since=3.days -- <path you are about to edit
 ```
 
 The path-scoped query matters: parallel sessions commit locally before pushing,
-so "is there an open PR for this?" and "is anyone already doing this?" are
-different questions.
+so `gh pr list` cannot see this machine's own unpushed state.
 
 ### Red-team + cross-vendor review before an upstream PR
 
@@ -145,8 +155,8 @@ scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
 It runs the preflight, then **`scripts/red-team`** (adversarial verification),
 then `codex-agent reviewer --diff` on the branch, and writes findings to
 `.worktrees/.review-logs/<head-sha>.md`. **Reconcile the review findings
-before posting** — ask of each "is this a regression or pre-existing?" A
-single reviewer's severity ranking is not a verdict.
+before posting** (see "Cross-vendor review before a PR" in
+`~/.config/agents/AGENTS.md`).
 
 `scripts/red-team` spawns an adversarial agent in a throwaway sandbox worktree
 whose only job is to break the change: write failing tests against the new
@@ -184,9 +194,9 @@ wave a rough PR through.
 
 ### After a PR is open
 
-Our own open PRs are the contribution surface — they do not merge themselves.
-Keep them rebased and green, respond to review, and close ones you no longer
-want rather than leaving them to rot.
+Our own open PRs are the contribution surface. Upkeep policy (keep them
+rebased and green, respond to review, close what you no longer want): see
+"Cross-vendor review before a PR" in `~/.config/agents/AGENTS.md`.
 
 One contributor-scoped patrol exists (2026-08-12, replacing nothing from the
 maintainer era): **`scripts/index-babysit`**, a zero-token systemd user timer
@@ -222,9 +232,10 @@ morning digest. Smoke-test with `scripts/test-fleet`; validate a night with
 
 ## Validation
 
-Run the suite locally before proposing a change. There is no queue and no
-babysitter; long runs block the session that started them, so scope tests to
-what you touched and run the full suite when it is worth the wait.
+Run the suite locally before proposing a change (see "Validation" in
+`~/.config/agents/AGENTS.md`). There is no queue and no babysitter here: long
+runs block the session that started them, so scope tests to what you touched
+and run the full suite when it is worth the wait.
 
 Test runs leak `dolt sql-server` processes and temp trees into `$TMPDIR`.
 Nothing reaps them automatically any more — check for and clean up your own
@@ -238,18 +249,13 @@ du -sh "${TMPDIR:-/tmp}"/beads-bd-tests-* 2>/dev/null
 Only kill current-user servers rooted in the suite's own temp-dir patterns, and
 never one younger than a run that might still be live.
 
-On hosts where /tmp is a small tmpfs (observed 2026-07-31: 20G tmpfs at 78%,
-linker died with 'No space left on device' - a failure that looks nothing like
-a disk problem), point Go's scratch space at the home disk before heavy builds
-or test runs:
-
-```bash
-export GOTMPDIR="$HOME/.cache/gotmp" GOCACHE="$HOME/.cache/gocache"
-mkdir -p "$GOTMPDIR" "$GOCACHE"
-```
-
-scripts/codex-agent already does this for delegated builds; in-session runs
-must do it themselves. Sweep beads-bd-tests-* dirs older than a day.
+On hosts where /tmp is a small tmpfs, point Go's scratch space at the home
+disk before heavy builds or test runs; exact `GOTMPDIR`/`GOCACHE` commands are
+in "Shell hygiene" in `~/.config/agents/AGENTS.md`. Observed here 2026-07-31:
+20G tmpfs at 78%, linker died with 'No space left on device', a failure that
+looks nothing like a disk problem. `scripts/codex-agent` already does this for
+delegated builds; in-session runs must do it themselves. Sweep
+`beads-bd-tests-*` dirs older than a day.
 
 ### Windows / Daily Housekeeping
 
@@ -325,32 +331,19 @@ the answer in the session report.
 
 ## Agent Delegation: tier subagent models by task complexity
 
-**Owner directive (maphew, 2026-07-03).** Sessions start on a smart model to
-understand the problem and build the plan; execution is then delegated to
-subagents on the cheapest model adequate for each piece. Pick the tier
-deliberately — do not default everything to the session model.
+Owner directive (maphew, 2026-07-03; made global 2026-08-12). Tier
+definitions, what stays in the orchestrator session, and the rules of thumb
+(precise over vague, escalate rather than retry, never set
+`CLAUDE_CODE_SUBAGENT_MODEL`): see "Delegation: tier subagent models by task
+complexity" in `~/.config/agents/AGENTS.md`.
 
-Named tiers live in `.claude/agents/`:
+Repo specifics:
 
-- **scout** (GPT-5.6 Terra, medium reasoning, read-only) — searches, file
-  inventories, "where is X", summarizing files, running read-only bd/git
-  commands or tests and reporting output verbatim. Prefer calling
-  `scripts/codex-agent scout -o <file> "<task>" </dev/null` directly from the
-  orchestrator.
-- **builder** (sonnet, can edit) — well-scoped implementation with a clear
-  spec: exact files named, acceptance criteria stated. Give it a spec, not a
-  problem.
-- **reviewer** (opus, read-only) — correctness review of diffs and designs
-  before integration, especially builder output.
-
-Keep in the orchestrator session: design decisions, ambiguous debugging,
-anything where the spec doesn't exist yet.
-
-Rules of thumb:
-- Prefer several precisely-scoped delegations over one vague one.
-- Escalate rather than retry: if a scout/builder result is wrong, redo it at a
-  higher tier or in-session instead of re-spawning the same tier.
-- Do **not** set `CLAUDE_CODE_SUBAGENT_MODEL` — it flattens this tiering.
+- The named tiers live in `.claude/agents/`. **scout** here runs GPT-5.6 Terra
+  at medium reasoning, read-only, and is best invoked directly as
+  `scripts/codex-agent scout -o <file> "<task>" </dev/null`; in this repo scout
+  work means searches, file inventories, "where is X", summarizing files, and
+  running read-only bd/git commands or tests and reporting output verbatim.
 - Subagents share the cwd unless spawned with `isolation=worktree`. Spawn any
   subagent that will commit with `isolation=worktree` by default. A committing
   subagent that finds itself in the root checkout must stop and report.
@@ -373,89 +366,69 @@ scripts/codex-agent reviewer --diff --base main             # structured review 
 Agent tool and not a Workflow. Honour an explicit "no codex" for the turn; do
 not infer one from a restriction on Claude subagents.
 
-When to route to Codex instead of a Claude subagent:
+When to route here, and the baseline rules (explicit sandbox mode,
+`</dev/null` when scripting, `-o` capture, resume rather than re-explain,
+generous waits, never watch CI in-session): see "Cross-vendor delegation:
+Codex CLI" in `~/.config/agents/AGENTS.md`. The wrapper enforces explicit
+sandbox mode; never `danger-full-access` in this repo. Repo-specific rules on
+top of that, the first also enforced by the wrapper:
 
-- **Second opinion across model vendors** — the highest-value use, and required
-  before an upstream PR (see above).
-- **Quota relief** — Codex bills to the ChatGPT plan. Its tokens do NOT count
-  toward workflow `budget.spent()`, so `log()` Codex delegations in workflows.
-- **Long mechanical work** that would otherwise burn session context.
-
-Rules (the wrapper enforces the first two):
-
-- Sandbox mode must always be set explicitly (`read-only` / `workspace-write` —
-  never `danger-full-access` in this repo).
 - `builder` must target a linked worktree via `-C`; the wrapper exits 3 on a
   main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
-- Close stdin (`</dev/null`) when scripting. Capture results with `-o <file>`,
-  `--json`, or `--output-schema <file>`.
-- Delegate final messages are capped by a wrapper preamble (retro F-005):
-  summary under 30KB in the final message, full detail to the `-o` file -
-  then grep the file on disk instead of re-reading it whole.
-- Continue a session with `codex exec resume <session-id>` rather than
-  re-explaining context. Scout runs are `--ephemeral` and cannot be resumed.
+- Capture with `-o <file>`, `--json`, or `--output-schema <file>`. Delegate
+  final messages are capped by a wrapper preamble (retro F-005): summary under
+  30KB in the final message, full detail to the `-o` file, then grep the file
+  on disk instead of re-reading it whole.
+- Scout runs are `--ephemeral` and cannot be resumed.
+- Codex tokens do NOT count toward workflow `budget.spent()`, so `log()` Codex
+  delegations in workflows.
 - Commits by a Codex delegate follow the same signing convention; generate the
   trailer with
   `AGENT_MODEL=<model> AGENT_REASONING=<effort> scripts/agent-sig.sh codex --trailer`.
 - Codex runs trigger `bd prime` on session start, and bd/dolt must stay serial:
   do not fan out parallel Codex runs against the coordination repo.
-- Waiting is the dominant Codex token cost here (retro F-003): use generous
-  subagent wait timeouts (minutes, not 30s), batch waits for parallel children,
-  never watch CI in-session, and fetch large CI logs to disk once then grep
-  locally.
+- Waiting is the dominant Codex token cost here (retro F-003): minutes, not
+  30s, and batch waits for parallel children.
 
 ## Workflow Orchestration: standing opt-in
 
 **Owner directive (maphew, 2026-07-03): multi-agent Workflow orchestration is
-pre-authorized for every substantive task in this repo.** Treat this section as
-the durable user opt-in the Workflow tool requires.
+pre-authorized for every substantive task in this repo.** That directive plus
+"Workflow orchestration: standing opt-in" in `~/.config/agents/AGENTS.md` is
+the durable user opt-in the Workflow tool requires; the global section carries
+when to reach for a workflow, the budget rules (+200k default, a soft
+performance target and not a reliability ceiling, shared `budget.spent()`), the
+stage-aggregate validation rule, `agent()` tiering, and the "no workflow"
+override.
 
-- Reach for a workflow whenever a task fans out, needs adversarial
-  verification, or benefits from per-agent model/effort control. Work solo on
-  conversational turns, single lookups, and trivial mechanical edits.
-- **Default token budget: +200k per substantive task.** A "+Nk" directive in
-  the current prompt overrides it. Workflow scripts must self-enforce:
-  `const TARGET = budget.total ?? 200_000`.
-- **The 200k default is a soft performance target, not a reliability ceiling.**
-  Overrunning it to complete a required verification stage is correct; silently
-  *skipping* a required stage to stay under target is the failure mode.
-  - `budget.spent()` is shared across ALL workflows in the turn. A later
-    workflow must subtract earlier spend explicitly.
-  - **Validate stage aggregates before acting on them.** `parallel()` and
-    `pipeline()` resolve failed agents to `null`. Always `.filter(Boolean)`,
-    schema-check shape before mutating stages, and `log()` how many items were
-    dropped.
-- Tier `agent()` calls per the delegation policy: `model: 'haiku',
-  effort: 'low'` for mechanical stages; inherit for design/judge/verify.
-- Run bd/dolt operations serially inside workflows.
-- A *current* prompt saying "no workflow" / "keep it cheap" wins for that turn.
+Repo addendum: **run bd/dolt operations serially inside workflows.** Parallel
+bd commands can leave Git helper processes or embedded-Dolt locks behind.
 
 When a bead is correlated with a gh issue or PR, check for drift.
 
 When upstream beads work changes product surface area, read
 [bd-main/engdocs/PROJECT_CHARTER.md](bd-main/engdocs/PROJECT_CHARTER.md).
 
-Assume you are not working alone.
-Use git worktrees by default.
+Assume you are not working alone, and use git worktrees by default: see
+"Working alongside others" and "Git worktrees" in `~/.config/agents/AGENTS.md`.
+
 Write reports as md only — no html twins (policy 2026-07-07; read long Markdown
 with [`mdo`](https://github.com/maphew/mdo)). Reports are tracked in git
 deliberately: they are the retroactive "why" record behind decisions that commit
 messages don't carry.
 
-Answer 'why' when opening a PR.
-
-When creating or editing GitHub PR, issue, comment, or review bodies:
-- Write Markdown to a file and use `gh ... --body-file`; do not pass multiline
-  bodies via inline shell strings.
-- Use `#1234` or `owner/repo#1234`, not `GH#1234`, in GitHub-facing text.
-- Run `<mybd-root>/scripts/gh-body-lint <body-file>` before posting.
+GitHub etiquette (answer 'why' when opening a PR, bodies to a file with
+`gh ... --body-file`, autolink-safe references): see "GitHub" in
+`~/.config/agents/AGENTS.md`. Here: write `#1234` or `owner/repo#1234`, never
+`GH#1234`, and run `<mybd-root>/scripts/gh-body-lint <body-file>` before
+posting.
 
 ### Signing
 
-- Sign GitHub comments using:
-  `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
-- Sign commits with a trailer:
-  `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
+Signature format and the "never guess `{model}`/`{reasoning}`, keep the
+`unknown-*` placeholders" rule: see "Signing" in `~/.config/agents/AGENTS.md`.
+Repo specifics:
+
 - Generate the line with `<mybd-root>/scripts/agent-sig.sh` (add `--trailer`).
 - **Run it via the Bash tool / Git Bash, never the PowerShell tool.** The
   `{reasoning}` field is read from `CLAUDE_EFFORT`, exported only into
@@ -464,9 +437,8 @@ When creating or editing GitHub PR, issue, comment, or review bodies:
   ```bash
   scripts/agent-sig.sh --trailer
   ```
-- Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt
-  text, or memory. If reliable metadata is unavailable, keep the
-  `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
+- The model cache counts as a "default" for the do-not-infer rule: never sign
+  from it.
 - A Claude Code subagent inherits the parent's `CLAUDE_CODE_SESSION_ID`, so a
   transcript lookup there would return the orchestrator's model, not the
   subagent's. `agent-sig.sh` detects subagent shells via
@@ -556,18 +528,11 @@ if its guardrail is removed.
 
 ## Non-Interactive Shell Commands
 
-**ALWAYS use non-interactive flags** with file operations. `cp`, `mv`, and `rm`
-may be aliased to `-i` on some systems, hanging the agent on a y/n prompt.
-
-```bash
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-rm -rf directory            # NOT: rm -r directory
-```
-
-Others that may prompt: `scp`/`ssh` (`-o BatchMode=yes`), `apt-get` (`-y`),
-`brew` (`HOMEBREW_NO_AUTO_UPDATE=1`).
+**ALWAYS use non-interactive flags**: `cp -f`, `mv -f`, `rm -f`, `rm -rf`,
+`ssh`/`scp -o BatchMode=yes`, `apt-get -y`, `HOMEBREW_NO_AUTO_UPDATE=1`. `cp`,
+`mv`, and `rm` may be aliased to `-i` on some systems and will hang the agent
+on a y/n prompt. Full list: see "Shell hygiene" in
+`~/.config/agents/AGENTS.md`.
 
 ## Documentation Regeneration
 
@@ -582,15 +547,13 @@ tree and produces ~500 lines of spurious churn versus CI. Set
 The Session Completion protocol covers the **warm** handoff (prose a human
 reads). This covers the **cold** handoff: the next actor is often a fresh agent
 that reads only `bd prime` + `bd ready`. Prose in a closed bead or a report is
-invisible to it. Before closing a session, self-ask these three:
-
-1. **What did this session learn that changes how a future agent works — and is
-   it in `bd remember` (surfaced at `bd prime`), not only in a report?**
-2. **Is every deliverable/report this session produced reachable from an OPEN
-   bead or a memory?** A pointer that lives only in a *closed* bead is a smell.
-   **A branch is a deliverable.**
-3. **Does any bead I touched say "after / gated-on / once X lands" in prose but
-   lack a dependency edge?** Prose ordering is invisible to `bd ready`.
+invisible to it. Before closing, self-ask the three questions from "Session
+handoff" in `~/.config/agents/AGENTS.md`, read against bd: learnings go in
+`bd remember` (surfaced at `bd prime`), not only in a report; every
+deliverable, **a branch included**, is reachable from an OPEN bead or a memory
+(a pointer only in a *closed* bead is a smell); and prose ordering like "after
+/ gated-on / once X lands" carries a real dependency edge, because prose is
+invisible to `bd ready`.
 
 A warn-only mechanical backstop catches the cheap omissions. It never blocks:
 
