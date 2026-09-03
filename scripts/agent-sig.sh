@@ -45,21 +45,29 @@ case "$runtime" in
     # (claude-fable-5, claude-opus-4-7); strip it since runtime is already
     # "claude". CLAUDE_EFFORT tracks /effort; under Fable's `auto` it may
     # report a resolved level rather than the literal "auto" - sign as-is.
-    if [ -z "$model" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-      # Locate the transcript by its globally-unique session id. Claude Code
-      # stores it under a project dir derived from the launch cwd; rebuilding
-      # that path from $(pwd) breaks when agent-sig runs from a worktree or a
-      # subdirectory, so glob across every project dir and take the newest.
-      f=$(ls -t "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl 2>/dev/null | head -1 || true)
-      if [ -n "$f" ] && [ -r "$f" ]; then
-        # Last real assistant-message model. Skip "<synthetic>" (interrupt and
-        # placeholder messages); it can be the final entry right after a user
-        # interrupt and would otherwise win.
-        model=$(jq -r 'select(.message.model and .message.model != "<synthetic>") | .message.model' "$f" 2>/dev/null | tail -1 || true)
-        model=${model#claude-}
+    # A subagent inherits the parent's CLAUDE_CODE_SESSION_ID, so a transcript
+    # lookup here would return the orchestrator's model, not the subagent's
+    # (mybd-iqsag: a Sonnet builder signed as opus-5-high). Subagent shells
+    # carry CLAUDE_CODE_CHILD_SESSION=1; skip the lookup there and rely only
+    # on AGENT_MODEL / AGENT_REASONING, since a confidently wrong signature is
+    # worse than the unknown-* placeholder.
+    if [ "${CLAUDE_CODE_CHILD_SESSION:-}" != "1" ]; then
+      if [ -z "$model" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+        # Locate the transcript by its globally-unique session id. Claude Code
+        # stores it under a project dir derived from the launch cwd; rebuilding
+        # that path from $(pwd) breaks when agent-sig runs from a worktree or a
+        # subdirectory, so glob across every project dir and take the newest.
+        f=$(ls -t "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl 2>/dev/null | head -1 || true)
+        if [ -n "$f" ] && [ -r "$f" ]; then
+          # Last real assistant-message model. Skip "<synthetic>" (interrupt and
+          # placeholder messages); it can be the final entry right after a user
+          # interrupt and would otherwise win.
+          model=$(jq -r 'select(.message.model and .message.model != "<synthetic>") | .message.model' "$f" 2>/dev/null | tail -1 || true)
+          model=${model#claude-}
+        fi
       fi
+      effort="${effort:-${CLAUDE_EFFORT:-}}"
     fi
-    effort="${effort:-${CLAUDE_EFFORT:-}}"
     ;;
   codex)
     # Prefer the live thread id when available. On Windows, Codex stores cwd in

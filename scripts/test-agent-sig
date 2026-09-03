@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Smoke test for scripts/agent-sig.sh's Claude subagent handling (mybd-iqsag).
+#
+# A Claude Code subagent inherits the parent's CLAUDE_CODE_SESSION_ID, so a
+# transcript lookup keyed on that id would return the orchestrator's model.
+# Subagent shells carry CLAUDE_CODE_CHILD_SESSION=1 and no CLAUDE_EFFORT;
+# agent-sig must skip the transcript lookup there and rely only on
+# AGENT_MODEL / AGENT_REASONING, never on CLAUDE_EFFORT (which if present
+# would also be the parent's). Run from anywhere; exits non-zero on the
+# first failed expectation.
+
+set -euo pipefail
+
+SIG="$(cd "$(dirname "$0")" && pwd)/agent-sig.sh"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# 1. Child session, no overrides: placeholders only, no transcript lookup.
+sig=$(CLAUDECODE=1 CLAUDE_CODE_SESSION_ID="not-a-real-session-id" \
+  CLAUDE_CODE_CHILD_SESSION=1 \
+  env -u AGENT_MODEL -u AGENT_REASONING -u CLAUDE_EFFORT "$SIG" --trailer 2>/dev/null)
+case "$sig" in
+  "Agent-Signature: claude-unknown-model-unknown-reasoning on behalf of "*) : ;;
+  *) fail "child session with no overrides: got '$sig'" ;;
+esac
+
+# 2. Child session with explicit AGENT_MODEL / AGENT_REASONING: overrides win.
+sig=$(CLAUDECODE=1 CLAUDE_CODE_SESSION_ID="not-a-real-session-id" \
+  CLAUDE_CODE_CHILD_SESSION=1 AGENT_MODEL=sonnet-5 AGENT_REASONING=medium \
+  env -u CLAUDE_EFFORT "$SIG" --trailer 2>/dev/null)
+[ "$sig" = "Agent-Signature: claude-sonnet-5-medium on behalf of $(git config user.name 2>/dev/null || whoami)" ] \
+  || fail "child session with overrides: got '$sig'"
+
+# 3. Non-child (parent-like) path is unchanged: CLAUDE_EFFORT still feeds
+#    effort when AGENT_REASONING is unset (transcript itself is not
+#    fabricated here; the session id below has no transcript on disk, so
+#    model still falls back to the placeholder).
+sig=$(CLAUDECODE=1 CLAUDE_CODE_SESSION_ID="not-a-real-session-id" CLAUDE_EFFORT=high \
+  env -u CLAUDE_CODE_CHILD_SESSION -u AGENT_MODEL -u AGENT_REASONING "$SIG" --trailer 2>/dev/null)
+case "$sig" in
+  "Agent-Signature: claude-unknown-model-high on behalf of "*) : ;;
+  *) fail "non-child path: expected CLAUDE_EFFORT to feed reasoning, got '$sig'" ;;
+esac
+
+echo "ok: all agent-sig smoke tests passed"
