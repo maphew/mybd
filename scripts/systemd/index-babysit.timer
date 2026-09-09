@@ -1,0 +1,10 @@
+[Unit]
+Description=Run index-babysit every 30 minutes
+
+[Timer]
+OnCalendar=*:09/30
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

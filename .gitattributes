@@ -1,3 +1,13 @@
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+
+# Memory-bearing files: force a visible conflict instead of a silent text
+# auto-merge (bead mybd-uqzt8). merge=binary needs no git config: when both
+# sides changed, git keeps OURS in the worktree and reports a conflict, so a
+# merge can never silently interleave or drop one side's lines from
+# append-only memory. Resolve by hand, keeping both sides' additions.
+retro/*.tsv merge=binary
+retro/findings.md merge=binary
+MEMORY.md merge=binary
+memory/** merge=binary

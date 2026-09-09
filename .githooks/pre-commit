@@ -42,6 +42,23 @@ abs_path() {
   esac
 }
 
+# --- conflict-marker guard (ALL worktrees; bead mybd-uqzt8) -----------------
+# Conflict markers have survived merge resolution into commits before; that
+# is never a warn. Runs before the linked-worktree early-exit below on
+# purpose - a marker is as wrong in a topic worktree as in the root. Uses
+# git's own detector (diff --check "leftover conflict marker"), which
+# respects conflict-marker-size attributes and ignores e.g. Markdown
+# `=======` underlines that a naive grep would flag.
+if [ "${MYBD_ALLOW_CONFLICT_MARKERS:-0}" != "1" ]; then
+  _markers="$(git diff --cached --check 2>/dev/null | grep 'leftover conflict marker' || true)"
+  if [ -n "$_markers" ]; then
+    echo "pre-commit: leftover conflict marker(s) staged - resolve them before committing:" >&2
+    echo "$_markers" >&2
+    echo "  (deliberate commit of literal markers: MYBD_ALLOW_CONFLICT_MARKERS=1 git commit ...)" >&2
+    exit 1
+  fi
+fi
+
 git_dir="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null \
   || abs_path "$(git rev-parse --git-dir)")"
 common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null \

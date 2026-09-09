@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# test-codex-agent-model - regression test for bead mybd-cfex: a caller
+# passing -m/--model or -c model=... to scripts/codex-agent must be able to
+# override the wrapper's tier default instead of colliding with it.
+#
+#   (a) no override -> wrapper emits its own -m <tier-default>
+#   (b) caller -m <model> -> exactly one -m, the caller's value
+#   (c) caller -c model=... -> wrapper omits its own -m entirely
+#
+# A PATH-shimmed `codex` just echoes its argv (one token per line) so the
+# test can inspect exactly what the wrapper would have invoked, without
+# ever calling the real Codex CLI.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
+
+tmp="$(mktemp -d)"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+stubdir="$tmp/stub-bin"
+mkdir -p "$stubdir"
+cat >"$stubdir/codex" <<'EOF'
+#!/bin/sh
+for a in "$@"; do printf '%s\n' "$a"; done
+EOF
+chmod +x "$stubdir/codex"
+
+# codex-agent scout is read-only/ephemeral: no worktree guard, no bd prime,
+# safe to run directly from the repo checkout with only PATH doctored.
+run_scout() {
+  PATH="$stubdir:$PATH" "$root/scripts/codex-agent" scout "$@" "test prompt"
+}
+
+count_flag() {
+  # count_flag <argv-file> <flag> -> number of lines equal to <flag>
+  grep -c -x -- "$2" "$1" || true
+}
+
+# ---------------------------------------------------------------------------
+# (a) no override: wrapper emits exactly one -m with the tier default
+# ---------------------------------------------------------------------------
+out_a="$tmp/out-a"
+run_scout >"$out_a" 2>"$tmp/err-a"
+if [ "$(count_flag "$out_a" -m)" = 1 ] && grep -q -x 'gpt-5.6-terra' "$out_a"; then
+  pass "no override: exactly one -m gpt-5.6-terra"
+else
+  fail "no override: expected exactly one -m gpt-5.6-terra, got: $(cat "$out_a")"
+fi
+
+# ---------------------------------------------------------------------------
+# (b) caller -m gpt-5.6-sol: exactly one -m, caller's value wins
+# ---------------------------------------------------------------------------
+out_b="$tmp/out-b"
+run_scout -m gpt-5.6-sol >"$out_b" 2>"$tmp/err-b"
+if [ "$(count_flag "$out_b" -m)" = 1 ] && grep -q -x 'gpt-5.6-sol' "$out_b" \
+  && ! grep -q -x 'gpt-5.6-terra' "$out_b"; then
+  pass "caller -m: exactly one -m gpt-5.6-sol, no wrapper default leaked"
+else
+  fail "caller -m: expected exactly one -m gpt-5.6-sol, got: $(cat "$out_b")"
+fi
+
+# ---------------------------------------------------------------------------
+# (c) caller -c model=...: wrapper omits its own -m entirely
+# ---------------------------------------------------------------------------
+out_c="$tmp/out-c"
+run_scout -c 'model="gpt-5.6-terra"' >"$out_c" 2>"$tmp/err-c"
+if [ "$(count_flag "$out_c" -m)" = 0 ]; then
+  pass "caller -c model=...: wrapper -m omitted"
+else
+  fail "caller -c model=...: expected no wrapper -m, got: $(cat "$out_c")"
+fi
+
+if [ "$fails" -eq 0 ]; then
+  echo "All codex-agent model-override tests passed."
+  exit 0
+else
+  echo "$fails codex-agent model-override test(s) failed." >&2
+  exit 1
+fi

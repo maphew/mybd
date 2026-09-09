@@ -1,97 +1,39 @@
 {
   "hooks": {
-    "PostToolUse": [
+    "SessionStart": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code post-task'",
-            "type": "command"
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/session-start-stamp\""
           }
-        ],
-        "matcher": "Task"
+        ]
       },
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code post-todo'",
-            "type": "command"
+            "type": "command",
+            "command": "bd prime --hook-json"
           }
-        ],
-        "matcher": "TodoWrite"
+        ]
       }
     ],
     "PreToolUse": [
       {
+        "matcher": "Bash",
         "hooks": [
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code pre-task'",
-            "type": "command"
-          }
-        ],
-        "matcher": "Task"
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code session-end'",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "bash scripts/session-start-stamp",
-            "type": "command"
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-review-gate\""
           },
           {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then printf \"%s\\n\" \"{\\\"systemMessage\\\":\\\"\\\\n\\\\nEntire CLI is enabled but not installed or not on PATH.\\\\nInstallation guide: https://docs.entire.io/cli/installation#installation-methods\\\"}\"; exit 0; fi; exec entire hooks claude-code session-start'",
-            "type": "command"
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/destructive-guard\""
           }
-        ],
-        "matcher": ""
-      },
-      {
-        "hooks": [
-          {
-            "command": "bd prime --hook-json",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
+        ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code stop'",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "command": "sh -c 'if ! command -v entire \u003e/dev/null 2\u003e\u00261; then exit 0; fi; exec entire hooks claude-code user-prompt-submit'",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
-    ]
-  },
-  "permissions": {
-    "deny": [
-      "Read(./.entire/metadata/**)"
     ]
   }
 }

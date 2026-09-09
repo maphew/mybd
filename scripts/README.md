@@ -1,421 +1,278 @@
-# Upstream triage + review scripts
+# scripts/
 
-Tooling for managing the firehose of issues + PRs on `gastownhall/beads`. Two
-loops: **triage** (decide what to do) and **review** (do the PR work, resumable
-across machines).
+Helper scripts for the mybd coordination repo.
 
-The workflow is split into three layers by **output audience** (v2 redesign,
-2026-07-07, after the v1 experiment drowned readers in agent-written text):
+> **2026-08-10.** 55 scripts were removed here when maphew stepped down as a
+> Beads maintainer: the whole upstream-triage lane (`tri-*`), the PR merge/close
+> babysitter (`pr-babysit`, `pr-handoff`, `pr-close-handoff`), the local
+> verification queue (`verify-*`), the bisect lane (`bisect-*`), the unattended
+> model lane (`solo-*`), `reap-test-debris`, and their installers, tests, and
+> systemd unit templates. All five systemd user timers were stopped and
+> disabled. They assumed merge rights on `gastownhall/beads` and had no job
+> left. Git history has them if one is ever needed again.
 
-1. **Mechanical sync** (`tri-pull`, `tri-sync`, `tri-daily`, labels) - posts
-   no text anywhere; runs freely, cron-safe.
-2. **Classification** (`/triage` command in Claude Code) - dispositions and
-   one-line reasons into bd labels/notes, plus one short digest per run under
-   `reports/triage/`. Never posts text upstream.
-3. **Publication** (`tri-submit`) - the only path that posts agent-drafted
-   text to upstream GitHub. Word-budgeted, distilled into a separate
-   `NNNN.post.md`, and gated behind interactive terminal confirmation so
-   unattended agents cannot post.
+Most scripts are Bash. On Windows, run them through Git Bash or use the `.ps1`
+wrapper beside the extensionless file. `scripts/agent-sig.sh` is deliberately
+Bash-only — see below.
 
-The old blanket `MYBD_ENABLE_TRIAGE=1` gate is gone; the gate now sits
-exactly where the risk is (text publication), not on the whole toolkit.
+## Contributing upstream
 
-On Windows, do not invoke extensionless scripts directly from PowerShell. Use
-the matching `.ps1` wrapper, for example `scripts/tri-daily.ps1`, or run the
-extensionless script through Git Bash.
+### `pr-open`
 
-## Daily workflow
-
-```
-1. tri-pull + tri-sync          # or /triage in Claude Code, which wraps both,
-     classifies each stub (tri:* label + one-line reason), and writes a short
-     digest to reports/triage/YYYY-MM-DD.md
-2. review the digest / bd ready # confirm or flip dispositions:
-     close / defer / claim / human / needs-info
-3. tri-review <id>              # for claimed PRs: worktree + scaffolds + checks
-4. edit pr-reviews/NNNN.md      # full analysis, stays local
-5. distill pr-reviews/NNNN.post.md   # <=150 words, the only text posted
-6. tri-submit <id> --approve    # budget-lint + confirm at terminal + post
-                                #   + close bd + label upstream
-
-For non-PR triage stubs: tri-close <id> [--reason=...]
-```
-
-Re-running `tri-pull` daily is idempotent. It only mirrors items lacking the
-`triaged` label upstream and skips any already in bd (matched by `external_ref`).
-
-Pair with `tri-sync` (below) to also auto-close bd stubs whose upstream item
-has since been merged or closed.
-
-## tri-daily (unattended Layer 2 wrapper)
+Upstream preflight plus cross-vendor review, before a PR exists.
 
 ```bash
-scripts/tri-daily                         # run tri-pull + tri-sync once
-scripts/tri-daily --pull-only             # only mirror new items in
-scripts/tri-daily --sync-only             # only close upstream-terminal stubs
-scripts/tri-daily --verbose               # print the same summary it logs
-scripts/tri-install-cron                  # install a daily cron entry (06:17 local time)
-scripts/tri-install-cron --schedule "45 5 * * *"
+scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
 ```
 
-`tri-daily` is the practical machine-bound unattended path for Layer 2. It is
-designed for cron:
+Runs `bd-main/scripts/pr-preflight.sh --search` (is there already an open PR for
+this?), then `codex-agent reviewer --diff` on the branch, writing findings to
+`.worktrees/.review-logs/<head-sha>.md`.
 
-- silent on success when nothing changed
-- appends a one-line summary to `${XDG_STATE_HOME:-~/.local/state}/mybd/tri-daily.log`
-  when `tri-pull` creates new stubs or `tri-sync` auto-closes stale ones
-- appends full diagnostics and exits non-zero on failures (`gh` auth/rate
-  limit, network, command errors)
+**Reconcile the findings yourself before posting.** A single reviewer's severity
+ranking is not a verdict — ask of each finding "is this a regression, or
+pre-existing behaviour?" Note the pass in the PR body.
 
-`tri-install-cron` installs or replaces a single tagged crontab entry that
-`cd`s into this checkout and runs `scripts/tri-daily` once per day. This is
-intentionally local-machine only; if you rotate between machines, install it on
-the one that has working `gh auth`.
-
-## tri-pull
+Preflight answers "is there an open PR for this?", not "is anyone already doing
+this?" For the second question, query the file you are about to edit:
 
 ```bash
-scripts/tri-pull              # full pass: issues + PRs, limit 100 each
-scripts/tri-pull --limit 30   # smaller batch
-scripts/tri-pull --prs-only
-scripts/tri-pull --issues-only
-scripts/tri-pull --dry-run    # preview
+git -C bd-main log --all --oneline --since=3.days -- <path>
 ```
 
-Each created bd issue:
-- `external_ref`: `gh-pr-NNNN` / `gh-iss-NNNN` — the structured upstream link
-- `title`: the upstream title verbatim
-- `description`: URL, author, created date, labels, draft flag, decision options
-- `priority`: heuristic from title/body/size/age/review state
-- `type`: `bug` if title starts `fix(`/`fix:`, `feature` if `feat(`/`feat:`, else `task`
+### `pr-review-gate`
 
-Additional Layer 2 behavior now shipped in `tri-pull`:
-- smarter default priority (`P0`..`P4`) for fresh bugs/perf work vs drafts, stale conflicts, and very large changes
-- dependency linking for stacked PRs (`stacks on #NNNN`, `depends on #NNNN`) and PRs that close issues
-- warning pass for recently closed stubs whose upstream item still lacks the `triaged` label
+A `PreToolUse` hook (wired in `.claude/settings.json`) that blocks `gh pr create`
+against `gastownhall/beads` until a review log exists for the **exact commit**
+being proposed. Amending re-arms it — the log vouches for a commit, not a
+branch. It stands down when `codex` is not on PATH.
 
-The classifier is still heuristic. It should get `bd ready` closer to manual
-triage order, not replace human judgment.
+Skip deliberately with `MYBD_SKIP_XVENDOR=1` prefixed to the command, and say
+why in the handoff — in the command line, so the excuse sits next to the PR it
+excused. Smoke-test: `scripts/test-pr-review-gate`.
 
-## tri-sync
+### `gh-body-lint`
+
+Guards GitHub PR/comment/review Markdown before posting: catches literal `\n`
+sequences and non-linking issue refs. Always write bodies to a file and use
+`gh ... --body-file`; never pass multiline bodies as inline shell strings.
 
 ```bash
-scripts/tri-sync                # close bd stubs whose upstream PR/issue is merged/closed
-scripts/tri-sync --dry-run      # preview
-scripts/tri-sync --prs-only
-scripts/tri-sync --issues-only
-scripts/tri-sync --limit 20
+scripts/gh-body-lint <body-file>
 ```
 
-Walks open bd issues with `gh-(pr|iss)-NNNN` refs, queries `gh` for upstream
-state, and closes bd stubs that are terminal upstream:
+## Delegation
 
-- PR `MERGED` → `bd close --reason="upstream merged: <sha7>"`
-- PR `CLOSED` (not merged) → `bd close --reason="upstream closed (not merged)"`
-- issue `CLOSED` → `bd close --reason="upstream closed: <stateReason>"`
+### `codex-agent`
 
-Does NOT apply the `triaged` label upstream — the upstream item is already
-terminal, so labeling adds noise. Each closure also gets a `tri-sync: closed
-(...)` audit note on the bd issue. Idempotent; safe to run from cron alongside
-`tri-pull`.
-
-## tri-close
+Runs OpenAI Codex CLI non-interactively at a named delegation tier, mapping the
+same tier names used for Claude subagents onto Codex model/sandbox/reasoning
+defaults.
 
 ```bash
-scripts/tri-close mybd-XXX                      # close + label upstream
-scripts/tri-close mybd-XXX --reason="dupe of #1234"
-scripts/tri-close mybd-XXX --skip-label         # close bd only (rare)
-scripts/tri-close mybd-XXX --dry-run            # preview
+scripts/codex-agent scout    "where is X handled?"          # read-only, ephemeral
+scripts/codex-agent builder  -C .worktrees/beads/foo "..."  # workspace-write
+scripts/codex-agent reviewer "assess this design: ..."      # high reasoning, read-only
+scripts/codex-agent reviewer --diff --base main             # structured diff review
 ```
 
-Reads `external_ref` to know which upstream PR/issue to label. Refuses to act
-on bd issues without a `gh-(pr|iss)-NNNN` ref — use `bd close` directly for
-non-triage stubs.
+The wrapper enforces two rules: the sandbox mode is always explicit, and
+`builder` must target a linked worktree via `-C` (exit 3 on a main checkout;
+`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately). Close stdin (`</dev/null`)
+when scripting. Codex bills to a separate quota pool and its tokens do not count
+toward workflow `budget.spent()`.
 
-Plain `bd close <id>` is also covered in this repo via `.beads/hooks/on_close`,
-which calls `scripts/tri-label-upstream` as a best-effort async hook.
+### `agent-sig.sh`
 
-## Triage decision tree (per item in `bd ready`)
-
-| Decision  | What to run                                              | When                                        |
-|-----------|----------------------------------------------------------|---------------------------------------------|
-| **close** | `tri-close <id> --reason="..."`                          | Won't engage; dupe; out of scope; rejected  |
-| **defer** | `bd defer <id> --until="next monday"`                    | Re-look later; not actionable now           |
-| **claim** | `bd update <id> --claim` + flesh out desc, set real priority | You'll actually do the work                 |
-| **human** | `bd human <id>` (or add `--notes="human: <Q>"`)          | Need a maintainer call before deciding      |
-
-For `claim`: the stub becomes the real working bead. Add proper description,
-acceptance criteria, dependencies, etc. The `external_ref` stays so the link
-to upstream survives.
-
-## Configuration
-
-Override the upstream repo with `TRI_UPSTREAM` env var (default
-`gastownhall/beads`):
+Generates the signature line for GitHub comments and the `Agent-Signature:`
+commit trailer, reading live session metadata.
 
 ```bash
-TRI_UPSTREAM=other/repo scripts/tri-pull
+scripts/agent-sig.sh --trailer
 ```
 
-## Beads Database Drift Guard
+**Run it through Bash, never the PowerShell tool.** The `{reasoning}` field
+comes from `CLAUDE_EFFORT`, which is exported only into Bash-tool subprocesses;
+a PowerShell-tool invocation silently yields `unknown-reasoning`. There is
+intentionally no `.ps1` wrapper — the `.sh` extension is the signal. The script
+warns on stderr when it falls back to a placeholder; heed that rather than
+posting the signature.
 
-The canonical issue database for this coordination repo is
-`.beads/embeddeddolt/mybd`, with issue prefix `mybd-` and Dolt remote
-`maphew/mybd` (either `git+ssh://git@github.com/maphew/mybd.git` or
-`git+https://github.com/maphew/mybd.git` is accepted; the live DB uses SSH). A
-sibling database named `beads` may exist as a populated legacy/bootstrap
-artifact; do not point `.beads/metadata.json` at it. If `mybd` is empty but
-`beads` holds the issues, migrate the populated folder into `mybd` rather than
-re-pointing metadata (see thread history) so the guard and data agree.
+Detects claude, codex, and amp runtimes from their session env vars. For Amp
+it reads model and effort (`agentMode`) from the local thread store and CLI
+log — no hand-rolled lookup needed.
+
+### `agentbin/bd`
+
+Serializing PATH shim enforcing the repo's serial-Dolt rule mechanically
+(bead mybd-lq8i.3). Opt in per session:
 
 ```bash
-scripts/check-beads-config          # fail if metadata points at the wrong DB
-scripts/check-beads-config --fix    # repair only the known safe mybd/beads drift
-scripts/pre-commit-beads-config     # block staged metadata drift from commits
+export PATH="<mybd-root>/scripts/agentbin:$PATH"
 ```
 
-`--fix` is deliberately conservative. It rewrites `.beads/metadata.json` only
-when the configured database is empty or missing, `mybd` has issues, and `mybd`
-has the expected `origin` remote. It additionally repairs one other known
-drift: `core.hooksPath` not pointing at the composed `.githooks` set (e.g.
-after `bd hooks install --beads` flips it to `.beads/hooks`); this git-config
-write activates the composed hook set and is announced on stderr even under
-`--quiet`. If both databases contain issues, export both
-and reconcile manually before changing metadata. Intentional database renames
-must set `MYBD_ALLOW_DB_RENAME=1`.
+Takes a repo-scoped flock (`.beads/.bd-cli.lock`) before exec'ing the real
+`bd`; a parallel invocation waits `MYBD_BD_LOCK_WAIT` seconds (default 90),
+then fails loudly with exit 199. Degrades to a warning passthrough where
+`flock` is unavailable (Git Bash on Windows).
 
-## GitHub body lint
+## Tracker health
 
-Before posting PR, issue, comment, or review Markdown through `gh`, write the
-body to a file and lint it:
+### `check-beads-config`
+
+Fails fast if `bd` is pointed at the wrong local database. The live database is
+`.beads/embeddeddolt/mybd` (prefix `mybd-`); stale config can point `bd` at the
+empty `beads` bootstrap DB, which makes `bd list` look mysteriously empty.
 
 ```bash
-scripts/gh-body-lint body.md
-scripts/gh-body-lint --fix body.md          # rewrites GH#1234 to #1234
-scripts/gh-body-lint --max-words 150 body.md   # also enforce a word budget
-gh pr edit 1234 --repo gastownhall/beads --body-file body.md
+scripts/check-beads-config          # report
+scripts/check-beads-config --fix    # narrow known-drift repair
 ```
 
-The lint guard rejects literal `\n` sequences and `GH#1234` refs, both of
-which render badly or fail to autolink in GitHub posts. With `--max-words N`
-it also fails bodies over the budget (fenced code blocks excluded from the
-count) - use it on anything public-facing; long analysis belongs in a local
-report, not the post. `tri-submit` runs both checks automatically.
+`--fix` handles only the case where `.beads/metadata.json` points at an empty
+`beads` DB while `mybd` is populated with the expected remote. If both contain
+issues, export both and reconcile by hand. It also restores `core.hooksPath` to
+`.githooks` when `bd hooks install --beads` has flipped it to `.beads/hooks`
+(which has no git hooks of its own, silently deactivating the composed set).
 
-## tri-review (PR work loop)
+### `pre-commit-beads-config`
+
+Commit hook that rejects accidental `.beads/metadata.json` changes away from
+`mybd`. Intentional database renames need `MYBD_ALLOW_DB_RENAME=1`.
+
+### `bd-version`
+
+Runs a specific released `bd` binary, downloading and caching it — useful for
+bisecting behaviour across releases without disturbing the binary on PATH.
+
+### `dolt-compat-matrix`
+
+Empirical cross-version `dolt` CLI compatibility probes.
+
+## Reading room
+
+### `report-room.ps1`
+
+Deterministic, local, zero-inference reader over `reports/README.md`: joins
+the authored Active Threads with a current read-only Beads snapshot into a
+disposable offline HTML page. The Markdown source and Beads stay canonical;
+the generated page is never tracked and never written under `reports/`.
+
+```powershell
+scripts/report-room.ps1 open  [-NoLaunch] [-Output <path>] [-RepoRoot <path>]
+scripts/report-room.ps1 check [-Json] [-RepoRoot <path>]
+```
+
+**Prerequisites:** PowerShell 7+, and `bd` on PATH (only for live bead
+hydration; `-BdJsonPath` substitutes a fixture). No other dependency: the
+Markdown renderer is a minimal internal converter for the constrained subset
+used by the source (headings, paragraphs, links, bold/italic/code, lists,
+tables, blockquotes), not a general Markdown parser.
+
+**`open`** parses each H3 under `## Active threads` as one authored thread,
+validates every relative report link (paths traversing outside the repo are
+rejected), hydrates every unique `mybd-*` ID with a **single batched**
+`bd show <ids...> --json` (bounded per-ID fallback if batching is
+unsupported), and renders a self-contained HTML file under the OS temp
+directory (override with `-Output`). Bead IDs in prose become same-page links
+to embedded detail cards - clicking one needs no process, network request, or
+model call. Closed and missing beads stay visible and clearly marked. Each
+thread shows exact age facts (oldest/newest linked report date, span in days,
+oldest active bead and its age, stalest non-closed bead and days since
+update); emphasis thresholds are named constants (`AGE_EMPHASIS_SOFT_DAYS`=30,
+`AGE_EMPHASIS_STRONG_DAYS`=90) and are neutral emphasis only - age never
+claims priority or neglect. The default browser is launched unless
+`-NoLaunch`; the output path is printed either way. Partial output is deleted
+on failure.
+
+**`check`** prints a compact human summary; `-Json` emits a stable schema
+(`schema_version` 1):
+
+```
+{ schema_version, generated_at, source, repo_root,
+  prerequisites: { pwsh, bd_available, bead_source, renderer },
+  age_thresholds: { soft_days, strong_days },
+  counts: { threads, unique_report_links, unique_bead_ids },
+  threads: [ { title, report_count,
+               report_links: [{ target, date, in_repo, resolved }],
+               bead_count, bead_ids, unresolved_bead_ids, closed_bead_ids,
+               age: { oldest_report_date, newest_report_date,
+                      report_span_days, oldest_active_bead, stalest_bead } } ],
+  unthreaded_since_latest: [ ... ],   # informational, never an error
+  errors:   [{ code, message }],      # exit 1 when non-empty
+  warnings: [{ code, message }] }     # findings only, exit stays 0
+```
+
+Report dates come from a leading `YYYY-MM-DD` filename prefix; `unknown` is
+reported rather than an invented date.
+
+**Failure behavior / exit codes:** 0 success (warnings allowed), 1 error -
+missing prerequisites (`bd` absent), malformed source structure, missing or
+out-of-repo report links, invalid bead JSON, renderer failure - and 2 usage
+error. Errors and warnings are distinguished in the JSON (`link_missing`,
+`link_outside_repo`, `bd_unavailable`, `bd_json_invalid`, `malformed_source`
+vs `bead_unresolved`, `bead_closed`).
+
+**No-inference / no-mutation boundary:** no model or API call, no network, no
+standing service or `bd serve`, no tracked HTML twin, and no mutating `bd`
+command ever - Beads is read only through `bd show --json`. Neither command
+modifies reports or Beads.
+
+**Test seams** (used by `test-report-room.ps1`): `-BdJsonPath <file>` injects
+fixture bead JSON, `REPORT_ROOM_BD_EXE` overrides the bd executable, and
+`REPORT_ROOM_TEST_FAIL_RENDER=1` forces a renderer failure after the output
+file exists to exercise cleanup.
+
+## Session lifecycle
+
+### `session-start-stamp`
+
+SessionStart hook; records the session boundary in `.beads/.session-start` that
+`session-close-check` reads.
+
+### `session-close-check`
+
+Cold-start-readiness backstop. Warn-only — it never blocks a close.
 
 ```bash
-scripts/tri-review mybd-XXX                  # claim, worktree, build+lint, scaffold note
-scripts/tri-review #3482                     # accepts PR# directly (resolves via external_ref)
-scripts/tri-review mybd-XXX --tests          # also run go test ./... (slow)
-scripts/tri-review mybd-XXX --no-checks      # skip build/lint, just scaffold
-scripts/tri-review mybd-XXX --reuse-worktree # don't fetch/recreate (resuming)
+scripts/session-close-check              # warn, exit 0
+scripts/session-close-check --strict     # non-zero if any warning fired
+scripts/session-close-check --since <git-ref|RFC3339>
 ```
 
-Effects:
-- Fetches PR branch into `bd-main/` (origin/pull/NNNN/head:pr-NNNN-review)
-- Creates worktree at `~/dev/mybd-tri/<NNNN>/`
-- Runs `go build ./...` + `golangci-lint --fast` (or `go test ./...` with `--tests`)
-- Scaffolds `_working_on/pr-reviews/<NNNN>.md` with auto-computed signals (size, age,
-  type, mergeable, CI checks, closes-issues, build/lint/test status)
-- Logs `review-started: worktree=... note=...` to bd notes (timestamped + hostname)
-- Sets bd status to `in_progress`
+Catches the cheap omissions: unreferenced new reports, thin new beads, beads
+left `in_progress`, and branches this session advanced that are neither pushed
+nor named by an open bead. The boundary comes from `.beads/.session-start` or
+`--since`; with neither, session-scoped checks warn-skip rather than passing
+silently. If `bd` is unavailable the bd-backed checks warn-skip too.
 
-If the review note already exists, it is left untouched — you keep your work.
+The script is only a backstop — the three judgment prompts in AGENTS.md
+("Cold-start handoff") are the real work. `/session-close` runs both.
 
-## verify-* (local asynchronous validation)
+### `amp-session-close`
 
-The `verify-*` scripts move slow beads source validation out of implementation
-agent sessions while preserving a full local quality gate.
+Amp-session variant of the close: runs `session-close-check` (args pass
+through) and appends a signed evidence row — timestamp, thread id, HEAD,
+check result, agent signature — to the git-tracked
+`retro/amp-close-ledger.tsv`. Close proof then survives even when Amp's local
+thread store does not retain the transcript (bead mybd-lq8i.3).
 
-```bash
-scripts/verify-enqueue <bd-id> <worktree> "make test"
-scripts/verify-status
-scripts/verify-next
-```
+## Tests
 
-Workflow:
+| Script | Covers |
+|--------|--------|
+| `test-git-hooks` | the composed `.githooks` set (bd wrappers + root-commit guard) |
+| `test-agent-hooks` | the cross-platform agent hook configs |
+| `test-pr-review-gate` | the `gh pr create` PreToolUse gate |
+| `test-session-close-check` | the cold-start report-reference check |
+| `test-amp-parity` | the Amp guardrails: live agent-sig metadata, `agentbin/bd` lock semantics, close-ledger row |
+| `test-report-room.ps1` | the report-room reader (fixture Markdown + injected bead JSON; no live DB, no browser) |
 
-1. The implementation agent runs fast preflight in its source worktree.
-2. The agent commits or otherwise freezes the candidate; the worktree must be
-   clean.
-3. `verify-enqueue` records the candidate in bd metadata:
-   `verify_state=queued`, `verify_head`, `verify_branch`, `verify_cmd`, and
-   `verify_worktree`.
-4. A verifier shell runs `verify-next`, which creates a clean detached worktree
-   under `.worktrees/beads/verify-*`, runs the recorded command, logs under
-   `.worktrees/beads/.verify-logs/`, and writes `verify_state=passed|failed`.
+## Retired but kept
 
-Defaults:
-
-- `verify_cmd`: `make test`
-- `VERIFY_TIMEOUT`: `45m`
-- `VERIFY_KEEP_WORKTREE`: `failed` (`always`, `failed`, or `never`)
-- `VERIFY_WORKTREE_BASE`: `<project>/.worktrees/beads`
-- `VERIFY_LOG_DIR`: `<project>/.worktrees/beads/.verify-logs`
-
-Run a simple local queue loop from this repo when several agents have queued
-work:
-
-```bash
-while :; do
-  scripts/verify-next || true
-  sleep 30
-done
-```
-
-The verifier intentionally uses local git, local bd metadata, and local logs
-only. It does not call GitHub Actions or poll GitHub status.
-
-## tri-resume (cross-machine)
-
-```bash
-scripts/tri-resume          # show all in-flight PR reviews
-scripts/tri-resume --json   # machine-readable
-```
-
-Lists every bd issue with `status=in_progress` and a `gh-pr-*` external_ref:
-bd-id, PR#, whether worktree exists on *this* machine, age of the review note,
-last checkpoint or title. Use it when you sit down at any machine to pick up
-where you (or another machine of yours) left off.
-
-## tri-checkpoint (graceful machine switch)
-
-```bash
-scripts/tri-checkpoint <id> "stopped at concerns section, need to verify test coverage"
-scripts/tri-checkpoint #3482
-```
-
-Appends a checkpoint note to bd, pushes bead state with `bd dolt push`, commits
-review-note changes (if any), `git pull --rebase`, `git push`. Worktree
-branches are local-only by design; if you've made commits in the worktree you
-want to keep, push them manually first (e.g., to a `wip/` branch on your fork).
-
-## tri-submit (finalize)
-
-```bash
-scripts/tri-submit <id> --approve
-scripts/tri-submit <id> --request-changes      # last resort, warns
-scripts/tri-submit <id> --comment
-scripts/tri-submit <id> --approve --dry-run    # preview the exact body
-scripts/tri-submit <id> --comment --max-words 250   # deliberate budget raise
-```
-
-Posts `pr-reviews/<NNNN>.post.md` (NOT the full analysis note) as a
-`gh pr review --<verdict>`, then calls `tri-close` to close bd + apply
-upstream `triaged`. Guards, in order:
-
-- refuses if `<NNNN>.md`'s `Verdict:` line is still `TBD`
-- refuses if `<NNNN>.post.md` is missing, empty, or only comments
-- fails the body over the word budget (default 150; `TRI_POST_MAX_WORDS`
-  or `--max-words` to override deliberately)
-- runs the GitHub body lint
-- shows the exact body and requires typing `post` at the terminal
-  (`/dev/tty`), so unattended agents cannot post text upstream;
-  `TRI_ALLOW_UNATTENDED_POST=1` is the owner-only escape hatch
-
-## tri-report (observability digest)
-
-```bash
-scripts/tri-report                    # last 7 days, opens in browser
-scripts/tri-report --today            # last 24h
-scripts/tri-report --days 14          # custom window
-scripts/tri-report --since 2026-04-01 # explicit start date
-scripts/tri-report --weekly-metrics   # markdown weekly metrics report
-scripts/tri-report --no-open          # write file, don't launch browser
-scripts/tri-report --out report.html  # custom output path
-```
-
-Generates a self-contained HTML digest (no JS, plain CSS) of triage workflow
-activity over a period. Sections:
-
-- **What landed** — closed issues with their *why* (description excerpt),
-  the *delivered* (close reason), and any linked commits matched by id mention
-- **In flight** — `status=in_progress` items with description + latest checkpoint note
-- **Came in** — newly created stubs in the window
-- **Backlog snapshot** — open issues by priority
-- **Activity timeline** — collapsible chronological event log from
-  `.beads/interactions.jsonl`
-
-Sources: `bd list`, `bd show --json` (description + notes + external_ref),
-`.beads/interactions.jsonl` (timestamped reasons), `git log` (commit subjects).
-
-Browser launch chain: `xdg-open` → `wslview` → `open` (macOS) → on WSL,
-`cmd.exe /c start` → `msedge.exe` direct → Python `webbrowser` module.
-Falls back to printing the `file://` URI if all fail.
-
-Why Python (vs the bash tri-* scripts): this one templates rather than
-orchestrates — date math, HTML escaping, multi-source synthesis. Stdlib only.
-
-`--weekly-metrics` switches from HTML digest to a Markdown report focused on:
-
-- new triage stubs created in the window
-- triage stubs closed in the window (excluding `tri-sync` auto-closures whose
-  close reason starts with `upstream `)
-- median age of remaining open stubs
-- P0/P1 leakage: open high-priority stubs older than 48 hours
-
-The default window is still 7 days, so a plain weekly run is:
-
-```bash
-scripts/tri-report --weekly-metrics --out /tmp/tri-weekly.md
-```
-
-## Existing artifacts
-
-- `_working_on/upstream_pr_triage.md` — manual T1–T5 ranking with scoring rubric
-- `_working_on/pr-reviews/NNNN.md` — per-PR detailed review notes (now scaffolded by tri-review)
-
-## bd-version (pinned-release runner)
-
-```bash
-scripts/bd-version 1.0.4 version   # downloads + caches bd v1.0.4, then runs it
-scripts/bd-version v1.0.4 show mybd-123
-```
-
-Fetches a specific released `bd` binary from `gastownhall/beads` GitHub
-releases (via `gh`), caches it under `${BD_VERSION_CACHE:-~/.local/share/beads/bin}/<version>/`
-(outside any repo, shared across worktrees), and `exec`s it. Use this to open
-a beads DB with the exact version that wrote it, so a newer `bd` on PATH
-doesn't trigger an unwanted schema migration. Repeat runs for a version
-already cached skip the download.
-
-## Generic beads stealth setup
-
-`bd-stealth-init` initializes beads for any project without putting `.beads`,
-hooks, or beads commits in that target project. It stores issue data in a
-dedicated external git repository and can sync through that repo's remote.
-
-```bash
-cd ~/src/some-project
-/var/home/matt/dev/mybd/scripts/bd-stealth-init --remote git@github.com:me/some-project-beads.git
-```
-
-Use `--set-envrc` only when the target project should persist the `BEADS_DIR`
-export in `.envrc`.
-
-## Configuration (env vars)
-
-- `TRI_UPSTREAM` — upstream repo (default `gastownhall/beads`)
-- `TRI_WORKTREE_BASE` — worktree parent dir (default `~/dev/mybd-tri`)
-- `TRI_BD_MAIN` — canonical upstream checkout (default `<project>/bd-main`)
-- `TRI_REVIEWS_DIR` — review notes dir (default `<project>/_working_on/pr-reviews`)
-- `TRI_POST_MAX_WORDS` — word budget for upstream post bodies (default `150`)
-- `TRI_ALLOW_UNATTENDED_POST` — set to `1` to skip tri-submit's interactive
-  confirmation; owner-only, for deliberate automation
-
-## Layer 2
-
-Shipped:
-- daily unattended wrapper + cron installer (`tri-daily`, `tri-install-cron`)
-- weekly triage metrics (`tri-report --weekly-metrics`)
-- smart classifier (auto-priority from rubric)
-- `bd close` hook → upstream label
-- epic/batch grouping for stacked PRs
-
-Still open:
-- JSONL normalization churn follow-up (likely upstream exporter work, not local workflow)
-
-See `bd ready`.
-
-(close-on-merge sync shipped as `tri-sync`.)
+| Script | Status |
+|--------|--------|
+| `bd-import-on-pull`, `install-sync-hook` | retired JSONL-through-git sync fallback; Dolt (`bd dolt push`/`pull`) is the sync protocol |
+| `bd-stealth-init` | one-off bootstrap helper |
+| `repro-worklist` | ad-hoc reproduction worklist helper |
+| `jdiff.bat`, `_invoke-shebang.ps1` | Windows shims |

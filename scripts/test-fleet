@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# test-fleet - smoke-test the overnight fleet trio (scripts/fleet,
+# scripts/fleet-lane, scripts/fleet-digest) via their test seams, in the
+# style of scripts/test-red-team-gate: check <label> <expected> <actual>,
+# pass/fail counters, a tmp dir under ${TMPDIR:-/tmp}, cleanup trap, final
+# summary line, nonzero exit on any failure.
+#
+# Everything here is isolated: a fake bd (MYBD_FLEET_BD_CMD), fake ready
+# fixtures (MYBD_FLEET_READY_CMD), fake lane/executor/review stubs, and
+# throwaway git repos standing in for FLEET_SOURCE_REPO. It never invokes
+# the real `bd` binary or touches the real .beads database.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FLEET="$ROOT/scripts/fleet"
+LANE="$ROOT/scripts/fleet-lane"
+DIGEST="$ROOT/scripts/fleet-digest"
+
+pass=0; fail=0
+LAST_LOG=""
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/testfleet.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+check() { # check <label> <expected> <actual>
+  if [[ "$2" == "$3" ]]; then
+    printf '  ok    %s\n' "$1"; pass=$((pass+1))
+  else
+    printf '  FAIL  %s (want %s, got %s)\n' "$1" "$2" "$3"; fail=$((fail+1))
+    if [[ -n "$LAST_LOG" && -s "$LAST_LOG" ]]; then
+      echo "  ---- last output ($LAST_LOG) ----"
+      tail -20 "$LAST_LOG" | sed 's/^/  | /'
+      echo "  -------------------------------"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Isolation harness
+
+export MYBD_FLEET_SKIP_PREFLIGHT=1
+export FLEET_PUSH=0
+export FLEET_TEST_CMD=true
+
+mk_source_repo() { # mk_source_repo -> echoes path to a fresh fake source
+                    # repo: git init -b main, unique tree, HEAD stays on
+                    # main (fleet-lane branches off "main"), and repo-local
+                    # user.name/email so worktree commits (no -c) work too.
+                    #
+                    # Uses mktemp for the unique dir, not a counter variable:
+                    # every caller does `d=$(mk_source_repo)`, which forks a
+                    # subshell for the command substitution, so a counter
+                    # incremented inside the function never persists back to
+                    # the parent shell - every call would silently reuse
+                    # src-repo-1 (caught empirically: git printed "re-init:
+                    # ignored --initial-branch=main" and the fixture commit
+                    # silently failed with "nothing to commit").
+  local d
+  d="$(mktemp -d "$tmp/src-repo.XXXXXX")"
+  git -C "$d" init -q -b main
+  echo "$d" > "$d/.marker"
+  git -C "$d" add .marker
+  git -C "$d" -c user.email=t@t -c user.name=t commit -q -m init
+  git -C "$d" config user.email t@t
+  git -C "$d" config user.name t
+  echo "$d"
+}
+
+# Fake bd: seam is `bash -c "$MYBD_FLEET_BD_CMD"' "$@"' bd "$@"`, so
+# MYBD_FLEET_BD_CMD is just the quoted path of this script; it gets called
+# with the real bd argv forwarded.
+BD_LOG="$tmp/bd.log"
+CLAIM_FAIL="$tmp/claim-fail"
+FAKE_BD="$tmp/fake-bd.sh"
+cat > "$FAKE_BD" <<EOF
+#!/usr/bin/env bash
+log="$BD_LOG"
+claimfail="$CLAIM_FAIL"
+printf '%s\n' "\$*" >> "\$log"
+case "\$1" in
+  update)
+    id="\$2"
+    if [[ -f "\$claimfail" ]] && grep -qxF "\$id" "\$claimfail"; then
+      exit 1
+    fi
+    printf '{"id":"%s"}\n' "\$id"
+    exit 0
+    ;;
+  create)
+    printf '{"id":"mybd-fake-handoff"}\n'
+    exit 0
+    ;;
+  show)
+    id="\$2"
+    printf '{"id":"%s","title":"fake bead %s","description":"d","design":"","acceptance_criteria":""}\n' "\$id" "\$id"
+    exit 0
+    ;;
+  comment)
+    echo ok
+    exit 0
+    ;;
+  *)
+    echo ok
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$FAKE_BD"
+export MYBD_FLEET_BD_CMD="$FAKE_BD"
+
+review_pass="$tmp/review-pass.sh"
+cat > "$review_pass" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$review_pass"
+
+# ===========================================================================
+echo "supervisor: pool filtering + claims"
+
+ready1="$tmp/ready1.json"
+cat > "$ready1" <<'JSON'
+[
+  {"id":"mybd-ta","priority":1,"labels":["fleet-ok"],"issue_type":"task"},
+  {"id":"mybd-tb","priority":1,"labels":["human","fleet-ok"],"issue_type":"task"},
+  {"id":"mybd-tc","priority":1,"labels":["fleet-ok"],"issue_type":"epic"},
+  {"id":"mybd-td","priority":2,"labels":[],"issue_type":"task"},
+  {"id":"mybd-te","priority":0,"labels":["fleet-ok"],"issue_type":"task"},
+  {"id":"mybd-tf","priority":2,"labels":["fleet-ok"],"issue_type":"task","assignee":"someone"}
+]
+JSON
+
+# 1. filter-optin: pool.json must be exactly ["mybd-ta"].
+t1="$tmp/t1"; mkdir -p "$t1"
+src1="$(mk_source_repo)"; wtb1="$t1/wtbase"; mkdir -p "$wtb1"
+out1="$t1/fleet.out"; LAST_LOG="$out1"
+FLEET_RUNS_DIR="$t1/runs" FLEET_SOURCE_REPO="$src1" FLEET_WORKTREE_BASE="$wtb1" \
+  MYBD_FLEET_READY_CMD="cat $ready1" \
+  timeout 30 "$FLEET" --dry-run --run-id t1 >"$out1" 2>&1
+e1=$?
+pool1="$t1/runs/t1/pool.json"
+check "1 dry-run exits 0"       0             "$e1"
+check "1 filter-optin pool ids" '["mybd-ta"]' "$(jq -c '[.[].id]' "$pool1" 2>/dev/null)"
+
+# 2. filter-optout: pool.json must be ["mybd-ta","mybd-td"], priority-sorted.
+t2="$tmp/t2"; mkdir -p "$t2"
+src2="$(mk_source_repo)"; wtb2="$t2/wtbase"; mkdir -p "$wtb2"
+out2="$t2/fleet.out"; LAST_LOG="$out2"
+FLEET_RUNS_DIR="$t2/runs" FLEET_SOURCE_REPO="$src2" FLEET_WORKTREE_BASE="$wtb2" \
+  MYBD_FLEET_READY_CMD="cat $ready1" \
+  timeout 30 "$FLEET" --dry-run --run-id t2 --pool optout >"$out2" 2>&1
+e2=$?
+pool2="$t2/runs/t2/pool.json"
+check "2 dry-run exits 0"        0                          "$e2"
+check "2 filter-optout pool ids" '["mybd-ta","mybd-td"]'     "$(jq -c '[.[].id]' "$pool2" 2>/dev/null)"
+
+# 3. claim-race: 3 eligible beads, first is pre-failed, --lanes 2 ->
+#    claims are the 2nd+3rd, skips is the 1st.
+ready3="$tmp/ready3.json"
+cat > "$ready3" <<'JSON'
+[
+  {"id":"mybd-ra","priority":1,"labels":[],"issue_type":"task"},
+  {"id":"mybd-rb","priority":2,"labels":[],"issue_type":"task"},
+  {"id":"mybd-rc","priority":3,"labels":[],"issue_type":"task"}
+]
+JSON
+: > "$BD_LOG"
+printf 'mybd-ra\n' > "$CLAIM_FAIL"
+
+lane_stub="$tmp/lane-stub.sh"
+cat > "$lane_stub" <<EOF
+#!/usr/bin/env bash
+id="\$1"
+mkdir -p "\$FLEET_RUN_DIR/lanes/\$id"
+jq -n --arg bead "\$id" \
+  '{bead:\$bead, stage:"finish", branch:("fleet/"+\$bead), worktree:null,
+    base_sha:"deadbeef", pr:null, outcome:"ratify", reason:"stub ratify",
+    started:"2026-01-01T00:00:00Z", ended:"2026-01-01T00:00:01Z",
+    budget:{wall_secs:60,used_secs:1}, diff:{files:1,lines:1}}' \
+  > "\$FLEET_RUN_DIR/lanes/\$id/state.json"
+echo "LANE \$id" >> "$BD_LOG"
+EOF
+chmod +x "$lane_stub"
+
+t3="$tmp/t3"; mkdir -p "$t3"
+src3="$(mk_source_repo)"; wtb3="$t3/wtbase"; mkdir -p "$wtb3"
+out3="$t3/fleet.out"; LAST_LOG="$out3"
+FLEET_RUNS_DIR="$t3/runs" FLEET_SOURCE_REPO="$src3" FLEET_WORKTREE_BASE="$wtb3" \
+  MYBD_FLEET_READY_CMD="cat $ready3" MYBD_FLEET_LANE_CMD="$lane_stub" \
+  timeout 60 "$FLEET" --run-id t3 --pool optout --lanes 2 >"$out3" 2>&1
+e3=$?
+run3="$t3/runs/t3/run.json"
+check "3 fleet exits 0"      0                        "$e3"
+check "3 claims are 2nd+3rd" '["mybd-rb","mybd-rc"]'   "$(jq -c '.claims' "$run3" 2>/dev/null)"
+check "3 skips has first"    '["mybd-ra"]'             "$(jq -c '.skips' "$run3" 2>/dev/null)"
+
+# 4. claims-before-spawn: every "update ... --claim" line in bd.log must
+#    appear before the first "LANE " line (from the same run above).
+claim_lines="$(grep -n -- '--claim' "$BD_LOG" | cut -d: -f1)"
+first_lane_line="$(grep -n '^LANE ' "$BD_LOG" | head -1 | cut -d: -f1)"
+last_claim_line="$(printf '%s\n' "$claim_lines" | tail -1)"
+ordering_ok=no
+if [[ -n "$claim_lines" && -n "$first_lane_line" && -n "$last_claim_line" \
+      && "$last_claim_line" -lt "$first_lane_line" ]]; then
+  ordering_ok=yes
+fi
+LAST_LOG="$BD_LOG"
+check "4 claims-before-spawn" yes "$ordering_ok"
+
+# ===========================================================================
+echo
+echo "fleet-lane: pipeline outcomes"
+
+# 5. lane-happy: executor commits, review passes -> ratify.
+exec_commit="$tmp/exec-commit.sh"
+cat > "$exec_commit" <<'EOF'
+#!/usr/bin/env bash
+set -e
+echo work > "$FLEET_WORKTREE/output.txt"
+git -C "$FLEET_WORKTREE" add -A
+git -C "$FLEET_WORKTREE" -c user.email=t@t -c user.name=t commit -q -m "impl $FLEET_BEAD"
+EOF
+chmod +x "$exec_commit"
+
+run5="$tmp/run5"; mkdir -p "$run5/lanes"
+src5="$(mk_source_repo)"; wtb5="$tmp/wtbase5"; mkdir -p "$wtb5"
+bead5="mybd-l5"
+out5="$run5/lane.out"; LAST_LOG="$out5"
+FLEET_RUN_DIR="$run5" FLEET_SOURCE_REPO="$src5" FLEET_WORKTREE_BASE="$wtb5" \
+  MYBD_FLEET_EXECUTOR_CMD="$exec_commit" MYBD_FLEET_REVIEW_CMD="$review_pass" \
+  timeout 60 "$LANE" "$bead5" >"$out5" 2>&1
+e5=$?
+state5="$run5/lanes/$bead5/state.json"
+branch5_sha="$(git -C "$src5" rev-parse "fleet/$bead5" 2>/dev/null || echo MISSING)"
+main5_sha="$(git -C "$src5" rev-parse main 2>/dev/null || echo MISSING)"
+check "5 lane exits 0"        0      "$e5"
+check "5 outcome=ratify"      ratify "$(jq -r '.outcome // "MISSING"' "$state5" 2>/dev/null)"
+check "5 worktree gone"       no     "$([[ -d "$wtb5/fleet-$bead5" ]] && echo yes || echo no)"
+check "5 branch exists"       yes    "$([[ "$branch5_sha" != MISSING ]] && echo yes || echo no)"
+check "5 branch has new commit beyond main" yes "$([[ "$branch5_sha" != "$main5_sha" && "$branch5_sha" != MISSING ]] && echo yes || echo no)"
+
+# 6. lane-no-change: executor commits nothing -> parked, no-change.
+exec_nochange="$tmp/exec-nochange.sh"
+cat > "$exec_nochange" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$exec_nochange"
+
+run6="$tmp/run6"; mkdir -p "$run6/lanes"
+src6="$(mk_source_repo)"; wtb6="$tmp/wtbase6"; mkdir -p "$wtb6"
+bead6="mybd-l6"
+out6="$run6/lane.out"; LAST_LOG="$out6"
+FLEET_RUN_DIR="$run6" FLEET_SOURCE_REPO="$src6" FLEET_WORKTREE_BASE="$wtb6" \
+  MYBD_FLEET_EXECUTOR_CMD="$exec_nochange" MYBD_FLEET_REVIEW_CMD="$review_pass" \
+  timeout 60 "$LANE" "$bead6" >"$out6" 2>&1
+e6=$?
+state6="$run6/lanes/$bead6/state.json"
+reason6="$(jq -r '.reason // "MISSING"' "$state6" 2>/dev/null)"
+check "6 lane exits 0"          0      "$e6"
+check "6 outcome=parked"        parked "$(jq -r '.outcome // "MISSING"' "$state6" 2>/dev/null)"
+check "6 reason mentions no-change" yes "$([[ "$reason6" == *no-change* ]] && echo yes || echo no)"
+check "6 worktree gone"         no     "$([[ -d "$wtb6/fleet-$bead6" ]] && echo yes || echo no)"
+
+# 7. lane-review-redteam-fail: executor commits, review exits 4 -> parked,
+#    red-team reason, commit preserved on the branch.
+review_rtfail="$tmp/review-rtfail.sh"
+cat > "$review_rtfail" <<'EOF'
+#!/usr/bin/env bash
+exit 4
+EOF
+chmod +x "$review_rtfail"
+
+run7="$tmp/run7"; mkdir -p "$run7/lanes"
+src7="$(mk_source_repo)"; wtb7="$tmp/wtbase7"; mkdir -p "$wtb7"
+bead7="mybd-l7"
+out7="$run7/lane.out"; LAST_LOG="$out7"
+FLEET_RUN_DIR="$run7" FLEET_SOURCE_REPO="$src7" FLEET_WORKTREE_BASE="$wtb7" \
+  MYBD_FLEET_EXECUTOR_CMD="$exec_commit" MYBD_FLEET_REVIEW_CMD="$review_rtfail" \
+  timeout 60 "$LANE" "$bead7" >"$out7" 2>&1
+e7=$?
+state7="$run7/lanes/$bead7/state.json"
+reason7="$(jq -r '.reason // "MISSING"' "$state7" 2>/dev/null)"
+branch7_sha="$(git -C "$src7" rev-parse "fleet/$bead7" 2>/dev/null || echo MISSING)"
+main7_sha="$(git -C "$src7" rev-parse main 2>/dev/null || echo MISSING)"
+check "7 lane exits 0"           0      "$e7"
+check "7 outcome=parked"         parked "$(jq -r '.outcome // "MISSING"' "$state7" 2>/dev/null)"
+check "7 reason mentions red-team" yes  "$([[ "$reason7" == *red-team* ]] && echo yes || echo no)"
+check "7 branch still has the commit" yes "$([[ "$branch7_sha" != "$main7_sha" && "$branch7_sha" != MISSING ]] && echo yes || echo no)"
+check "7 worktree gone"          no     "$([[ -d "$wtb7/fleet-$bead7" ]] && echo yes || echo no)"
+
+# 8. lane-budget: 3s budget, executor writes an uncommitted file then
+#    sleeps 30s -> handoff, WIP commit, handoff bead filed.
+exec_budget="$tmp/exec-budget.sh"
+cat > "$exec_budget" <<'EOF'
+#!/usr/bin/env bash
+echo uncommitted > "$FLEET_WORKTREE/uncommitted.txt"
+sleep 30
+EOF
+chmod +x "$exec_budget"
+
+run8="$tmp/run8"; mkdir -p "$run8/lanes"
+src8="$(mk_source_repo)"; wtb8="$tmp/wtbase8"; mkdir -p "$wtb8"
+bead8="mybd-l8"
+: > "$BD_LOG"
+out8="$run8/lane.out"; LAST_LOG="$out8"
+FLEET_RUN_DIR="$run8" FLEET_SOURCE_REPO="$src8" FLEET_WORKTREE_BASE="$wtb8" \
+  FLEET_LANE_BUDGET_SECS=3 \
+  MYBD_FLEET_EXECUTOR_CMD="$exec_budget" MYBD_FLEET_REVIEW_CMD="$review_pass" \
+  timeout 45 "$LANE" "$bead8" >"$out8" 2>&1
+e8=$?
+state8="$run8/lanes/$bead8/state.json"
+branch8_msg="$(git -C "$src8" log -1 --format=%s "fleet/$bead8" 2>/dev/null || echo MISSING)"
+check "8 lane exits 0 within budget"  0        "$e8"
+check "8 outcome=handoff"             handoff  "$(jq -r '.outcome // "MISSING"' "$state8" 2>/dev/null)"
+check "8 branch tip is WIP commit"    yes      "$([[ "$branch8_msg" == WIP\(fleet\)* ]] && echo yes || echo no)"
+check "8 worktree gone"               no       "$([[ -d "$wtb8/fleet-$bead8" ]] && echo yes || echo no)"
+check "8 bd.log has a create (handoff) line" yes "$(grep -q '^create ' "$BD_LOG" && echo yes || echo no)"
+
+# 9. lane-term: supervisor-style TERM to the process group mid-implement,
+#    uncommitted work -> handoff, WIP commit, worktree gone.
+exec_term="$tmp/exec-term.sh"
+cat > "$exec_term" <<'EOF'
+#!/usr/bin/env bash
+echo uncommitted > "$FLEET_WORKTREE/uncommitted.txt"
+sleep 60
+EOF
+chmod +x "$exec_term"
+
+run9="$tmp/run9"; mkdir -p "$run9/lanes"
+src9="$(mk_source_repo)"; wtb9="$tmp/wtbase9"; mkdir -p "$wtb9"
+bead9="mybd-l9"
+: > "$BD_LOG"
+out9="$run9/lane.out"; LAST_LOG="$out9"
+FLEET_RUN_DIR="$run9" FLEET_SOURCE_REPO="$src9" FLEET_WORKTREE_BASE="$wtb9" \
+  FLEET_LANE_BUDGET_SECS=300 \
+  MYBD_FLEET_EXECUTOR_CMD="$exec_term" MYBD_FLEET_REVIEW_CMD="$review_pass" \
+  setsid "$LANE" "$bead9" >"$out9" 2>&1 &
+bash_lane_pid=$!
+sleep 2
+# `setsid PROG &` forks internally whenever the caller is already a process
+# group leader (setsid(2) fails on a group leader, so setsid(1) re-execs via
+# fork) - observed in this sandbox even for a non-interactive script, so
+# bash's own $! is not reliably the PID that actually became the new
+# session/group leader. Find the real fleet-lane process by argv instead;
+# since it is freshly forked it is never a group leader, so setsid() there
+# succeeds without a further fork and its PGID == its own PID.
+real_pid="$(pgrep -f "fleet-lane $bead9" | head -1)"
+[[ -n "$real_pid" ]] || real_pid="$bash_lane_pid"
+kill -TERM -- "-$real_pid" 2>/dev/null || kill -TERM "$real_pid" 2>/dev/null || true
+waited=0
+while kill -0 "$real_pid" 2>/dev/null && (( waited < 40 )); do sleep 1; waited=$((waited+1)); done
+if kill -0 "$real_pid" 2>/dev/null; then
+  kill -KILL -- "-$real_pid" 2>/dev/null || kill -KILL "$real_pid" 2>/dev/null || true
+fi
+wait "$bash_lane_pid" 2>/dev/null
+e9=$?
+state9="$run9/lanes/$bead9/state.json"
+branch9_msg="$(git -C "$src9" log -1 --format=%s "fleet/$bead9" 2>/dev/null || echo MISSING)"
+check "9 outcome=handoff"          handoff "$(jq -r '.outcome // "MISSING"' "$state9" 2>/dev/null)"
+check "9 branch tip is WIP commit" yes     "$([[ "$branch9_msg" == WIP\(fleet\)* ]] && echo yes || echo no)"
+check "9 worktree gone"            no      "$([[ -d "$wtb9/fleet-$bead9" ]] && echo yes || echo no)"
+
+# ===========================================================================
+echo
+echo "fleet-digest: anomaly + policy rendering"
+
+# 10. digest-anomaly: hand-built run dir, one terminal ratify state, one
+#     claimed bead with no state at all.
+run10="$tmp/run10"; mkdir -p "$run10/lanes/mybd-x"
+cat > "$run10/run.json" <<'JSON'
+{"run":"run10","lanes":1,"budget_secs":60,"pool_mode":"optout",
+ "candidates":["mybd-x","mybd-y"],"claims":["mybd-x","mybd-y"],"skips":[]}
+JSON
+cat > "$run10/lanes/mybd-x/state.json" <<'JSON'
+{"bead":"mybd-x","stage":"finish","branch":"fleet/mybd-x","worktree":null,
+ "base_sha":"deadbeef","pr":null,"outcome":"ratify",
+ "reason":"review clean, PR not opened (FLEET_OPEN_PR=0) - awaiting ratification",
+ "started":"2026-01-01T00:00:00Z","ended":"2026-01-01T00:00:05Z",
+ "budget":{"wall_secs":60,"used_secs":5},"diff":{"files":3,"lines":42}}
+JSON
+
+out10="$tmp/t10.out"; LAST_LOG="$out10"
+timeout 20 "$DIGEST" "$run10" >"$out10" 2>&1
+e10=$?
+digest10="$run10/digest.md"
+check "10 digest exits 0"                     0   "$e10"
+check "10 mybd-x under Awaiting ratification" yes "$(awk '/^## Awaiting ratification/,/^## Parked/' "$digest10" | grep -q 'mybd-x' && echo yes || echo no)"
+check "10 mybd-y flagged in Anomalies"        yes "$(awk '/^## Anomalies/,0' "$digest10" | grep -q 'mybd-y' && echo yes || echo no)"
+check "10 Merged section states no-merge-rights policy" yes "$(awk '/^## Merged/,/^## Awaiting/' "$digest10" | grep -q 'no merge rights' && echo yes || echo no)"
+
+# ===========================================================================
+echo
+echo "$pass passed, $fail failed"
+[[ "$fail" -eq 0 ]]

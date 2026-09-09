@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Smoke test for scripts/gh-body-lint. Run from anywhere; exits non-zero on
+# the first failed expectation.
+
+set -euo pipefail
+
+LINT="$(cd "$(dirname "$0")" && pwd)/gh-body-lint"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# 1. Clean body passes.
+printf 'A clean body referencing #1234 and owner/repo#5678.\n' > "$TMP/clean.md"
+"$LINT" "$TMP/clean.md" >/dev/null 2>&1 || fail "clean body should pass"
+
+# 2. Literal \n fails.
+printf 'bad body with literal \\n sequence\n' > "$TMP/literal.md"
+if "$LINT" "$TMP/literal.md" >/dev/null 2>&1; then fail "literal \\n should fail"; fi
+
+# 3. GH# ref fails.
+printf 'see GH#1234 for details\n' > "$TMP/ghref.md"
+if "$LINT" "$TMP/ghref.md" >/dev/null 2>&1; then fail "GH# ref should fail"; fi
+
+# 4. --fix rewrites GH# and then passes.
+"$LINT" --fix "$TMP/ghref.md" >/dev/null 2>&1 || fail "--fix should rewrite GH# and pass"
+grep -q '#1234' "$TMP/ghref.md" || fail "--fix should leave #1234"
+grep -q 'GH#' "$TMP/ghref.md" && fail "--fix should remove GH# prefix"
+
+# 5. Word budget: over-budget fails, under-budget passes.
+printf 'one two three four five six\n' > "$TMP/words.md"
+"$LINT" --max-words 10 "$TMP/words.md" >/dev/null 2>&1 || fail "under-budget should pass"
+if "$LINT" --max-words 3 "$TMP/words.md" >/dev/null 2>&1; then fail "over-budget should fail"; fi
+
+# 6. Fenced code is excluded from the count.
+printf 'two words\n```\ncode words never counted here at all\n```\n' > "$TMP/fenced.md"
+"$LINT" --max-words 2 "$TMP/fenced.md" >/dev/null 2>&1 || fail "fenced code should be excluded from word count"
+
+# 7. Unterminated fence is refused.
+printf 'text\n```\nunclosed\n' > "$TMP/unterm.md"
+if "$LINT" --max-words 100 "$TMP/unterm.md" >/dev/null 2>&1; then fail "unterminated fence should fail"; fi
+
+echo "ok: all gh-body-lint smoke tests passed"

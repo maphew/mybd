@@ -1,6 +1,6 @@
 # Agent Session Retrospective Playbook
 
-**Version:** 1.0 (2026-07-14) · **Portable:** yes — this file plus a `LOCAL.md`
+**Version:** 1.1 (2026-09-02) · **Portable:** yes - this file plus a `LOCAL.md`
 adaptation is everything a fresh agent needs to run one retrospective round in
 any project, under any coding-agent runtime.
 
@@ -84,14 +84,21 @@ timestamps vs session dates, `reports/` retro-docs.
 1. Enumerate sessions for the campaign scope into `ledger.tsv`
    (see LOCAL.md for ready-made commands). Columns:
    `scope  runtime  session_id  started  size_kb  status  batch  note`
-   Status values: `pending | skipped-trivial | skipped-subagent | skipped-inflight | digested | synthesized`.
+   Status values: `pending | skipped-trivial | skipped-subagent | skipped-inflight | lost | digested | synthesized`.
 2. Filter substantive: mark `< 100 KB` (Claude/Codex) or `< 8 messages` (Amp)
    as `skipped-trivial` unless a note says otherwise. Mark sub-agent runs
    `skipped-subagent`. Mark the currently-running session `skipped-inflight`.
 3. Order **newest-first** — recent sessions reflect current tooling, so their
    findings are actionable immediately; old sessions mostly reveal already-
    fixed friction (see stop rule 3).
-4. Take the next 5 `pending` rows → that's this round's batch. Assign batch
+4. **Liveness check (v1.1).** Before taking a batch, confirm each candidate row's
+   transcript still exists on disk. Runtimes prune session stores on their own
+   schedule (Claude Code's default was 30 days), so a `pending` row is a claim on
+   perishable data, not a durable record. Rows whose transcript is gone get status
+   `lost` with a note - never deleted, so the coverage gap stays visible. Mine
+   within the retention window; queueing sessions for "later" queues them for
+   deletion.
+5. Take the next 5 live `pending` rows → that's this round's batch. Assign batch
    number in the ledger.
 
 ## Phase 2 — Per-session digest (cheap model tier)

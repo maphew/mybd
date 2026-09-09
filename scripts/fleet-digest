@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# fleet-digest - render one fleet run directory into the morning digest.
+#
+# Reads run.json + lanes/*/state.json (+ lanes/*/exit written by the
+# supervisor) and writes <run-dir>/digest.md, also echoed to stdout.
+#
+# Fail-closed aggregation: every bead the run CLAIMED must end with a
+# terminal state file (outcome ratify/parked/handoff/failed). A missing,
+# unparseable, or non-terminal state, or a lane exit code that disagrees
+# with its state, lands in Anomalies - it is never silently dropped, and
+# an empty "Merged" section is printed on purpose (the fleet has no merge
+# rights; emptiness is a statement, not a blind spot).
+#
+# Risk ranking for "awaiting ratification": diff size is the phase-1 proxy
+# (files*10 + lines); red-team finding counts join in phase 2.
+#
+# Usage: scripts/fleet-digest <run-dir>
+# Exit: 0 digest written (even if it contains anomalies) · 1 bad run dir.
+
+set -euo pipefail
+
+RUN_DIR="${1:-}"
+[[ -d "$RUN_DIR" && -f "$RUN_DIR/run.json" ]] || {
+  echo "fleet-digest: not a run dir (need run.json): $RUN_DIR" >&2; exit 1; }
+
+OUT="$RUN_DIR/digest.md"
+run_id=$(jq -r '.run' "$RUN_DIR/run.json")
+
+# gather states into one array; note beads whose state is missing/broken
+states="$RUN_DIR/.states.json"
+anoms="$RUN_DIR/.anoms.txt"
+: >"$anoms"
+{
+  echo '['
+  first=1
+  while IFS= read -r id; do
+    f="$RUN_DIR/lanes/$id/state.json"
+    if [[ -s "$f" ]] && jq -e . "$f" >/dev/null 2>&1; then
+      [[ $first == 1 ]] || echo ','
+      first=0
+      cat "$f"
+      if ! jq -e '.outcome != null' "$f" >/dev/null 2>&1; then
+        echo "claimed bead $id has a NON-TERMINAL state (stage $(jq -r .stage "$f")) - lane was killed before its trap finished; its worktree may still exist" >>"$anoms"
+      fi
+    else
+      echo "claimed bead $id has NO parseable state.json - lane died before writing state; check lanes/$id/spawn.log, worktree may still exist" >>"$anoms"
+    fi
+    ef="$RUN_DIR/lanes/$id/exit"
+    if [[ -s "$ef" ]] && [[ "$(cat "$ef")" != "0" ]]; then
+      echo "lane $id exit code $(cat "$ef") (states claim their own outcome; trust the worse of the two)" >>"$anoms"
+    fi
+  done < <(jq -r '.claims[]' "$RUN_DIR/run.json")
+  echo ']'
+} >"$states"
+
+# leaked dolt servers are a known suite artifact; surface, never kill
+if pgrep -f 'dolt sql-server' >/dev/null 2>&1; then
+  echo "dolt sql-server process(es) still alive after the run: $(pgrep -fc 'dolt sql-server') (clean up per AGENTS.md Validation)" >>"$anoms"
+fi
+
+section() { # section <title> <jq-filter> <empty-line>
+  local title="$1" filter="$2" empty="$3"
+  echo "## $title"
+  echo
+  local rows
+  rows=$(jq -r "$filter" "$states")
+  if [[ -n "$rows" ]]; then printf '%s\n' "$rows"; else echo "$empty"; fi
+  echo
+}
+
+{
+  echo "# Fleet digest - run $run_id"
+  echo
+  jq -r '"Lanes: \(.lanes) · budget \(.budget_secs)s/lane · pool \(.pool_mode) · candidates \(.candidates|length) · claimed \(.claims|length) · claim-skipped \(.skips|length)"' "$RUN_DIR/run.json"
+  echo
+
+  section "Merged" \
+    '.[] | select(.outcome=="merged") | "- \(.bead)"' \
+    "(none - the fleet has no merge rights; this section being empty is policy, not an omission)"
+
+  section "Awaiting ratification (ranked by risk)" \
+    '[.[] | select(.outcome=="ratify")]
+     | sort_by(-((.diff.files*10)+.diff.lines))
+     | .[] | "- **\(.bead)** branch `\(.branch)`\(if .pr then " PR \(.pr)" else " (no PR opened)" end) - \(.diff.files) files / \(.diff.lines) lines - \(.reason)"' \
+    "(none)"
+
+  section "Parked" \
+    '.[] | select(.outcome=="parked") | "- **\(.bead)** at stage \(.stage): \(.reason) (branch `\(.branch)`)"' \
+    "(none)"
+
+  section "Handoffs (budget exhausted / interrupted)" \
+    '.[] | select(.outcome=="handoff") | "- **\(.bead)** at stage \(.stage): \(.reason) - WIP on `\(.branch)`, handoff bead filed"' \
+    "(none)"
+
+  section "Failed" \
+    '.[] | select(.outcome=="failed") | "- **\(.bead)** at stage \(.stage): \(.reason)"' \
+    "(none)"
+
+  echo "## Budget"
+  echo
+  jq -r '.[] | "- \(.bead): \(.budget.used_secs)s / \(.budget.wall_secs)s, reached stage \(.stage)"' "$states"
+  echo
+
+  echo "## Anomalies"
+  echo
+  if [[ -s "$anoms" ]]; then sed 's/^/- /' "$anoms"; else echo "(none)"; fi
+  skips=$(jq -r '.skips[]' "$RUN_DIR/run.json")
+  if [[ -n "$skips" ]]; then echo; echo "Claim skips (already taken or bd refused): $(tr '\n' ' ' <<<"$skips")"; fi
+  echo
+  echo "_Also read recent index-babysit flag comments on the wind-down epic (mybd-ykt9f) - CI regressions on open PRs are reported there, not here (phase 2 folds them in)._"
+} >"$OUT"
+
+rm -f "$states" "$anoms"
+cat "$OUT"

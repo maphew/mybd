@@ -22,7 +22,9 @@
 #
 # Extra flags are passed through to codex verbatim (e.g. -o FILE to capture
 # the final message, --json for JSONL events, --output-schema FILE for
-# structured output, -m/-c to override the tier defaults).
+# structured output). The tier model can be overridden with -m <model>
+# (or -c model='"<model>"'): when either is present among the pass-through
+# args, the wrapper omits its own -m instead of emitting a second one.
 #
 # Guard rails:
 #   - builder must target a linked worktree, never a main checkout
@@ -31,6 +33,8 @@
 #     is always set explicitly here.
 
 set -euo pipefail
+# Agent shells may lack linuxbrew on PATH (bead mybd-zvups); repair before probing tools.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brew-path.sh"
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -50,6 +54,12 @@ for i in "${!args[@]}"; do
     -C?*)    workdir="${args[$i]#-C}" ;;
   esac
 done
+# Absolutize: a relative -C would otherwise produce a relative GOCACHE below,
+# which Go rejects outright ("GOCACHE is not an absolute path").
+if ! workdir="$(cd "$workdir" 2>/dev/null && pwd)"; then
+  echo "codex-agent: working directory does not exist: ${workdir}" >&2
+  exit 2
+fi
 
 # reviewer --diff routes to `codex review` (structured diff review) instead
 # of a free-form exec prompt. `codex review` takes no -C/--cd flag, so the
@@ -85,14 +95,75 @@ if [ "$tier" = builder ] && [ "${CODEX_AGENT_ALLOW_ROOT:-0}" != "1" ]; then
   fi
 fi
 
+# F-005: delegate final messages repeatedly exceeded the 256KB Read cap
+# (434KB/297KB reviewer outputs). Prepend a size-discipline preamble to the
+# builder/reviewer prompt so detail lands in -o files, not the final message.
+# (The reviewer --diff path uses `codex review`, which has no prompt seam;
+# its output is already captured to a log file by scripts/pr-open.)
+if [ "$tier" != scout ] && [ $# -gt 0 ]; then
+  SIZE_PREAMBLE='Final-message discipline: keep your final message under 30KB - a compact summary of findings/actions only. Full logs, diffs, or long analysis belong in the -o output file or files on disk; reference their paths instead of inlining. Oversized final messages are truncated unread.'
+  last="${!#}"
+  prev=""
+  [ $# -ge 2 ] && prev="${*:$#-1:1}"
+  # Only rewrite when the last arg is plausibly the prompt: not itself a
+  # flag, and not the VALUE of a preceding value-taking flag. Otherwise
+  # leave the invocation untouched rather than corrupting an argument.
+  case "$prev" in
+    -o|--output|-c|--config|-C|--cd|-m|--model|--output-schema) prompt_is_last=0 ;;
+    *) prompt_is_last=1 ;;
+  esac
+  if [ "$last" = "-" ]; then
+    stdin_prompt="$(cat)"
+    set -- "${@:1:$#-1}" "$SIZE_PREAMBLE
+
+$stdin_prompt"
+  elif [ "$prompt_is_last" = 1 ] && [ "${last#-}" = "$last" ]; then
+    set -- "${@:1:$#-1}" "$SIZE_PREAMBLE
+
+$last"
+  fi
+fi
+
+# Let a caller escalate/override the tier's default model: a second -m
+# makes codex error ("cannot be used multiple times"), and -c model=...
+# is outranked by our own -m (mybd-cfex). Detect either among the
+# pass-through args and, if present, omit the wrapper's -m.
+caller_has_model=0
+model_args=("$@")
+for ((mi = 0; mi < ${#model_args[@]}; mi++)); do
+  case "${model_args[$mi]}" in
+    -m|--model) caller_has_model=1 ;;
+    --model=*) caller_has_model=1 ;;
+    -c|--config)
+      case "${model_args[$((mi + 1))]:-}" in
+        model=*) caller_has_model=1 ;;
+      esac
+      ;;
+  esac
+done
+
 case "$tier" in
   scout)
-    exec codex exec -s read-only -m gpt-5.6-terra \
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-terra)
+    exec codex exec -s read-only ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"medium"' --ephemeral "$@" ;;
   builder)
-    exec codex exec -s workspace-write -m gpt-5.6-terra \
+    # Go build caches from delegated builds stay under the target worktree,
+    # never /tmp: two stale caches exhausted the per-user /tmp quota on
+    # 2026-07-24, killing both the build and the calling shell (bd memory
+    # codex-builder-tmp-quota, bead mybd-jx3o).  Pre-set GOCACHE/GOTMPDIR or
+    # CODEX_AGENT_KEEP_GO_ENV=1 to opt out.
+    if [ "${CODEX_AGENT_KEEP_GO_ENV:-0}" != "1" ]; then
+      : "${GOCACHE:=$workdir/.tmp/gocache}"
+      : "${GOTMPDIR:=$workdir/.tmp/gotmp}"
+      mkdir -p "$GOCACHE" "$GOTMPDIR"
+      export GOCACHE GOTMPDIR
+    fi
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-terra)
+    exec codex exec -s workspace-write ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"medium"' "$@" ;;
   reviewer)
-    exec codex exec -s read-only -m gpt-5.6-sol \
+    model_flag=(); [ "$caller_has_model" = 0 ] && model_flag=(-m gpt-5.6-sol)
+    exec codex exec -s read-only ${model_flag[@]+"${model_flag[@]}"} \
       -c model_reasoning_effort='"high"' "$@" ;;
 esac

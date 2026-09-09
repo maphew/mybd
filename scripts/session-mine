@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# session-mine - postmortem miner over Claude Code session transcripts.
+#
+# Usage:
+#   scripts/session-mine [--last N] [--session <id>] [--dir <transcript-dir>]
+#                        [--tsv] [--summary]
+#
+# Scans session transcript JSONL for four friction classes and prints
+# findings (TSV: session <TAB> class <TAB> evidence). Warn-only: exit 0
+# always unless the environment is unusable (no jq, no transcript dir).
+#
+#   redo-after-error   - a Bash command re-run after the identical command
+#                        errored earlier in the same session (the "had to
+#                        redo it" signal; identical = whitespace-normalized).
+#   destructive-unguarded - a destructive operation (rm -rf, git checkout
+#                        --theirs/--ours, force push, branch -D, worktree
+#                        prune, reset --hard, git clean) with NO read-only
+#                        pre-flight command (ls/status/log/list...) in the
+#                        preceding 5 Bash calls or earlier in the same
+#                        compound command. `git worktree remove` is exempt:
+#                        it is the safe verb (refuses dirty/bare worktrees).
+#   new-test-first-fail - a Write/Edit to a test-looking file followed by an
+#                        errored Bash run that mentions that file (or bare
+#                        test runner) before any successful run of it.
+#   wrong-cwd          - a tool_result error whose text is a known
+#                        wrong-working-directory signature ("not a git
+#                        repository", "Unable to read current working
+#                        directory", bd database-not-found, cd: No such
+#                        file...).
+#
+# This is the Mine stage of the postmortem-to-guardrail pipeline
+# (bead mybd-uqzt8): findings here are candidates for mechanical guards
+# (wrapper assertion / hook / gitattribute), NOT for documentation.
+# session-close-check runs it over the current session as its check 6.
+set -uo pipefail
+
+die() { echo "session-mine: $*" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || die "jq not on PATH"
+
+last=1
+session=""
+tdir=""
+mode="tsv"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --last) last="$2"; shift 2 ;;
+    --last=*) last="${1#--last=}"; shift ;;
+    --session) session="$2"; shift 2 ;;
+    --session=*) session="${1#--session=}"; shift ;;
+    --dir) tdir="$2"; shift 2 ;;
+    --dir=*) tdir="${1#--dir=}"; shift ;;
+    --tsv) mode="tsv"; shift ;;
+    --summary) mode="summary"; shift ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown arg: $1 (see --help)" ;;
+  esac
+done
+
+# Transcript dir: Claude Code munges the SESSION's starting cwd into a
+# dirname by replacing every / and . with '-'. A session started in a linked
+# worktree gets its own project dir, so probe candidates from most to least
+# specific: cwd, cwd's git toplevel, then the main checkout.
+if [[ -z "$tdir" ]]; then
+  candidates=("$PWD")
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" ]] && candidates+=("$top")
+  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  case "$common" in */.git) candidates+=("${common%/.git}") ;; esac
+  for c in "${candidates[@]}"; do
+    probe="$HOME/.claude/projects/$(printf '%s' "$c" | tr '/.' '--')"
+    if [[ -d "$probe" ]]; then tdir="$probe"; break; fi
+  done
+fi
+[[ -n "$tdir" && -d "$tdir" ]] || die "no transcript dir found (pass --dir)"
+
+# Pick transcript files, newest first by mtime.
+files=()
+if [[ -n "$session" ]]; then
+  if [[ ! -f "$tdir/$session.jsonl" ]]; then
+    # A transcript lives under the project dir of its session's STARTING cwd,
+    # which can differ from every candidate probed above (session launched in
+    # a worktree, close-check run elsewhere). Same fallback as agent-sig.sh:
+    # the exact session file anywhere under projects/ beats a wrong-session
+    # mtime guess.
+    found="$(ls -t "$HOME"/.claude/projects/*/"$session".jsonl 2>/dev/null | head -1 || true)"
+    [[ -n "$found" ]] || die "no transcript for session $session"
+    tdir="$(dirname "$found")"
+  fi
+  files=("$tdir/$session.jsonl")
+else
+  while IFS= read -r f; do files+=("$f"); done < <(
+    find "$tdir" -maxdepth 1 -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null \
+      | sort -rn | head -n "$last" | cut -f2-
+  )
+fi
+[[ ${#files[@]} -gt 0 ]] || die "no transcripts found in $tdir"
+
+mine_one() {
+  local f="$1" sid
+  sid="$(basename "$f" .jsonl)"
+  # One jq pass flattens the transcript into a typed event stream; awk
+  # correlates. Fields are TAB-separated with embedded tabs/newlines
+  # squashed, evidence truncated to keep lines shell-safe.
+  jq -r '
+    def clip($n): tostring | gsub("[\n\t\r]"; " ") | .[0:$n];
+    if .type == "assistant" then
+      (.message.content // [])[]?
+      | select(.type == "tool_use")
+      | select(.name == "Bash" or .name == "Write" or .name == "Edit")
+      | [ "USE", .id,
+          (if .name == "Bash" then "Bash" else .name end),
+          (if .name == "Bash" then (.input.command // "" | clip(400))
+           else (.input.file_path // "" | clip(400)) end) ]
+      | @tsv
+    elif .type == "user" then
+      (.message.content // [])[]?
+      | select(.type == "tool_result")
+      | [ "RES", (.tool_use_id // ""),
+          (if .is_error == true then "1" else "0" end),
+          ((.content // "") | clip(300)) ]
+      | @tsv
+    else empty end
+  ' "$f" 2>/dev/null | awk -F'\t' -v sid="$sid" '
+    function norm(c,   s) { s = c; gsub(/[ \t]+/, " ", s); sub(/^ /, "", s); sub(/ $/, "", s); return s }
+    function emit(class, ev) { gsub(/\t/, " ", ev); print sid "\t" class "\t" ev }
+    function isreadonly(c) {
+      return c ~ /^(ls|command ls|ll|cat|head|tail|wc|stat|find|grep|rg|pwd|which|command -v|test |\[ )/ \
+          || c ~ /^git (status|log|show|diff|branch( |$)|worktree list|for-each-ref|ls-files|rev-parse|remote)/ \
+          || c ~ /^(bd|scripts\/bdj) (list|show|ready|memories)/
+    }
+    function isdestructive(c) {
+      return c ~ /rm -[a-z]*rf|rm -[a-z]*fr|rm -r[a-z]* /                       \
+          || c ~ /git[^|;&]* checkout[^|;&]* --(theirs|ours)/                   \
+          || c ~ /git[^|;&]* push[^|;&]* (--force|--force-with-lease|-f( |$))/  \
+          || c ~ /git[^|;&]* push[^|;&]* \+[A-Za-z]/                            \
+          || c ~ /git[^|;&]* branch[^|;&]* -D( |$)/                             \
+          || c ~ /git[^|;&]* worktree prune/                                    \
+          || c ~ /git[^|;&]* reset --hard/                                      \
+          || c ~ /git[^|;&]* clean[^|;&]* -[a-z]*f/
+    }
+    function istestfile(p) {
+      return p ~ /(^|\/)test[s]?[-_\/]/ || p ~ /_test\.[a-z]+$/ \
+          || p ~ /\.test\.[a-z]+$/ || p ~ /(^|\/)scripts\/test-/
+    }
+    function iswrongcwd(msg) {
+      return msg ~ /not a git repository/                          \
+          || msg ~ /Unable to read current working directory/      \
+          || msg ~ /cd: [^:]*: No such file or directory/          \
+          || msg ~ /[Nn]o beads database|database not initialized/ \
+          || msg ~ /must be run in a work tree/
+    }
+    $1 == "USE" && $3 == "Bash" {
+      id = $2; cmd[id] = $4; n = norm($4)
+      seq++; order[seq] = id; normof[id] = n
+      # destructive pre-flight window: any read-only among previous 5 Bash uses.
+      # Destruction scoped to throwaway space (/tmp, scratchpad, mktemp trees)
+      # is counted but not warned - the guard exists for repo state.
+      if (isdestructive(n)) {
+        if (n ~ /\/tmp\/|scratchpad|mktemp/) { desttmp++ }
+        else {
+          guarded = 0
+          # inline pre-flight: a read-only inspect earlier in the SAME
+          # compound command (before the destructive token) counts.
+          if (match(n, /rm -[a-z]*rf|rm -[a-z]*fr|checkout[^|;&]* --(theirs|ours)|push[^|;&]* (--force|-f )|branch[^|;&]* -D|worktree (remove|prune)|reset --hard|clean -[a-z]*f/)) {
+            pre = substr(n, 1, RSTART - 1)
+            if (pre ~ /git (status|log|worktree list|branch|stash list|diff)|(^| )(ls|stat|find|test) / ) guarded = 1
+          }
+          if (!guarded)
+            for (i = seq - 1; i >= seq - 5 && i >= 1; i--)
+              if (isreadonly(normof[order[i]])) { guarded = 1; break }
+          if (!guarded) destq[id] = n
+          else destg++
+        }
+      }
+      # redo detection: this exact command errored before
+      if (n in erred) { redo[n]++ }
+      # new-test first run: command mentions a recently written test file,
+      # or is a bare test runner (go test ./..., pytest, npm test...) - then
+      # attribute to the most recently written pending test file.
+      for (p in newtest)
+        if (index($4, p) > 0 || (basename_of[p] != "" && index($4, basename_of[p]) > 0)) {
+          testrun[id] = p
+          break
+        }
+      if (!(id in testrun) && lastnewtest != "" && (lastnewtest in newtest) \
+          && n ~ /(^|[;&| ])(go test|pytest|npm (run )?test|yarn test|cargo test|make [a-z-]*test|bats )/) {
+        testrun[id] = lastnewtest
+      }
+      next
+    }
+    $1 == "USE" && ($3 == "Write" || $3 == "Edit") {
+      if (istestfile($4) && !($4 in tested_ok)) {
+        newtest[$4] = 1
+        lastnewtest = $4
+        nb = $4; sub(/.*\//, "", nb); basename_of[$4] = nb
+      }
+      next
+    }
+    $1 == "RES" {
+      id = $2; iserr = ($3 == "1"); msg = $4
+      if (id in cmd) {
+        n = normof[id]
+        if (iserr) {
+          erred[n] = 1
+          if (iswrongcwd(msg)) emit("wrong-cwd", "cmd: " substr(cmd[id],1,120) " | err: " substr(msg,1,120))
+          if (id in testrun && !(testrun[id] in failed_already)) {
+            failed_already[testrun[id]] = 1
+            emit("new-test-first-fail", "test " testrun[id] " first run failed: " substr(msg,1,100))
+          }
+        } else {
+          if (id in testrun) { tested_ok[testrun[id]] = 1; delete newtest[testrun[id]] }
+        }
+        if (id in destq) {
+          emit("destructive-unguarded", (iserr ? "[errored] " : "") substr(destq[id],1,160))
+        }
+      }
+      next
+    }
+    END {
+      for (n in redo) emit("redo-after-error", redo[n] " re-run(s) of: " substr(n,1,140))
+      if (destg > 0) print sid "\tdestructive-guarded-count\t" destg
+      if (desttmp > 0) print sid "\tdestructive-tmp-count\t" desttmp
+    }
+  '
+}
+
+tmp_all="$(mktemp)"
+trap 'rm -f "$tmp_all"' EXIT
+for f in "${files[@]}"; do
+  mine_one "$f" >>"$tmp_all"
+done
+
+if [[ "$mode" == "summary" ]]; then
+  echo "session-mine: ${#files[@]} transcript(s) from $tdir"
+  if [[ ! -s "$tmp_all" ]]; then
+    echo "no findings"
+  else
+    awk -F'\t' '{ c[$2]++ } END { for (k in c) printf "%6d  %s\n", c[k], k }' "$tmp_all" | sort -rn
+    echo "---"
+    cat "$tmp_all"
+  fi
+else
+  cat "$tmp_all"
+fi
+exit 0

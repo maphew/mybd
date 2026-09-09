@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# dolt-compat-matrix — empirical cross-version dolt CLI compatibility probes
+# for the beads proxied-mode version contract (bead mybd-5zvr, psxg.4 C2).
+#
+# For each dolt version: download the linux-amd64 release into a cache,
+# then run probes in a throwaway workspace:
+#   P1 version-parse    `dolt version` first line parses
+#   P2 init+write       `bd init --proxied-server` + create + list (init,
+#                       migrations, write, read through dolt sql-server)
+#   P3 reopen           second bd invocation reads the same workspace
+#   P4 gc-cli-flag      `dolt gc --archive-level 0` in the workspace db
+#   P5 gc-sql-arg       `dolt sql -q "CALL DOLT_GC('--archive-level','0')"`
+#   P6 stats-gc-sql     `dolt sql -q "CALL DOLT_STATS_GC()"`
+#   P7 cross-read       db dir written by CURRENT bd (pinned embedded module)
+#                       opened read/write by this dolt CLI
+#   P8 file-sync        dolt push/pull against a file:// remote
+#
+# Usage: scripts/dolt-compat-matrix [versions...]
+# Default versions: 1.52.1 1.85.0 2.0.0 2.2.2
+# Env: DOLT_MATRIX_CACHE (default ~/.cache/dolt-matrix)
+#      DOLT_MATRIX_KEEP=1 keep workspaces for inspection
+#      BD_MATRIX_BD=/path/to/bd  bd binary to exercise (default: PATH bd).
+#      NOTE: bd --version reports the workspace HEAD, not build provenance;
+#      record `go version -m $BD_MATRIX_BD | grep dolthub/dolt/go` with results.
+set -u
+
+VERSIONS=("${@:-}")
+[ -z "${VERSIONS[0]:-}" ] && VERSIONS=(1.52.1 1.85.0 2.0.0 2.2.2)
+CACHE="${DOLT_MATRIX_CACHE:-$HOME/.cache/dolt-matrix}"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dolt-matrix.XXXXXX")"
+BD_BIN="${BD_MATRIX_BD:-$(command -v bd)}"
+RESULTS=()
+
+cleanup() { [ "${DOLT_MATRIX_KEEP:-0}" = 1 ] || rm -rf "$WORK"; }
+trap cleanup EXIT
+
+fetch() { # fetch <ver> -> echoes binary path or empty
+  local ver="$1" dir="$CACHE/$1"
+  if [ ! -x "$dir/bin/dolt" ]; then
+    mkdir -p "$dir"
+    curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${ver}/dolt-linux-amd64.tar.gz" \
+      -o "$dir/dolt.tar.gz" 2>/dev/null || { echo ""; return; }
+    tar -xzf "$dir/dolt.tar.gz" -C "$dir" --strip-components=1 2>/dev/null || { echo ""; return; }
+    rm -f "$dir/dolt.tar.gz"
+  fi
+  [ -x "$dir/bin/dolt" ] && echo "$dir/bin/dolt" || echo ""
+}
+
+probe() { # probe <name> <timeout-s> <cmd...>; records PASS/FAIL/SKIP
+  local name="$1" to="$2"; shift 2
+  if timeout "$to" "$@" >"$WORK/probe.log" 2>&1; then
+    row+=" $name=PASS"
+  else
+    row+=" $name=FAIL($(tail -c 120 "$WORK/probe.log" | tr '\n' ' ' | tr -s ' '))"
+  fi
+}
+
+# Seed a db with the CURRENT bd's pinned embedded module for P7.
+SEED="$WORK/seed"; mkdir -p "$SEED"
+( cd "$SEED" && git init -q . && "$BD_BIN" init --prefix mx -q >/dev/null 2>&1 \
+  && "$BD_BIN" create "seed issue for matrix" --json >/dev/null 2>&1 )
+SEED_DB="$(find "$SEED/.beads/embeddeddolt" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
+
+for ver in "${VERSIONS[@]}"; do
+  row="dolt=$ver"
+  bin="$(fetch "$ver")"
+  if [ -z "$bin" ]; then RESULTS+=("$row DOWNLOAD=FAIL"); continue; fi
+  vdir="$(dirname "$bin")"
+
+  # P1 version parse
+  out="$("$bin" version 2>/dev/null | head -1)"
+  case "$out" in "dolt version "*) row+=" P1=PASS($out)";; *) row+=" P1=FAIL($out)";; esac
+
+  # isolated dolt global config per version
+  export DOLT_ROOT_PATH="$WORK/dolthome-$ver"; mkdir -p "$DOLT_ROOT_PATH"
+  "$bin" config --global --add user.name matrix >/dev/null 2>&1
+  "$bin" config --global --add user.email matrix@example.invalid >/dev/null 2>&1
+
+  # P2/P3 proxied init+write+reopen with this dolt first on PATH
+  ws="$WORK/ws-$ver"; mkdir -p "$ws"
+  ( cd "$ws" && git init -q . )
+  probe P2 120 env PATH="$vdir:$PATH" bash -c \
+    "cd '$ws' && '$BD_BIN' init --prefix mx --proxied-server -q && '$BD_BIN' create 'matrix issue' --json >/dev/null && '$BD_BIN' list --json | grep -q 'matrix issue'"
+  probe P3 60 env PATH="$vdir:$PATH" bash -c \
+    "cd '$ws' && '$BD_BIN' list --json | grep -q 'matrix issue'"
+  env PATH="$vdir:$PATH" bash -c "cd '$ws' && '$BD_BIN' dolt stop" >/dev/null 2>&1
+
+  # P4-P6 against this version's own workspace db (skip if P2 failed)
+  dbdir="$ws/.beads/dolt"
+  if [ -d "$dbdir" ]; then
+    dbname="$(find "$dbdir" -maxdepth 2 -name .dolt -type d 2>/dev/null | head -1 | xargs -r dirname)"
+    if [ -n "${dbname:-}" ]; then
+      probe P4 60 bash -c "cd '$dbname' && '$bin' gc --archive-level 0"
+      probe P5 60 bash -c "cd '$dbname' && '$bin' sql -q \"CALL DOLT_GC('--archive-level','0')\""
+      probe P6 60 bash -c "cd '$dbname' && '$bin' sql -q 'CALL DOLT_STATS_GC()'"
+    else row+=" P4=SKIP P5=SKIP P6=SKIP"; fi
+  else row+=" P4=SKIP P5=SKIP P6=SKIP"; fi
+
+  # P7 cross-read: current-bd-written embedded db opened by this CLI
+  if [ -n "$SEED_DB" ]; then
+    cp -rf "$SEED_DB" "$WORK/xread-$ver"
+    probe P7 60 bash -c "cd '$WORK/xread-$ver' && '$bin' sql -q 'select count(*) from issues'"
+  else row+=" P7=SKIP"; fi
+
+  # P8 file remote push/pull round trip using this CLI's own repo
+  if [ -n "${dbname:-}" ] && [ -d "${dbname:-}" ]; then
+    rmt="$WORK/rmt-$ver"; mkdir -p "$rmt"
+    probe P8 90 bash -c "cd '$dbname' && '$bin' remote add mxr 'file://$rmt' && '$bin' push mxr main && rm -rf '$WORK/pull-$ver' && mkdir -p '$WORK/pull-$ver' && cd '$WORK/pull-$ver' && '$bin' clone 'file://$rmt' pulled && cd pulled && '$bin' sql -q 'select count(*) from issues'"
+  else row+=" P8=SKIP"; fi
+
+  unset DOLT_ROOT_PATH
+  RESULTS+=("$row")
+done
+
+echo
+echo "=== dolt-compat-matrix results (bd: $("$BD_BIN" --version 2>/dev/null | head -1)) ==="
+for r in "${RESULTS[@]}"; do echo "$r"; done

@@ -1,20 +1,75 @@
 scope	runtime	session_id	started	size_kb	status	batch	note
-mybd	claude-code	29c2c472-3e52-4e4d-996b-cca77670a4c1	2026-07-14	1481	pending		
-mybd	claude-code	1a15af9b-1268-4d6e-b4f5-c119616ca6ba	2026-07-14	604	pending		
+mybd	claude-code	29c2c472-3e52-4e4d-996b-cca77670a4c1	2026-07-14	1481	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	1a15af9b-1268-4d6e-b4f5-c119616ca6ba	2026-07-14	604	lost		transcript pruned before 2026-08-16 retention fix
 mybd	claude-code	dc8e7cb6-01f5-48c7-a143-dd32660f8c14	2026-07-14	236	skipped-inflight		this planning session
 mybd	claude-code	f4208934-f184-476c-8eab-ee34b8420dc3	2026-07-14	17	skipped-trivial		
-mybd	claude-code	c202d537-3a6b-4d52-a7ed-cd278105fd00	2026-07-13	462	pending		
-mybd	claude-code	239ff742-3eed-42a5-90fd-58b495444645	2026-07-12	1462	pending		
-mybd	claude-code	b32eb7f5-0ea2-4a0b-9542-a01b7b34b3e3	2026-07-12	1178	pending		
-mybd	claude-code	7a827b23-9188-4aea-a948-8dab1e668071	2026-07-12	668	pending		
-mybd	claude-code	895576de-6f14-4c64-a2b5-46d9bac9ca1a	2026-07-12	328	pending		
+mybd	claude-code	c202d537-3a6b-4d52-a7ed-cd278105fd00	2026-07-13	462	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	239ff742-3eed-42a5-90fd-58b495444645	2026-07-12	1462	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	b32eb7f5-0ea2-4a0b-9542-a01b7b34b3e3	2026-07-12	1178	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	7a827b23-9188-4aea-a948-8dab1e668071	2026-07-12	668	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	895576de-6f14-4c64-a2b5-46d9bac9ca1a	2026-07-12	328	lost		transcript pruned before 2026-08-16 retention fix
 mybd	claude-code	bc5a9eff-3d64-45ba-a8f9-0ddb36f28ef1	2026-07-12	45	skipped-trivial		
 mybd	claude-code	a8544b40-0b90-4370-9374-767a3280f4c4	2026-07-12	13	skipped-trivial		
 mybd	claude-code	db73f789-fd0d-45f2-ac2b-1e43448c60af	2026-07-12	13	skipped-trivial		
-mybd	claude-code	5ea64a09-9215-4606-81d8-b470a38aeece	2026-06-20	1791	pending		
-mybd	claude-code	2792dcce-72ee-430c-8a6b-677b93fad5db	2026-06-20	1456	pending		
-mybd	claude-code	9401131e-cc66-4cf6-9604-0626e1190d1b	2026-06-20	488	pending		
-mybd	claude-code	8d01abad-0db8-43c5-976a-5b8cdfac4c4e	2026-06-20	261	pending		
-mybd	claude-code	cca2fbe7-52a8-4f10-8055-9e25a7b3442c	2026-06-19	899	pending		
-mybd	claude-code	8571c16a-b44e-412e-8bd5-0d227832fa51	2026-06-19	600	pending		
-mybd	claude-code	510f4d95-a925-4f21-a4ae-c46b3385f03f	2026-06-18	2529	pending		
+mybd	claude-code	5ea64a09-9215-4606-81d8-b470a38aeece	2026-06-20	1791	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	2792dcce-72ee-430c-8a6b-677b93fad5db	2026-06-20	1456	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	9401131e-cc66-4cf6-9604-0626e1190d1b	2026-06-20	488	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	8d01abad-0db8-43c5-976a-5b8cdfac4c4e	2026-06-20	261	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	cca2fbe7-52a8-4f10-8055-9e25a7b3442c	2026-06-19	899	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	8571c16a-b44e-412e-8bd5-0d227832fa51	2026-06-19	600	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	510f4d95-a925-4f21-a4ae-c46b3385f03f	2026-06-18	2529	lost		transcript pruned before 2026-08-16 retention fix
+mybd	claude-code	cb56a7f0-5d89-4e80-89fe-13f370d9a134	2026-07-23	1265	digested	sweep-3d	machinery sweep 2026-07-25
+mybd	claude-code	2088f1c0-82e2-4d07-b6f2-fd18207b0356	2026-07-24	1014	digested	sweep-3d	
+mybd	claude-code	29536753-9bb2-4947-855e-731a96ee9cc6	2026-07-24	1072	digested	sweep-3d	
+mybd	claude-code	e06b7792-c8f4-4f69-bbd5-ad33ea7ebc53	2026-07-24	3068	digested	sweep-3d	
+mybd	claude-code	15466d7d-b852-45df-bfa4-796ecf48168a	2026-07-24	2013	digested	sweep-3d	
+mybd	claude-code	c20b120d-b5ce-4d0a-837e-e1f841fbd2d5	2026-07-24	858	digested	sweep-3d	
+mybd	claude-code	4818896e-828f-4bbb-9a60-23c941f712b4	2026-07-24	197	digested	sweep-3d	
+mybd	claude-code	8e87e066-aec5-48c3-a505-92fccf61e15c	2026-07-24	242	digested	sweep-3d	
+mybd	claude-code	d41b072b-60a1-4514-9833-47e37aa7b046	2026-07-24	2778	digested	sweep-3d	fd-exhaustion incident
+mybd	claude-code	a7e557b0-34cb-4f37-bb75-4e6b9cf0908c	2026-07-24	563	digested	sweep-3d	
+mybd	claude-code	a7573951-87eb-4668-97bf-c1ac2040569e	2026-07-24	1468	digested	sweep-3d	/tmp quota incident
+mybd	claude-code	19c94550-8ba6-4da6-b983-abcbcf815b2f	2026-07-24	119	digested	sweep-3d	
+mybd	claude-code	14e39d13-c88a-4cb1-970a-f5293f50fa10	2026-07-24	300	digested	sweep-3d	
+mybd	claude-code	8c29af54-4c0d-4e6e-88b2-22da6d9798f4	2026-07-25	1389	digested	sweep-3d	
+mybd	claude-code	f6c0822c-b894-4135-8798-77413720814e	2026-07-25	2636	digested	sweep-3d	
+mybd	claude-code	b342548b-c790-484b-a21d-8fd8ded97712	2026-07-25	786	digested	sweep-3d	
+mybd	claude-code	7c0a9e9e-2c70-46ee-ac80-b9c2f4c342e8	2026-07-25	831	digested	sweep-3d	prime-truncation find
+mybd	claude-code	b943fbbb-db5d-47f2-bad4-95841d5b6adb	2026-07-24	90	skipped-trivial	sweep-3d	
+mybd	claude-code	b7fca1f7-8626-4c9e-baf4-59e5b46342ef	2026-07-25	24	skipped-trivial	sweep-3d	
+mybd	claude-code	ca11a7ab-9889-4762-9487-da28f6c03780	2026-07-25	2313	synthesized	sweep-2d-0727	was inflight in sweep-3d, now complete
+mybd	codex	019f8f94-674a-b2c9db33	2026-07-23	1625	digested	sweep-3d	
+mybd	codex	019f91be-8802-d4d8a086	2026-07-23	810	digested	sweep-3d	
+mybd	codex	019f91c4-cea6-06050395	2026-07-23	1538	digested	sweep-3d	
+mybd	codex	019f9251-e4e5-43e18dc2	2026-07-23	761	digested	sweep-3d	
+mybd	codex	019f9504-d6c5-fd4998ac	2026-07-24	931	digested	sweep-3d	
+mybd	codex	019f9530-6514-0e22e5e9	2026-07-24	922	digested	sweep-3d	
+mybd	codex	019f9a18-f9ae-d90ba750	2026-07-25	1692	digested	sweep-3d	
+mybd	codex	019f9b26-6ebe-5bf7ff1d	2026-07-25	436	digested	sweep-3d	codex-side machinery retro (lq8i.2)
+mybd	amp	T-019f8f5b+4more	2026-07-22..24	0	skipped-no-transcript	sweep-3d	5 threads server-side only; cli.log clean
+mybd	kilocode	none	-	0	skipped-inactive	sweep-3d	no activity since 2026-01/03
+mybd	claude-code	108e8ad4-b658-41e7-b464-5a8394bea2cd	2026-07-25	1125	synthesized	sweep-2d-0727	
+mybd	claude-code	43f58618-5bd9-468d-b237-dd0613a009d9	2026-07-25	319	synthesized	sweep-2d-0727	
+mybd	claude-code	13e762f9-e24a-4921-97f1-8d18137fbd14	2026-07-26	243	synthesized	sweep-2d-0727	
+mybd	claude-code	6d370e33-c71a-459a-b63b-a860d033f9c8	2026-07-25	953	synthesized	sweep-2d-0727	
+mybd	claude-code	96d8b3bb-6269-4077-96cd-8b4d6cfea88d	2026-07-25	1684	synthesized	sweep-2d-0727	
+mybd	claude-code	70d60b78-c307-4ebe-b1c2-d21d1e13c77f	2026-07-25	1258	synthesized	sweep-2d-0727	
+mybd	claude-code	dba5e7da-98eb-4e34-b447-fab9cf383bf3	2026-07-26	121	synthesized	sweep-2d-0727	
+mybd	claude-code	dae40981-2fb3-4a2a-9f6b-fdab4e746416	2026-07-26	1528	synthesized	sweep-2d-0727	
+mybd	claude-code	121a1545-9773-489f-b3ae-5acca5e4ffd6	2026-07-26	185	synthesized	sweep-2d-0727	
+mybd	claude-code	e4d4db15-8aa8-49e2-abb1-e56fa80987d6	2026-07-26	892	synthesized	sweep-2d-0727	
+mybd	claude-code	61b85b60-5931-45cd-a13c-d1f0ceb3b684	2026-07-26	340	synthesized	sweep-2d-0727	
+mybd	claude-code	03353724-8668-472c-a128-448f9652b221	2026-07-26	2214	synthesized	sweep-2d-0727	
+mybd	claude-code	915209f2-a8a2-40ad-8ccf-15b221d410ad	2026-07-26	1117	synthesized	sweep-2d-0727	
+mybd	claude-code	0cfae7ae-f32b-4ece-8102-f6c52d6a5649	2026-07-26	1914	synthesized	sweep-2d-0727	
+mybd	claude-code	1bdfcf27-aa49-44ad-b764-7fce84998d06	2026-07-26	254	synthesized	sweep-2d-0727	
+mybd	claude-code	68b8c9f9-3ded-4207-8db5-cd8d38975d4f	2026-07-26	1243	synthesized	sweep-2d-0727	
+mybd	claude-code	524e528f-fb27-4deb-8156-929f23dbcefa	2026-07-26	1363	synthesized	sweep-2d-0727	
+mybd	claude-code	9b719735-0a21-4c0f-8fc9-e5ab1b9dea5e	2026-07-26	1413	synthesized	sweep-2d-0727	
+mybd	claude-code	3db8e4ec-6015-47e9-99e9-2c9c33281f72	2026-07-27	353	skipped-inflight	sweep-2d-0727	active during sweep
+mybd	claude-code	c1284883-2506-4a06-8b09-894086e3fb2a	2026-07-27	80	skipped-inflight	sweep-2d-0727	this retro session
+mybd	claude-code	23263d7f-7ee5-4eda-a734-587323f7b391	2026-09-03	956	synthesized	round-01	three-bead serve run
+mybd	claude-code	26c6e0be-f0be-43f2-b7b9-c11908fbc9da	2026-09-01	524	synthesized	round-01	daily housekeeping; PATH regression found
+mybd	claude-code	00f5a9e5-6e68-47df-ab19-23af0a25e443	2026-08-26	370	synthesized	round-01	
+mybd	claude-code	ea4ecd33-a0cb-4350-aceb-336dbf76a04e	2026-08-24	1454	synthesized	round-01	
+mybd	claude-code	552c75b0-f5a7-41fc-b021-f45fa16215cc	2026-08-22	539	synthesized	round-01	

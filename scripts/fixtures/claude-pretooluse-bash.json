@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "cwd": "/stable/path/project",
+  "tool_input": {
+    "command": "rm -rf .bare"
+  }
+}

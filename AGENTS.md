@@ -2,15 +2,260 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+> **Role note (2026-08-10).** maphew stepped down as a Beads maintainer and is
+> now a normal contributor to `gastownhall/beads`. This repo no longer merges,
+> closes, labels, or triages upstream work, and the five scheduled automation
+> lanes (pr-babysit, verify-babysit, solo-sweep, tri-daily, reap-test-debris)
+> were stopped and deleted. The maintainer-era policy is preserved unchanged at
+> [archive/PR_MAINTAINER_GUIDELINES.md](archive/PR_MAINTAINER_GUIDELINES.md) for
+> reference — do not apply it. See bd memory `maintainer-role-stepped-down`.
+
 ## Conventions
 
 "gh ..." : use gh cli to interact with GitHub
 "gh {number} ..." : use gh cli on gastownhall/beads repo for issue or PR {number}
 "bd ..." : use bd cli to interact with beads
-"run issue triage" / "triage" : run the pinned procedure in
-`.claude/commands/triage.md` (the `/triage` command) - do not improvise a
-triage workflow. It never posts text upstream; publication goes through
-`scripts/tri-submit`, which is human-gated (see `scripts/README.md`).
+
+When scripting over bd output, prefer `scripts/bdj <args>` over `bd <args>
+--json`: it normalizes the output shape to always be a JSON array (object ->
+[object], empty -> []), ending the jq shape-guessing failures (retro F-004).
+For any counting, pass `-n 0` - bd listing commands silently cap at 100 rows.
+
+## Global conventions
+
+Cross-project agent policy (delegation tiers, Codex routing, the Workflow
+standing opt-in, worktree and stash cautions, non-interactive shell flags,
+signing format, GitHub etiquette, validation posture, session handoff) lives
+canonically in `~/.config/agents/AGENTS.md`. On generic policy that file wins;
+on repo specifics (scripts, paths, layout, bd/Dolt rules) this one does.
+
+Claude Code imports it via `~/.claude/CLAUDE.md`, Codex via the
+`~/.codex/AGENTS.md` symlink. **Amp and Kilo read only this file**, so those
+sessions must open `~/.config/agents/AGENTS.md` themselves before relying on
+any pointer below.
+
+## Repository Layout
+
+The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo,
+**not** the beads source tree. In these instructions, `<mybd-root>` means the
+root of this coordination repo, wherever it is cloned on the current machine.
+
+The beads source is a **bare repo at `.bare/` with `bd-main/` as its main
+worktree** (both gitignored). This is not a nested clone — `bd-main/.git` is a
+gitfile pointing at `.bare/`, and repo-wide config such as `core.hooksPath` and
+the remotes live in `.bare/config`.
+
+| Path | `origin` | `upstream` | Purpose |
+|------|----------|------------|---------|
+| `~/dev/mybd/` | `maphew/mybd` | - | Coordination: beads issues, notes, agent config |
+| `~/dev/mybd/.bare/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads object store |
+| `~/dev/mybd/bd-main/` | (worktree of `.bare`) | | Beads source - code edits, builds, PRs happen here |
+
+In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin`
+(the fork). Do not add a `gastownhall` remote to the cwd repo.
+
+**Never `rm -rf` a path that came out of `git worktree list`.** Here that list
+includes the bare repo itself (`.bare`), so a delete-loop over it destroys the
+object store for every worktree at once. Procedure and the `git bundle`
+snapshot rule: "Git worktrees" in `~/.config/agents/AGENTS.md`. Written down
+2026-08-10 because exactly this happened; the bundle made it recoverable.
+
+### Worktree Location
+
+Use git worktrees by default, but do not create sibling review/source worktrees
+at the `mybd/` repo root.
+
+For Beads source worktrees:
+
+```bash
+git -C bd-main worktree add /abs/path/to/<mybd-root>/.worktrees/beads/<short-purpose> <branch>
+```
+
+Pass an **absolute** path: a relative path resolves against the git process's
+cwd (i.e. `bd-main/`), silently creating `bd-main/.worktrees/...`.
+
+The `mybd/` root should contain only the coordination repo files, the `.bare/`
+object store, the `bd-main/` worktree, and ignored container directories such
+as `.worktrees/`.
+
+#### Coordination-repo worktrees
+
+Coordination-repo work that makes **git commits** must run from a worktree on a
+topic branch:
+
+```bash
+git worktree add .worktrees/mybd/<short-purpose> -b <branch>
+```
+
+Pure **bead-only** sessions may stay in the root checkout: bead state syncs via
+Dolt (`bd dolt push`/`pull`), not git, so those sessions make no commits to
+race over.
+
+Why: on 2026-05-29 two agents shared the root checkout; one ran `git checkout`
+mid-session, racing the other's commits.
+
+##### Landing a coordination-repo branch
+
+Finish the job: a topic branch is a workspace, not a deliverable. **Merge it to
+`main` locally and push — do not open a PR against `maphew/mybd`.**
+
+```bash
+git -C <mybd-root> merge --no-ff <branch>   # from the root checkout
+git -C <mybd-root> push
+git worktree remove .worktrees/mybd/<short-purpose>
+git branch -d <branch>
+```
+
+This is a single-owner repo: a PR here has no *human* reviewer, so it is a
+queue with nobody serving it. Reports in particular go straight to `main`.
+PRs remain right for `gastownhall/beads`, where there genuinely is review.
+
+**Standing exception (owner directive maphew, 2026-08-17): open a PR here
+deliberately to summon the automated reviewers** (Codex, Kilo) **when the
+change warrants adversarial eyes** — guardrail/hook scripts, anything
+security-adjacent, or logic where a bypass would be silent. Precedent: PR 33,
+where two review rounds caught real quoted-option and short-flag bypasses in
+`scripts/destructive-guard`. A PR opened under this exception is still yours
+to serve: address findings, merge when green, delete the branch — do not
+leave it queued. Plain doc/report/bead changes keep using the local
+merge above.
+
+If you cannot land — dirty tree, a decision you need the owner to make — say so
+in the handoff **and** file a bead naming the branch. An unlanded branch that
+nothing points at is invisible to the cold-start path (`bd ready`).
+
+Never use bare `git stash` while parallel worktrees may be live: the stash
+stack is shared repo-wide. See "Git worktrees" in `~/.config/agents/AGENTS.md`.
+
+## Contributing upstream
+
+We open PRs against `gastownhall/beads` like any other contributor. We do not
+merge, close, label, or request-changes on anyone's PR, and we do not triage
+the upstream issue queue.
+
+Preflight for duplicate work first (see "Cross-vendor review before a PR" in
+`~/.config/agents/AGENTS.md`). Here that means both of:
+
+```bash
+bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
+git -C bd-main log --all --oneline --since=3.days -- <path you are about to edit>
+```
+
+The path-scoped query matters: parallel sessions commit locally before pushing,
+so `gh pr list` cannot see this machine's own unpushed state.
+
+### Red-team + cross-vendor review before an upstream PR
+
+Two verification stages run before `gh pr create`, in one verb:
+
+```bash
+scripts/pr-open -C <worktree> --base main --search "<topic keywords>"
+```
+
+It runs the preflight, then **`scripts/red-team`** (adversarial verification),
+then `codex-agent reviewer --diff` on the branch, and writes findings to
+`.worktrees/.review-logs/<head-sha>.md`. **Reconcile the review findings
+before posting** (see "Cross-vendor review before a PR" in
+`~/.config/agents/AGENTS.md`).
+
+`scripts/red-team` spawns an adversarial agent in a throwaway sandbox worktree
+whose only job is to break the change: write failing tests against the new
+code paths, hunt bypasses in grep/regex-based checks, verify test hermeticity
+(isolation, randomized order, different cwd), and probe for silent
+fixture-state dependence. Findings come back as structured P0–P3 JSON. While
+P0/P1 findings remain, a builder agent fixes and commits, then the adversary
+re-runs — max 3 rounds. If rounds exhaust with P0/P1 still open, the script
+files a bead with the findings and the verdict is FAIL: **do not open that
+PR; move to the next queue item.** The verdict lands in
+`.worktrees/.review-logs/<head-sha>.redteam.json`. Run it standalone with
+`scripts/red-team -C <worktree> --base main` (add `--no-fix` when the calling
+session is the builder — rounds then count across invocations, prior findings
+are re-injected for re-verification, and a clean rerun on an unchanged
+previously-failing commit is refused rather than trusted).
+
+`scripts/pr-review-gate` (a `PreToolUse` hook in `.claude/settings.json` and
+`.codex/hooks.json`) blocks `gh pr create` until BOTH a review log and a
+passing red-team verdict exist for the **exact commit** proposed; amending
+re-arms it. Scripts source `scripts/lib/brew-path.sh` to re-add linuxbrew to
+non-interactive PATHs (Bluefin's brew.sh is interactive-only since 2026-09);
+if codex is still missing on a host with `~/.codex`, the gate BLOCKS rather
+than standing down (mybd-zvups). Only a host with no codex at all stands down. Codex hook trust is
+per-machine and command-hash-specific: after changing `.codex/hooks.json`,
+review and trust the changed hooks in an interactive Codex `/hooks` screen,
+then run `scripts/check-codex-hook-trust`. A registered but untrusted, modified,
+disabled, or wrong-source hook does not count as active. To skip deliberately,
+prefix with `MYBD_SKIP_XVENDOR=1` (review half) and/or `MYBD_SKIP_REDTEAM=1`
+(red-team half) and say why in the handoff. Each hatch skips only its own
+requirement. Smoke-test with
+`scripts/test-pr-review-gate` and `scripts/test-red-team-gate`.
+
+This matters more as a contributor than it did as a maintainer: nobody here can
+wave a rough PR through.
+
+### After a PR is open
+
+Our own open PRs are the contribution surface. Upkeep policy (keep them
+rebased and green, respond to review, close what you no longer want): see
+"Cross-vendor review before a PR" in `~/.config/agents/AGENTS.md`.
+
+One contributor-scoped patrol exists (2026-08-12, replacing nothing from the
+maintainer era): **`scripts/index-babysit`**, a zero-token systemd user timer
+(every 30 min) that (a) ticks checkboxes in the step-down handoff index
+gastownhall/beads#5711 when the underlying PR/issue closes, (b) comments on
+`mybd-jart4` once PR 4720 merges, and (c) flags fleet regressions — merge
+conflicts, real FAILURE checks (cancelled ignored), *new* CHANGES_REQUESTED —
+as comments on `mybd-ykt9f` for the next session to act on. **It only flags
+and ticks; it never merges, rebases, closes, or pushes.** Sessions doing PR
+work should read recent `mybd-ykt9f` comments. Install/refresh with
+`scripts/install-index-babysit` from the main checkout; re-run it after any
+unit-template change (deployed units drift — see bd memory
+`a-tracked-systemd-unit-template-under-scripts-systemd`). Smoke-test with
+`scripts/test-index-babysit`.
+
+### Overnight fleet (phase 1)
+
+`scripts/fleet` is the overnight lane supervisor (epic `mybd-vlsnv`; design and
+failure-mode analysis in
+[reports/2026-08-16-overnight-fleet-architecture.md](reports/2026-08-16-overnight-fleet-architecture.md)).
+It filters `bd ready` through the gate-label primitive (beads labeled `human`
+etc. are excluded; default pool mode `optin` additionally requires the
+`fleet-ok` label), claims beads atomically and SERIALLY before spawning, then
+runs up to `FLEET_LANES` (default 2) parallel `scripts/fleet-lane` processes,
+each in its own worktree/branch (`fleet/<bead>`) with a wall-clock budget
+(default 45min). Lanes run implement (codex builder) -> test -> `scripts/pr-open`
+(preflight + red-team + cross-vendor review) and park for ratification; the
+fleet NEVER merges, and PR creation is off (`FLEET_OPEN_PR=0`) until phase 2.
+On budget exhaustion a lane commits WIP, files a handoff bead, and removes its
+worktree - never a dirty worktree. `scripts/fleet-digest <run-dir>` renders the
+morning digest. Smoke-test with `scripts/test-fleet`; validate a night with
+`scripts/fleet --dry-run` first.
+
+## Validation
+
+Run the suite locally before proposing a change (see "Validation" in
+`~/.config/agents/AGENTS.md`). There is no queue and no babysitter here: long
+runs block the session that started them, so scope tests to what you touched
+and run the full suite when it is worth the wait.
+
+Test runs leak `dolt sql-server` processes and temp trees into `$TMPDIR`.
+Nothing reaps them automatically any more — check for and clean up your own
+debris after heavy runs:
+
+```bash
+pgrep -af 'dolt sql-server'
+du -sh "${TMPDIR:-/tmp}"/beads-bd-tests-* 2>/dev/null
+```
+
+Only kill current-user servers rooted in the suite's own temp-dir patterns, and
+never one younger than a run that might still be live.
+
+On hosts where /tmp is a small tmpfs, point Go's scratch space at the home
+disk before heavy builds or test runs; exact `GOTMPDIR`/`GOCACHE` commands are
+in "Shell hygiene" in `~/.config/agents/AGENTS.md`. Observed here 2026-07-31:
+20G tmpfs at 78%, linker died with 'No space left on device', a failure that
+looks nothing like a disk problem. `scripts/codex-agent` already does this for
+delegated builds; in-session runs must do it themselves. Sweep
+`beads-bd-tests-*` dirs older than a day.
 
 ### Windows / Daily Housekeeping
 
@@ -24,25 +269,16 @@ Get-Content .beads/.local_version
 ```
 
 The repo-local source build is `bd-main\bd.exe`. If `bd --version` is older
-than `.beads/.local_version` and `bd-main\bd.exe` has the expected version,
-replace the stale PATH binary at `C:\Users\Matt\.local\bin\bd.exe` with the
-repo-local binary, after confirming no `bd` process is running. Keep a backup
-named for the old version.
+than `.beads/.local_version`, replace the stale PATH binary at
+`C:\Users\Matt\.local\bin\bd.exe` with the repo-local binary, after confirming
+no `bd` process is running. Keep a backup named for the old version.
 
 Several repo scripts are Bash scripts. From PowerShell, run them through Git
-Bash rather than invoking them directly:
-
-```powershell
-& 'C:\Program Files\Git\bin\bash.exe' scripts/check-beads-config
-& 'C:\Program Files\Git\bin\bash.exe' scripts/verify-status
-```
-
-PowerShell wrappers are also available beside the extensionless scripts. When
-staying in PowerShell, prefer the `.ps1` entrypoint:
+Bash rather than invoking them directly, or prefer the `.ps1` wrapper beside the
+extensionless script:
 
 ```powershell
 scripts/check-beads-config.ps1
-scripts/verify-status.ps1
 ```
 
 Run embedded-Dolt `bd`/`dolt` commands serially in this repo. Parallel `bd`
@@ -55,498 +291,320 @@ git pull --rebase
 bd prime
 & 'C:\Program Files\Git\bin\bash.exe' scripts/check-beads-config
 bd context --json
-git -c safe.directory=A:/dev/mybd/bd-main -C bd-main fetch --all --prune
+git -C bd-main fetch --all --prune
 bd ready
 bd list --status=in_progress
-& 'C:\Program Files\Git\bin\bash.exe' scripts/verify-status
 ```
 
 If a newer `bd` refuses to auto-apply pending schema migrations on this
 remote-backed database, do not override it casually. Do not run
 `BD_ALLOW_REMOTE_MIGRATE=1` unless you are explicitly acting as the single
-designated migrator. For ordinary housekeeping, record that schema-sensitive
-commands are blocked by the migration gate and continue with read-only checks
-that do not require migration. Commands such as `bd stats`, `bd blocked`,
-`bd stale`, `bd orphans`, and `bd lint` are useful when schema-compatible, but
-they are best-effort checks while the local database is behind the current
-binary's schema.
+designated migrator.
 
-If `bd list` unexpectedly appears empty in this coordination repo, do not
-restore `.beads` blindly. Run `scripts/check-beads-config`; the live local
-database is `.beads/embeddeddolt/mybd` (issue prefix `mybd-`, synced via the
-Dolt remote to maphew/mybd), and stale config can point `bd` at the empty
-`beads` bootstrap database.
-For the narrow known drift case where `.beads/metadata.json` points at empty
-`beads` while `mybd` is populated and has the expected remote, run
-`scripts/check-beads-config --fix`. If both databases contain issues, export
-both and reconcile manually before changing metadata. Use
-`scripts/pre-commit-beads-config` in local commit hooks or CI to reject
-accidental `.beads/metadata.json` changes away from `mybd`; intentional
-database renames require `MYBD_ALLOW_DB_RENAME=1`.
+If `bd list` unexpectedly appears empty, do not restore `.beads` blindly. Run
+`scripts/check-beads-config`; the live local database is
+`.beads/embeddeddolt/mybd` (issue prefix `mybd-`, synced via the Dolt remote to
+maphew/mybd), and stale config can point `bd` at the empty `beads` bootstrap
+database. For the narrow known drift case, run
+`scripts/check-beads-config --fix`. Use `scripts/pre-commit-beads-config` in
+local commit hooks to reject accidental `.beads/metadata.json` changes away from
+`mybd`; intentional renames require `MYBD_ALLOW_DB_RENAME=1`.
 
-When working on beads, spawn agents according to their metadata hints.
-The checked-in Codex skill for those hints is `.codex/skills/beads-delegation-planner/`; use it when inspecting, triaging, tackling, or delegating beads.
+### General hygiene pass
+
+The routine above is a **floor, not a ceiling**. After the pinned checks, spend
+one pass on general hygiene and use judgment about what else looks crufty:
+
+```bash
+git worktree list                 # stale/abandoned worktrees (both repos)
+git branch --merged main          # local branches already merged
+git branch -vv | grep ': gone'    # local branches whose upstream was deleted
+git stash list                    # forgotten stashes (shared across worktrees!)
+git status --ignored=matching -- . 2>/dev/null | tail -20  # stray untracked cruft
+```
+
+Posture: **notice and report; delete only the obviously dead.** Anything
+ambiguous goes in the handoff (or a bead) instead of the trash.
+
+Close the pass with: **"What did I notice that isn't on any list?"** — and put
+the answer in the session report.
 
 ## Agent Delegation: tier subagent models by task complexity
 
-**Owner directive (maphew, 2026-07-03).** Sessions start on a smart model to
-understand the problem and build the plan; execution is then delegated to
-subagents on the cheapest model adequate for each piece. When spawning
-subagents, pick the tier deliberately - do not default everything to the
-session model. This is a separate axis from the bead metadata hints above:
-those hints say *which bead work* to delegate, this says *which model tier* to
-run it on.
+Owner directive (maphew, 2026-07-03; made global 2026-08-12). Tier
+definitions, what stays in the orchestrator session, and the rules of thumb
+(precise over vague, escalate rather than retry, never set
+`CLAUDE_CODE_SUBAGENT_MODEL`): see "Delegation: tier subagent models by task
+complexity" in `~/.config/agents/AGENTS.md`.
 
-Named tiers live in `.claude/agents/` - prefer them over ad-hoc spawns:
+Repo specifics:
 
-- **scout** (GPT-5.6 Terra at medium reasoning, read-only) - searches, file inventories, 
-  "where is X", summarizing files, running read-only bd/git commands or tests and 
-  reporting output verbatim. Scout runs on Codex, so prefer calling
-  `scripts/codex-agent scout -o <file> "<task>" </dev/null` directly from the
-  orchestrator - `codex exec` is itself an agent, so the direct call gives the
-  same context isolation without the relay hop. Include the recon rules from
-  `.claude/agents/scout.md` in the prompt. The `scout` agent type remains the
-  interface for workflow `agentType` calls and degrades to haiku (flagged)
-  when codex is unavailable.
-- **builder** (sonnet, can edit) - well-scoped implementation with a clear
-  spec: exact files named, acceptance criteria stated. Give it a spec, not
-  a problem.
-- **reviewer** (opus, read-only) - correctness review of diffs and designs
-  before integration, especially builder output.
-
-Keep in the orchestrator session (no delegation, or `inherit`): design
-decisions, ambiguous debugging, anything where the spec doesn't exist yet.
-
-Rules of thumb:
-- Prefer several precisely-scoped delegations over one vague one - a
-  subagent that must rediscover context you already hold wastes more than
-  its model tier saves.
-- Escalate rather than retry: if a scout/builder result is wrong or the
-  task proved harder than scoped, redo it at a higher tier or in-session
-  instead of re-spawning the same tier.
-- Do **not** set `CLAUDE_CODE_SUBAGENT_MODEL` - it overrides per-spawn
-  model choice and flattens this tiering.
+- The named tiers live in `.claude/agents/`. **scout** here runs GPT-5.6 Terra
+  at medium reasoning, read-only, and is best invoked directly as
+  `scripts/codex-agent scout -o <file> "<task>" </dev/null`; in this repo scout
+  work means searches, file inventories, "where is X", summarizing files, and
+  running read-only bd/git commands or tests and reporting output verbatim.
 - Subagents share the cwd unless spawned with `isolation=worktree`. Spawn any
-  subagent that will commit (e.g. builder) with `isolation=worktree` by
-  default, and always isolate when more than one edits files in parallel:
-  coordination-repo commits belong in a worktree, never the root checkout. A
-  committing subagent that finds itself in the root checkout must stop and
-  report rather than commit.
+  subagent that will commit with `isolation=worktree` by default. A committing
+  subagent that finds itself in the root checkout must stop and report.
 
 ### Cross-runtime delegation: Codex CLI
 
-OpenAI Codex CLI is installed and authenticated on this machine (repo
-trusted in `~/.codex/config.toml`; `bd prime` fires via `.codex/hooks.json`
-in Codex sessions too). `codex exec` is a fourth executor alongside the
-Claude subagent tiers, invoked from any runtime via the shell. Use
-`scripts/codex-agent`, which maps the same tier names onto Codex
-model/sandbox/reasoning defaults:
+OpenAI Codex CLI is installed and authenticated on this machine. `codex exec`
+is a fourth executor alongside the Claude subagent tiers. Use
+`scripts/codex-agent`, which maps the same tier names onto Codex defaults:
 
 ```bash
-scripts/codex-agent scout    "where is X handled?"          # gpt-5.6-terra, medium, read-only, ephemeral
-scripts/codex-agent builder  -C .worktrees/mybd/foo "..."   # gpt-5.6-terra, medium, workspace-write
-scripts/codex-agent reviewer "assess this design: ..."      # gpt-5.6-sol, high, read-only
-scripts/codex-agent reviewer --diff --base main             # structured `codex review` of a branch diff
+scripts/codex-agent scout    "where is X handled?"          # read-only, ephemeral
+scripts/codex-agent builder  -C .worktrees/beads/foo "..."  # workspace-write
+scripts/codex-agent reviewer "assess this design: ..."      # high reasoning, read-only
+scripts/codex-agent reviewer --diff --base main             # structured review of a branch diff
 ```
 
-When to route to Codex instead of a Claude subagent:
+**A session instruction restricting subagents or workflows does not restrict
+`scripts/codex-agent`.** It is a shell call billed to a separate pool, not the
+Agent tool and not a Workflow. Honour an explicit "no codex" for the turn; do
+not infer one from a restriction on Claude subagents.
 
-- **Second opinion across model vendors** - reviews, design assessments, and
-  bug hunts where an independent model family catches what same-family
-  agents miss. This is the highest-value use: pair `codex-agent reviewer`
-  with the Claude `reviewer` agent on the same diff and compare.
-- **Quota relief** - Codex bills to the ChatGPT plan, a separate pool from
-  Claude. Its tokens do NOT count toward workflow `budget.spent()` or a
-  "+Nk" directive, so `log()` Codex delegations in workflows instead of
-  assuming the budget captured them.
-- **Long mechanical work** that would otherwise burn session context.
-- **Bead routing hints** - when a bead's `execution_suggested_model`
-  metadata names an OpenAI model (e.g. `gpt-5.6-sol`), route that bead's work
-  through `codex-agent` at the tier implied by `execution_agent_type` and
-  `execution_reasoning_effort` (see `.codex/skills/beads-delegation-planner/`).
+When to route here, and the baseline rules (explicit sandbox mode,
+`</dev/null` when scripting, `-o` capture, resume rather than re-explain,
+generous waits, never watch CI in-session): see "Cross-vendor delegation:
+Codex CLI" in `~/.config/agents/AGENTS.md`. The wrapper enforces explicit
+sandbox mode; never `danger-full-access` in this repo. Repo-specific rules on
+top of that, the first also enforced by the wrapper:
 
-Rules (the wrapper enforces the first two):
-
-- Non-interactive Codex never prompts for approval; the sandbox mode must
-  always be set explicitly (`read-only` / `workspace-write` /
-  `danger-full-access` - never the last in this repo).
-- `builder` must target a linked worktree via `-C`; the wrapper exits 3 on
-  a main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
-- Close stdin (`</dev/null`) when scripting - with no prompt argument
-  `codex exec` reads the prompt from piped stdin, and with one it appends
-  stdin as an extra block. Capture results with `-o <file>` (final message),
-  `--json` (JSONL events incl. token usage), or `--output-schema <file>`
-  (structured output, analogous to workflow `agent()` schemas).
-- Continue a builder or reviewer Codex session with
-  `codex exec resume <session-id>` (id is printed in the run header) rather
-  than re-explaining context. Scout runs are `--ephemeral` and cannot be
-  resumed.
-- Commits made by a Codex delegate follow the same signing convention;
-  from an orchestrating runtime generate the trailer with
+- `builder` must target a linked worktree via `-C`; the wrapper exits 3 on a
+  main checkout (`CODEX_AGENT_ALLOW_ROOT=1` to override deliberately).
+- Capture with `-o <file>`, `--json`, or `--output-schema <file>`. Delegate
+  final messages are capped by a wrapper preamble (retro F-005): summary under
+  30KB in the final message, full detail to the `-o` file, then grep the file
+  on disk instead of re-reading it whole.
+- Scout runs are `--ephemeral` and cannot be resumed.
+- Codex tokens do NOT count toward workflow `budget.spent()`, so `log()` Codex
+  delegations in workflows.
+- Commits by a Codex delegate follow the same signing convention; generate the
+  trailer with
   `AGENT_MODEL=<model> AGENT_REASONING=<effort> scripts/agent-sig.sh codex --trailer`.
-- The escalation rule above applies across runtimes: a wrong Codex scout or
-  builder result gets redone at a higher tier (either vendor) or
-  in-session, not re-spawned at the same tier.
-- Codex runs in this repo trigger `bd prime` on session start, and bd/dolt
-  must stay serial: do not fan out parallel Codex runs against the
-  coordination repo; parallelize in beads source worktrees instead.
+- Codex runs trigger `bd prime` on session start, and bd/dolt must stay serial:
+  do not fan out parallel Codex runs against the coordination repo.
+- Waiting is the dominant Codex token cost here (retro F-003): minutes, not
+  30s, and batch waits for parallel children.
 
 ## Workflow Orchestration: standing opt-in
 
-**Owner directive (maphew, 2026-07-03): multi-agent Workflow orchestration
-is pre-authorized for every substantive task in this repo.** Treat this
-section as the explicit, durable user opt-in that the Workflow tool
-requires - do not wait for "use a workflow" or the `ultracode` keyword in
-a prompt.
+**Owner directive (maphew, 2026-07-03): multi-agent Workflow orchestration is
+pre-authorized for every substantive task in this repo.** That directive plus
+"Workflow orchestration: standing opt-in" in `~/.config/agents/AGENTS.md` is
+the durable user opt-in the Workflow tool requires; the global section carries
+when to reach for a workflow, the budget rules (+200k default, a soft
+performance target and not a reliability ceiling, shared `budget.spent()`), the
+stage-aggregate validation rule, `agent()` tiering, and the "no workflow"
+override.
 
-- Reach for a workflow whenever a task fans out (multiple files, beads,
-  review dimensions, search angles), needs adversarial verification, or
-  benefits from per-agent model/effort control. Work solo only on
-  conversational turns, single lookups, and trivial mechanical edits where
-  orchestration overhead would exceed the work itself.
-- **Default token budget: +200k per substantive task.** A "+Nk" directive
-  in the current prompt overrides it. The harness only sets a hard
-  `budget.total` from an in-prompt directive, so workflow scripts must
-  self-enforce the default:
-  `const TARGET = budget.total ?? 200_000` - check `budget.spent()`
-  between stages, stop spawning as the target nears, and `log()` any
-  coverage dropped because of it.
-- Inside workflows, tier `agent()` calls per the delegation policy above:
-  `model: 'haiku', effort: 'low'` for mechanical stages; omit overrides
-  (inherit) for design, judge, and verify stages.
-- For verify/judge stages that benefit from vendor diversity, one agent may
-  shell out to `scripts/codex-agent reviewer ... </dev/null` (see
-  Cross-runtime delegation above). Codex tokens bypass `budget.spent()`,
-  so `log()` each Codex call and keep such runs serial in this repo.
-- Run bd/dolt operations serially inside workflows - parallel bd commands
-  can leave Git helper processes or embedded-Dolt locks behind.
-- A *current* prompt saying "no workflow" / "keep it cheap" wins for that
-  turn.
+Repo addendum: **run bd/dolt operations serially inside workflows.** Parallel
+bd commands can leave Git helper processes or embedded-Dolt locks behind.
 
 When a bead is correlated with a gh issue or PR, check for drift.
 
 When upstream beads work changes product surface area, read
-[bd-main/docs/PROJECT_CHARTER.md](bd-main/docs/PROJECT_CHARTER.md). Beads owns
-issue tracking primitives; route orchestration policy outside beads core and
-prefer metadata before schema when the data is workflow-specific.
+[bd-main/engdocs/PROJECT_CHARTER.md](bd-main/engdocs/PROJECT_CHARTER.md).
 
-Before implementing related upstream beads work, opening a competing PR, or
-merging/closing a PR, run the upstream PR preflight when applicable:
+Assume you are not working alone, and use git worktrees by default: see
+"Working alongside others" and "Git worktrees" in `~/.config/agents/AGENTS.md`.
 
-```bash
-bd-main/scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
-bd-main/scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
-```
+Write reports as md only — no html twins (policy 2026-07-07; read long Markdown
+with [`mdo`](https://github.com/maphew/mdo)). Reports are tracked in git
+deliberately: they are the retroactive "why" record behind decisions that commit
+messages don't carry.
 
-Autonomous agents export `PR_PREFLIGHT_BLOCK_RED_BASE=1` so preflight
-hard-blocks (rather than warns) when the base branch is red. While upstream
-main is red, the only mergeable PR is the fix for main - stop-the-line, see
-[PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) "Base-Branch Health".
-
-Assume you are not working alone.
-Use git worktrees by default.
-Write reports as md only — no html twins (policy change 2026-07-07; read long
-Markdown with [`mdo`](https://github.com/maphew/mdo) instead). Reports are
-tracked in git deliberately: they are the retroactive "why" record behind PR
-merges/abandonments that commit messages don't carry. `scripts/md2html` is
-deprecated.
-
-Answer 'why' when opening a PR.
-PR maintenance policy: [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md)
-
-When creating or editing GitHub PR, issue, comment, or review bodies:
-- Write Markdown to a file and use `gh ... --body-file`; do not pass multiline bodies via inline shell strings.
-- Use `#1234` or `owner/repo#1234`, not `GH#1234`, in GitHub-facing text.
-- Run `<mybd-root>/scripts/gh-body-lint <body-file>` before posting; fix literal `\n` sequences and non-linking issue refs first.
+GitHub etiquette (answer 'why' when opening a PR, bodies to a file with
+`gh ... --body-file`, autolink-safe references): see "GitHub" in
+`~/.config/agents/AGENTS.md`. Here: write `#1234` or `owner/repo#1234`, never
+`GH#1234`, and run `<mybd-root>/scripts/gh-body-lint <body-file>` before
+posting.
 
 ### Signing
 
-- Sign GitHub comments using:
-  `_{agent_runtime}-{model}-{reasoning} on behalf of {user}_`
-- Sign commits with a trailer:
-  `Agent-Signature: {agent_runtime}-{model}-{reasoning} on behalf of {user}`
-- Generate the line with `<mybd-root>/scripts/agent-sig.sh` (add `--trailer` for the commit form). It reads live session metadata for Claude Code and Codex; runtimes it cannot auto-detect pass their name as an argument (e.g. `agent-sig.sh kilocode`) and may supply `AGENT_MODEL` / `AGENT_REASONING` env vars.
-- **Run it via the Bash tool / Git Bash, never the PowerShell tool.** For Claude Code the `{reasoning}` field is read from `CLAUDE_EFFORT`, which is exported only into Bash-tool subprocesses - the PowerShell-tool environment lacks it (and bash spawned from there inherits the gap), so a PowerShell-tool invocation silently produces `unknown-reasoning`. There is intentionally no `.ps1` wrapper for this script for that reason; the `.sh` extension signals "run through bash". Invoke it as:
+Signature format and the "never guess `{model}`/`{reasoning}`, keep the
+`unknown-*` placeholders" rule: see "Signing" in `~/.config/agents/AGENTS.md`.
+Repo specifics:
+
+- Generate the line with `<mybd-root>/scripts/agent-sig.sh` (add `--trailer`).
+- **Run it via the Bash tool / Git Bash, never the PowerShell tool.** The
+  `{reasoning}` field is read from `CLAUDE_EFFORT`, exported only into
+  Bash-tool subprocesses; a PowerShell-tool invocation silently produces
+  `unknown-reasoning`. There is intentionally no `.ps1` wrapper.
   ```bash
   scripts/agent-sig.sh --trailer
   ```
-  or explicitly through Git Bash from elsewhere:
-  ```powershell
-  & 'C:\Program Files\Git\bin\bash.exe' scripts/agent-sig.sh --trailer
-  ```
-  The script warns on stderr when it falls back to a placeholder, so heed that warning rather than posting the signature.
-- Do not infer `{model}` or `{reasoning}` from defaults, model cache, prompt text, or memory. If reliable metadata is unavailable, keep the script's `unknown-model` / `unknown-reasoning` placeholders rather than guessing.
+- The model cache counts as a "default" for the do-not-infer rule: never sign
+  from it.
+- A Claude Code subagent inherits the parent's `CLAUDE_CODE_SESSION_ID`, so a
+  transcript lookup there would return the orchestrator's model, not the
+  subagent's. `agent-sig.sh` detects subagent shells via
+  `CLAUDE_CODE_CHILD_SESSION=1` and signs with the `unknown-*` placeholders
+  unless the orchestrator passes `AGENT_MODEL` / `AGENT_REASONING`
+  explicitly — the orchestrator knows which tier it spawned; the child
+  cannot see its own model. Covered by `scripts/test-agent-sig`.
 
-For Amp, read session metadata from the local Amp state, not from the system prompt or memory. The active thread id is in `AMP_CURRENT_THREAD_ID`.
+For Amp, run `scripts/agent-sig.sh amp` (auto-detected when
+`AMP_CURRENT_THREAD_ID` is set). Amp threads are server-resident (orb /
+any-machine pickup; the local thread store stopped receiving files ~2026-04),
+so the script fetches the live payload with
+`amp threads export $AMP_CURRENT_THREAD_ID` — model from
+`messages[].usage.model`, effort from the per-message `agentMode`
+(smart/low/rush/deep; pre-2026-08 builds called it `reasoningEffort`) — with a
+local file for that exact thread as offline fallback, then the CLI log and
+`~/.local/share/amp/session.json`. It deliberately never signs from "newest
+local thread file": that is months stale and would guess. Do not hand-roll
+this lookup; if the schema drifts again, fix the script.
 
-- **Reasoning** and **agent mode** come from the per-turn `agent_state` log lines in `~/.cache/amp/logs/cli.log` (fields `reasoningEffort` and `agentMode`). Fall back to `~/.local/share/amp/session.json` (`lastReasoningEffortByMode[<mode>]`).
-- **Model** is recorded per assistant message at `messages[].usage.model` in the thread state file `~/.local/share/amp/threads/$AMP_CURRENT_THREAD_ID.json`. The in-progress thread may not be flushed yet; until it is, fall back to the most recently modified thread file (same `agentMode` maps to the same model).
+Drop only the `claude-` model-family prefix (write `opus-4-6`).
 
-```bash
-tid="$AMP_CURRENT_THREAD_ID"
-src="$HOME/.local/share/amp/threads/$tid.json"
-[ -f "$src" ] || src="$(ls -t "$HOME"/.local/share/amp/threads/*.json 2>/dev/null | head -1)"
-model="$(jq -r '[.messages[]?.usage?.model // empty] | last // empty' "$src" 2>/dev/null)"
-model="${model#claude-}"
-line="$(grep -F "\"threadId\":\"$tid\"" "$HOME/.cache/amp/logs/cli.log" 2>/dev/null | grep -F '"reasoningEffort"' | tail -1)"
-reasoning="$(printf '%s' "$line" | jq -r '.reasoningEffort // empty' 2>/dev/null)"
-mode="$(printf '%s' "$line" | jq -r '.agentMode // empty' 2>/dev/null)"
-[ -z "$reasoning" ] && reasoning="$(jq -r --arg m "${mode:-smart}" '.lastReasoningEffortByMode[$m] // empty' "$HOME/.local/share/amp/session.json" 2>/dev/null)"
-echo "_amp-${model:-unknown-model}-${reasoning:-unknown-reasoning} on behalf of $(git config user.name)_"
-```
+### Amp session guardrails (mybd-lq8i.3)
 
-The model string carries the `claude-` family prefix; since the runtime field is already `amp`, drop only the `claude-` model-family prefix (write `opus-4-6`, not `claude-opus-4-6`). If the thread file is unreadable or the log has no `reasoningEffort`, use `unknown-model` / `unknown-reasoning` rather than guessing.
+Amp has no repo-hook system, so these are opt-in mechanical backstops; smoke
+test all three with `scripts/test-amp-parity`.
 
-## Repository Layout
+- **Serial-Dolt enforcement**: prepend the shim directory to PATH at session
+  start — `export PATH="<mybd-root>/scripts/agentbin:$PATH"`. The `bd` shim
+  takes a repo-scoped flock; a parallel `bd` waits up to `MYBD_BD_LOCK_WAIT`
+  seconds (default 90) then fails loudly with exit 199 instead of racing the
+  embedded Dolt store.
+- **Close evidence**: end Amp sessions with `scripts/amp-session-close` (wraps
+  `session-close-check` and appends a signed evidence row to the git-tracked
+  `retro/amp-close-ledger.tsv`), so close proof survives even when Amp's local
+  thread store does not retain the transcript.
 
-The cwd (`~/dev/mybd/`, repo `maphew/mybd`) is a personal coordination repo, **not** the beads source tree. In these instructions, `<mybd-root>` means the root of this coordination repo, wherever it is cloned on the current machine. The beads working clone is nested at `bd-main/` (gitignored):
+## Git hooks
 
-| Path | `origin` | `upstream` | Purpose |
-|------|----------|------------|---------|
-| `~/dev/mybd/` | `maphew/mybd` | - | Coordination: beads issues, notes, agent config |
-| `~/dev/mybd/bd-main/` | `maphew/beads` (fork) | `gastownhall/beads` | Beads source - code edits, builds, PRs happen here |
-
-In `bd-main/`, `main` tracks `upstream/main`; topic branches push to `origin` (the fork). Do not add a `gastownhall` remote to the cwd repo.
-
-### Worktree Location
-
-Use git worktrees by default, but do not create sibling review/source worktrees at the `mybd/` repo root.
-
-For Beads source worktrees, create them under the tracked ignored directory:
-
-`<mybd-root>/.worktrees/beads/<short-purpose>`
-
-Example:
-
-```bash
-git -C bd-main worktree add ../.worktrees/beads/pr-4028-review <branch>
-```
-
-The `mybd/` root should contain only the coordination repo files, the nested `bd-main/` clone, and ignored container directories such as `.worktrees/`.
-
-#### Coordination-repo worktrees
-
-The same rule applies to the coordination repo itself, not just `bd-main/`.
-Coordination-repo work that makes **git commits** must run from a worktree on a
-topic branch, created under the tracked-ignored container parallel to the beads
-pattern:
-
-`<mybd-root>/.worktrees/mybd/<short-purpose>`
-
-```bash
-git worktree add .worktrees/mybd/<short-purpose> -b feat/<short-purpose>
-```
-
-Pure **bead-only** sessions may stay in the root checkout: bead state syncs via
-Dolt (`bd dolt push`/`pull`), not git, and `export.auto=false`/no-git-ops means
-those sessions make no commits to race over.
-
-Why: on 2026-05-29 two agents shared the root checkout (no worktree); one ran
-`git checkout` to a new branch mid-session, racing the other's commits. Working
-from a per-task worktree keeps each agent's index and HEAD isolated.
-
-A tracked, **opt-in** `.githooks/` tree backs this convention. It is the single
-composed hook path for the repo: the root-commit guard (`.githooks/pre-commit`,
-fires only in the MAIN checkout - linked worktrees are a no-op, warns by
-default and points you at the worktree command), `scripts/pre-commit-beads-config`
-(chained when the tracker DB is present), the Entire CLI hooks, and all five
-bd hook events (`bd hooks run <event>`, one wrapper per event: pre-commit,
-post-merge, pre-push, post-checkout, prepare-commit-msg). It is **not**
-auto-enabled. The owner turns it on with:
+A tracked, **opt-in** `.githooks/` tree backs the worktree convention: the
+root-commit guard (`.githooks/pre-commit`, fires only in the MAIN checkout,
+warns by default), `scripts/pre-commit-beads-config`, and the bd hook events.
+It is **not** auto-enabled. Turn it on with:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
 `bd hooks install --beads` is known to silently flip `core.hooksPath` to
-`.beads/hooks` (which has no git hooks of its own), deactivating this whole
-composed set - `scripts/check-beads-config` now warns on that drift and
-`--fix` restores `.githooks`. Smoke-test the composed set with
+`.beads/hooks`, deactivating this set — `scripts/check-beads-config` warns on
+that drift and `--fix` restores `.githooks`. Smoke-test with
 `scripts/test-git-hooks`. Two env knobs tune the root-commit guard:
 
-- `MYBD_ENFORCE_ROOT_GUARD=1` - make a root commit a hard block instead of a warning.
-- `MYBD_ALLOW_ROOT_COMMIT=1` - escape hatch for a deliberate root commit
-  (config/policy, `.beads` tracker state, `reports/`).
+- `MYBD_ENFORCE_ROOT_GUARD=1` — make a root commit a hard block.
+- `MYBD_ALLOW_ROOT_COMMIT=1` — escape hatch for a deliberate root commit.
 
-### Local Verification Queue
+## Postmortem-to-guardrail pipeline
 
-Long beads source validation must not block implementation agents unless they
-are actively debugging a failure. Agents working in beads source worktrees
-should use this handoff:
+Recurring session friction gets a MECHANICAL guard, not a paragraph (bead
+mybd-uqzt8; docs are the fallback, not the fix). The pieces:
 
-1. Run fast local preflight in the implementation worktree: targeted tests,
-   build, format/lint checks when cheap.
-2. Commit or otherwise freeze the candidate. The worktree must be clean.
-3. Enqueue slow validation instead of waiting on it:
-   ```bash
-   <mybd-root>/scripts/verify-enqueue <bd-id> <mybd-root>/.worktrees/beads/<worktree> "make test"
-   ```
-4. Stop blocking on the long suite. The bead is not complete until verification
-   passes for the recorded `verify_head` or a maintainer explicitly overrides
-   the gate.
+- **`scripts/session-mine`** — mines session transcripts for friction:
+  commands redone after an error, destructive ops without a pre-flight
+  inspect, first-run failures of newly written tests, wrong-cwd errors.
+  `--last N` / `--session <id>` / `--summary`. session-close-check runs it
+  over the current session as its check 6; findings that recur should
+  become a wrapper assertion, hook, or gitattribute — file a bead.
+- **`scripts/destructive-guard`** - PreToolUse shell hook (wired in
+  `.claude/settings.json` and `.codex/hooks.json`) that blocks: `rm -r` on
+  `.bare` paths, `rm -r` composed with `git worktree list` output, repo-wide
+  `-X theirs/ours` merges, and checkout/restore takeovers of memory-bearing
+  files. Inline
+  escape hatches (`MYBD_ALLOW_BARE_DELETE=1`, `MYBD_ALLOW_WORKTREE_RM=1`,
+  `MYBD_ALLOW_MEMORY_CLOBBER=1`) go on the command line so the excuse is in
+  the transcript next to the act.
+- **`scripts/agentbin/bd` shim** — besides serializing Dolt, refuses to run
+  bd with no `.beads/` in cwd or any ancestor (exit 198;
+  `MYBD_BD_ANYWHERE=1` to override).
+- **`.githooks/pre-commit`** — blocks staged conflict markers in every
+  worktree (`MYBD_ALLOW_CONFLICT_MARKERS=1` for a deliberate literal).
+- **`.gitattributes`** — memory-bearing files (`retro/*.tsv`,
+  `retro/findings.md`, `MEMORY.md`, `memory/**`) carry `merge=binary`: a
+  both-sides merge conflicts loudly instead of silently interleaving.
 
-The verifier runs locally, without GitHub Actions or status polling:
+Smoke-test the whole set with `scripts/test-guardrails` — every test fails
+if its guardrail is removed.
+
+## Non-Interactive Shell Commands
+
+**ALWAYS use non-interactive flags**: `cp -f`, `mv -f`, `rm -f`, `rm -rf`,
+`ssh`/`scp -o BatchMode=yes`, `apt-get -y`, `HOMEBREW_NO_AUTO_UPDATE=1`. `cp`,
+`mv`, and `rm` may be aliased to `-i` on some systems and will hang the agent
+on a y/n prompt. Full list: see "Shell hygiene" in
+`~/.config/agents/AGENTS.md`.
+
+## Documentation Regeneration
+
+When regenerating beads CLI doc artifacts, build `bd` with
+`CGO_ENABLED=0 -tags gms_pure_go` (or let `scripts/generate-cli-docs.sh` build
+its own pinned binary). A default CGO build emits the full `bd federation` help
+tree and produces ~500 lines of spurious churn versus CI. Set
+`BD_DOCS_ALLOW_CGO=1` only for a deliberate full-federation regen.
+
+## Cold-start handoff
+
+The Session Completion protocol covers the **warm** handoff (prose a human
+reads). This covers the **cold** handoff: the next actor is often a fresh agent
+that reads only `bd prime` + `bd ready`. Prose in a closed bead or a report is
+invisible to it. Before closing, self-ask the three questions from "Session
+handoff" in `~/.config/agents/AGENTS.md`, read against bd: learnings go in
+`bd remember` (surfaced at `bd prime`), not only in a report; every
+deliverable, **a branch included**, is reachable from an OPEN bead or a memory
+(a pointer only in a *closed* bead is a smell); and prose ordering like "after
+/ gated-on / once X lands" carries a real dependency edge, because prose is
+invisible to `bd ready`.
+
+A warn-only mechanical backstop catches the cheap omissions. It never blocks:
 
 ```bash
-scripts/verify-status
-scripts/verify-next          # runs one queued job
+scripts/session-close-check            # warn, exit 0 (Windows: .ps1)
+scripts/session-close-check --strict   # exit non-zero if any warning fired
+scripts/session-close-check --since <git-ref|RFC3339>
 ```
 
-From PowerShell on Windows, invoke these via Git Bash as shown in the Windows
-housekeeping section.
+The session boundary comes from `.beads/.session-start` (written by the
+`bd prime` SessionStart hook) or `--since`. If bd is unavailable the bd-backed
+checks warn-skip. The judgment prompts above are the real work; the script is
+only a backstop. `/session-close` runs both.
 
-`verify-next` creates a clean detached worktree under
-`<mybd-root>/.worktrees/beads/verify-*`, runs the recorded
-`verify_cmd`, stores logs under `.worktrees/beads/.verify-logs/`, and writes
-`verify_state=passed|failed` plus result metadata back to bd. Keep full-suite
-concurrency low by default; Beads/Dolt tests are process and disk heavy.
-
-## Quick Reference
+## Beads Issue Tracker
 
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
+bd update <id> --claim  # Claim work
 bd close <id>         # Complete work
 bd dolt push          # Push beads data to remote
 ```
 
-## Non-Interactive Shell Commands
-
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
-
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
-
-## Maintainer PR Review
-
-When triaging, reviewing, landing, closing, or otherwise maintaining pull requests, read and apply [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md). The maintainer policy is to maximize community throughput: find useful contributor value, absorb or transform it locally when practical, preserve attribution, and use request-changes only as a last resort.
-
-## Documentation Regeneration
-
-When regenerating beads CLI doc artifacts, build `bd` with `CGO_ENABLED=0 -tags gms_pure_go` (or let `scripts/generate-cli-docs.sh` build its own pinned binary). A default CGO build emits the full `bd federation` help tree and produces ~500 lines of spurious federation churn versus CI, which stubs federation. Set `BD_DOCS_ALLOW_CGO=1` only for a deliberate full-federation regen.
-
-## Cold-start handoff
-
-The Session Completion protocol below covers the **warm** handoff (prose a human
-reads). This section covers the **cold** handoff: the next actor is often a fresh
-agent that reads only `bd prime` + `bd ready` and starts pulling work. Prose in a
-closed bead or a report is invisible to it. Before you close a session, self-ask
-these three (answer in the handoff, do not just tick them):
-
-1. **What did this session learn that changes how a future agent works - and is
-   it in `bd remember` (surfaced at `bd prime`), not only in a report?** Reports
-   are not on the cold-start path; memories are.
-2. **Is every deliverable/report this session produced reachable from an OPEN
-   bead or a memory?** A pointer that lives only in a *closed* bead is a smell -
-   a cold agent runs `bd ready`, not `bd list --status=closed`.
-3. **Does any bead I touched say "after / gated-on / once X lands" in prose but
-   lack a dependency edge?** Prose ordering is invisible to `bd ready`; encode it
-   as a `bd dep` edge or the cold agent will pick blocked work.
-
-A warn-only mechanical backstop catches the cheap omissions (unreferenced new
-reports, thin new beads, beads left `in_progress`). It never blocks a close:
-
-```bash
-scripts/session-close-check            # warn, exit 0 (Windows: scripts/session-close-check.ps1)
-scripts/session-close-check --strict   # exit non-zero if any warning fired
-scripts/session-close-check --since <git-ref|RFC3339>   # explicit boundary
-```
-
-The session boundary comes from `.beads/.session-start` (written at open by the
-`bd prime` SessionStart hook) or `--since`; with neither, the session-scoped
-checks are skipped with a warning rather than passing silently. The stamp is a
-single file, so concurrent sessions in one checkout share a coarse boundary (the
-writer keeps the earlier one within a TTL, erring toward more warnings); pass
-`--since <git-ref|RFC3339>` when you need precise scoping. If bd is unavailable
-(migration gate / lock) the bd-backed checks warn-skip. The judgment prompts
-above are the real work; the script is only a backstop. `/session-close` runs the
-prompts and the script together.
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
 ### Rules
 
-- Use `bd` for ALL task tracking - do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge - do NOT use MEMORY.md files
+- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or
+  markdown TODO lists
+- Run `bd prime` for detailed command reference
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Search memories with `bd memories <keyword>`, never bare `bd config list`
+
+**Architecture in one line:** issues live in a local Dolt DB; sync uses
+`refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export.
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+1. **File issues for remaining work**
+2. **Run quality gates** (if code changed) — tests, linters, builds
+3. **Update issue status** — close finished work, update in-progress items
+4. **Push to remote**:
    ```bash
    git pull --rebase
    bd dolt push
    git push
-   git status  # MUST show "up to date with origin"
+   git status
    ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+5. **Clean up** — clear stashes, prune remote branches
+6. **Hand off** — summarize changes, validation, issue status, blocked steps
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-<!-- END BEADS CODEX SETUP -->
+This repo runs `agent.profile=team-maintainer` (owner directive maphew
+2026-07-08): commit, sync, and push are routine work here. That knob is about
+*this* repo's git flow and is unaffected by the upstream role change — an
+explicit in-prompt "do not commit"/"do not push" still overrides.
