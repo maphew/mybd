@@ -368,6 +368,31 @@ except Exception: pass' "$BEADS_DIR/metadata.json" 2>/dev/null || true)"
   bd_new status 2>&1 | sed -n '1,12p' | sed 's/^/  /' || true
 }
 
+# bd bootstrap rewrites .beads/metadata.json without its trailing newline, which
+# leaves a spurious diff in every repo that tracks the file. Put the original
+# bytes back when the content is semantically identical - and only then, so a
+# genuine config change still shows up.
+restore_metadata_formatting() {
+  local saved="$BACKUP_DIR/metadata.json" live="$BEADS_DIR/metadata.json"
+  [[ -f "$saved" && -f "$live" ]] || return 0
+  cmp -s "$saved" "$live" && return 0
+  if python3 - "$saved" "$live" <<'PYEOF'
+import json, sys
+try:
+    a = json.load(open(sys.argv[0 + 1]))
+    b = json.load(open(sys.argv[1 + 1]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if a == b else 1)
+PYEOF
+  then
+    cp -f "$saved" "$live"
+    note "restored the original formatting of .beads/metadata.json (bootstrap drops its trailing newline)"
+  else
+    warn ".beads/metadata.json changed content during bootstrap - review it before committing"
+  fi
+}
+
 confirm() {
   (( ASSUME_YES )) && return 0
   [[ -t 0 ]] || return 0
@@ -444,6 +469,7 @@ else
   BD_NON_INTERACTIVE=1 bd_new bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
   [[ -d "$DB_PATH/.dolt" ]] || die "bootstrap did not produce $DB_PATH - roll back with: $ME --rollback $BACKUP_DIR"
   NEW_DB="$DB_PATH"
+  restore_metadata_formatting
 
   step "3/5  Verify the fresh database"
   if ! STATUS_OUT="$(bd_new status 2>&1)"; then
