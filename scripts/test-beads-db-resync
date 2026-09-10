@@ -96,6 +96,27 @@ if [[ -f "$WORK/rb2/.beads/embeddeddolt/testdb/.dolt/RESTORED" ]]; then ok "roll
 rc=0; out="$("$SUT" -C "$WORK/rb2" --rollback "$WORK/rb2/nothing-here" 2>&1)" || rc=$?
 check "rollback rejects a bogus backup dir" "$out" "no Dolt database at"
 
+# --- metadata.json formatting is restored, content changes are not hidden ----
+mkproject "$WORK/meta" metadb
+printf '{\n  "dolt_database": "metadb"\n}\n' > "$WORK/meta/.beads/metadata.json"
+mkdir -p "$WORK/meta/bak"; cp "$WORK/meta/.beads/metadata.json" "$WORK/meta/bak/metadata.json"
+printf '{"dolt_database":"metadb"}' > "$WORK/meta/.beads/metadata.json"   # same content, reformatted
+out="$(ROOT="$WORK/meta" BEADS_DIR="$WORK/meta/.beads" BACKUP_DIR="$WORK/meta/bak" bash -c '
+  source <(sed -n "/^restore_metadata_formatting() {/,/^}/p" "'"$SUT"'")
+  note(){ echo "  $*"; }; warn(){ echo "  ! $*"; }
+  restore_metadata_formatting' 2>&1)"
+if cmp -s "$WORK/meta/bak/metadata.json" "$WORK/meta/.beads/metadata.json"; then
+  ok "metadata.json formatting is restored when content matches"
+else bad "metadata.json formatting is restored when content matches" "$out"; fi
+
+printf '{"dolt_database":"SOMETHING-ELSE"}' > "$WORK/meta/.beads/metadata.json"
+out="$(ROOT="$WORK/meta" BEADS_DIR="$WORK/meta/.beads" BACKUP_DIR="$WORK/meta/bak" bash -c '
+  source <(sed -n "/^restore_metadata_formatting() {/,/^}/p" "'"$SUT"'")
+  note(){ echo "  $*"; }; warn(){ echo "  ! $*"; }
+  restore_metadata_formatting' 2>&1)"
+check "a real metadata.json content change is surfaced, not silently reverted" "$out" "changed content during bootstrap"
+if grep -q 'SOMETHING-ELSE' "$WORK/meta/.beads/metadata.json"; then ok "a real content change is left in place"; else bad "a real content change is left in place"; fi
+
 # --- the comments-by-id trap must stay fixed --------------------------------
 if grep -q "md5(text)" "$SUT"; then ok "comments are compared by content, not id"; else bad "comments are compared by content, not id"; fi
 if grep -q "dolt_ignore" "$SUT"; then ok "dolt_ignore tables are not reported as loss"; else bad "dolt_ignore tables are not reported as loss"; fi
