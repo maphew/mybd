@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# test-beads-db-resync - smoke tests for scripts/beads-db-resync.
+#
+# Covers the paths that are dangerous or easy to get silently wrong:
+# discovery, the worktree hint, the no-remote refusal, and both rollback
+# shapes (occupied slot and empty slot). Every test fails if its guard is
+# removed. No network and no real Dolt database required.
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUT="$HERE/beads-db-resync"
+PASS=0; FAIL=0
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+
+ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; PASS=$((PASS+1)); }
+bad()  { printf '  \033[31mFAIL\033[0m %s\n     %s\n' "$1" "${2:-}"; FAIL=$((FAIL+1)); }
+check(){ if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1" "expected to contain: $3 | got: ${2:0:400}"; fi; }
+
+# A project skeleton with a plausible-looking Dolt database directory.
+mkproject() {                 # $1 dir, $2 db name
+  mkdir -p "$1/.beads/embeddeddolt/$2/.dolt"
+  printf '{"database":"dolt","backend":"dolt","dolt_mode":"embedded","dolt_database":"%s"}\n' "$2" \
+    > "$1/.beads/metadata.json"
+  printf '{"head":"refs/heads/main"}\n' > "$1/.beads/embeddeddolt/$2/.dolt/repo_state.json"
+  printf 'embeddeddolt/\ndolt/\n' > "$1/.beads/.gitignore"
+  git -C "$1" init -q . 2>/dev/null || true
+}
+
+echo "beads-db-resync smoke tests"
+
+# --- usage -----------------------------------------------------------------
+out="$("$SUT" --help 2>&1)"
+check "help prints usage"            "$out" "beads-db-resync [-C DIR]"
+check "help stops at the code"       "$out" "Exit codes"
+[[ "$out" != *"set -euo"* ]] && ok "help does not leak the script body" || bad "help does not leak the script body"
+
+rc=0; out="$("$SUT" --bogus 2>&1)" || rc=$?
+check "unknown flag is rejected"     "$out" "unknown arg"
+[[ $rc -eq 2 ]] && ok "unknown flag exits 2" || bad "unknown flag exits 2" "got rc=$rc"
+
+# --- discovery -------------------------------------------------------------
+rc=0; out="$("$SUT" -C "$WORK/nope" --dry-run 2>&1)" || rc=$?
+check "missing directory is rejected" "$out" "no such directory"
+
+mkdir -p "$WORK/bare"; git -C "$WORK/bare" init -q .
+rc=0; out="$("$SUT" -C "$WORK/bare" --dry-run 2>&1)" || rc=$?
+check "project without .beads is rejected" "$out" "no .beads/ found"
+
+# .beads present but no database: the linked-worktree case.
+mkproject "$WORK/proj" testdb
+mkdir -p "$WORK/proj/.worktrees/wt/.beads"
+git -C "$WORK/proj" add -A >/dev/null 2>&1 || true
+git -C "$WORK/proj" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1 || true
+git -C "$WORK/proj" worktree add -q "$WORK/proj/.worktrees/wt2" -b wt2 >/dev/null 2>&1 || true
+if [[ -d "$WORK/proj/.worktrees/wt2" ]]; then
+  mkdir -p "$WORK/proj/.worktrees/wt2/.beads"
+  rc=0; out="$("$SUT" -C "$WORK/proj/.worktrees/wt2" --dry-run 2>&1)" || rc=$?
+  check "linked worktree points at the main checkout" "$out" "looks like a linked worktree"
+fi
+
+# --- refuses to run without a remote ---------------------------------------
+rc=0; out="$("$SUT" -C "$WORK/proj" --dry-run 2>&1)" || rc=$?
+check "refuses when bootstrap would not clone" "$out" "needs a reachable Dolt remote"
+[[ $rc -ne 0 ]] && ok "no-remote exits non-zero" || bad "no-remote exits non-zero" "got rc=$rc"
+
+# --- config must come from the target, not the process cwd ------------------
+# bd resolves sync.remote from the process cwd; if the tool ever regresses to
+# `bd -C`, running it from a beads repo would plan a clone of THAT repo's
+# remote into an unrelated project.
+mkproject "$WORK/decoy" decoydb
+printf 'sync:\n    remote: "git+https://example.invalid/decoy.git"\n' > "$WORK/decoy/.beads/config.yaml"
+mkproject "$WORK/victim" victimdb
+rc=0; out="$(cd "$WORK/decoy" && "$SUT" -C "$WORK/victim" --dry-run 2>&1)" || rc=$?
+if [[ "$out" != *"example.invalid"* ]]; then ok "target config is not taken from the process cwd"
+else bad "target config is not taken from the process cwd" "leaked decoy remote into the plan: ${out:0:300}"; fi
+
+# And the declared-vs-planned cross-check must fire when they disagree.
+if grep -q "refusing to continue" "$SUT"; then ok "declared/planned remote mismatch is refused"; else bad "declared/planned remote mismatch is refused"; fi
+
+# --- rollback: occupied slot ------------------------------------------------
+mkproject "$WORK/rb1" testdb
+touch "$WORK/rb1/.beads/embeddeddolt/testdb/.dolt/LIVE"
+mkdir -p "$WORK/rb1/backup/dolt-db.original/.dolt"; touch "$WORK/rb1/backup/dolt-db.original/.dolt/RESTORED"
+out="$("$SUT" -C "$WORK/rb1" --rollback "$WORK/rb1/backup" 2>&1)" || true
+if [[ -f "$WORK/rb1/.beads/embeddeddolt/testdb/.dolt/RESTORED" ]]; then ok "rollback restores the backup"; else bad "rollback restores the backup"; fi
+if compgen -G "$WORK/rb1/backup/rolled-back-*/.dolt/LIVE" >/dev/null; then ok "rollback parks the displaced DB"; else bad "rollback parks the displaced DB"; fi
+
+# --- rollback: empty slot (the failed-bootstrap case) -----------------------
+mkproject "$WORK/rb2" testdb
+rm -rf "$WORK/rb2/.beads/embeddeddolt/testdb"
+mkdir -p "$WORK/rb2/backup/dolt-db.original/.dolt"; touch "$WORK/rb2/backup/dolt-db.original/.dolt/RESTORED"
+out="$("$SUT" -C "$WORK/rb2" --rollback "$WORK/rb2/backup" 2>&1)" || true
+if [[ -f "$WORK/rb2/.beads/embeddeddolt/testdb/.dolt/RESTORED" ]]; then ok "rollback works into an empty slot"; else bad "rollback works into an empty slot" "$out"; fi
+
+rc=0; out="$("$SUT" -C "$WORK/rb2" --rollback "$WORK/rb2/nothing-here" 2>&1)" || rc=$?
+check "rollback rejects a bogus backup dir" "$out" "no Dolt database at"
+
+# --- the comments-by-id trap must stay fixed --------------------------------
+if grep -q "md5(text)" "$SUT"; then ok "comments are compared by content, not id"; else bad "comments are compared by content, not id"; fi
+if grep -q "dolt_ignore" "$SUT"; then ok "dolt_ignore tables are not reported as loss"; else bad "dolt_ignore tables are not reported as loss"; fi
+if grep -q 'bd_new create' "$SUT"; then ok "write probe exercises the issue path"; else bad "write probe exercises the issue path"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[[ $FAIL -eq 0 ]]

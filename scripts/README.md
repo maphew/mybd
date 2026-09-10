@@ -140,6 +140,24 @@ issues, export both and reconcile by hand. It also restores `core.hooksPath` to
 Commit hook that rejects accidental `.beads/metadata.json` changes away from
 `mybd`. Intentional database renames need `MYBD_ALLOW_DB_RENAME=1`.
 
+### `beads-db-resync`
+
+Replaces a local beads Dolt database with a fresh clone of its remote, keeping a
+full backup and auditing that backup for anything that existed only locally.
+Reach for it when `bd` reports schema skew, or when `bd dolt pull` will not
+converge and the remote is the authority.
+
+```bash
+beads-db-resync --audit-only     # what would a resync lose? touches nothing
+beads-db-resync --restore        # back up, replace, audit, put local-only rows back
+beads-db-resync --rollback DIR   # undo
+```
+
+Project-agnostic by design — symlink it into `~/.local/bin` and use it in any
+repo with a `.beads/` directory. Exit `3` means local-only data was found and
+not restored. Recipe, traps, and the by-hand version:
+[docs/beads-db-resync.md](../docs/beads-db-resync.md).
+
 ### `bd-version`
 
 Runs a specific released `bd` binary, downloading and caching it — useful for
@@ -267,6 +285,7 @@ thread store does not retain the transcript (bead mybd-lq8i.3).
 | `test-session-close-check` | the cold-start report-reference check |
 | `test-amp-parity` | the Amp guardrails: live agent-sig metadata, `agentbin/bd` lock semantics, close-ledger row |
 | `test-report-room.ps1` | the report-room reader (fixture Markdown + injected bead JSON; no live DB, no browser) |
+| `test-beads-db-resync` | `beads-db-resync`: discovery, the no-remote refusal, both rollback shapes, and the cwd-config-leak guard (no network, no live DB) |
 
 ## Retired but kept
 

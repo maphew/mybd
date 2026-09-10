@@ -1,0 +1,532 @@
+#!/usr/bin/env bash
+# beads-db-resync - replace a local beads Dolt database with a fresh clone from
+# its remote, keeping a full backup and auditing that backup for anything that
+# existed ONLY locally.
+#
+# Use it when a local beads DB is stale, schema-skewed, or wedged, and the
+# remote is the authority. It never merges: it swaps, then proves nothing was
+# lost (and can put back whatever was).
+#
+# Usage:
+#   beads-db-resync [-C DIR] [options]
+#
+#   -C, --directory DIR   Project root holding .beads/ (default: git root, else cwd)
+#       --backup-dir DIR  Backup destination (default: <parent>/<project>-backups/pre-resync-<ts>)
+#       --audit-only      Clone the remote to a temp dir and report divergence.
+#                         Touches nothing. Start here if you are unsure.
+#       --restore         After the swap, import any local-only or locally-newer
+#                         issues/memories back into the fresh DB
+#       --rollback DIR    Undo a previous run: put DIR/dolt-db.original back
+#       --no-write-probe  Skip the post-swap read/write validation
+#       --keep-jsonl-only Delete the backed-up Dolt directory once the audit is
+#                         clean, keeping the JSONL exports and the audit report
+#   -n, --dry-run         Print the plan and exit
+#   -y, --yes             Do not prompt
+#   -h, --help            This help
+#
+# Exit codes: 0 ok · 1 error · 2 bad usage · 3 audit found local-only data
+#             (and --restore was not given)
+
+set -euo pipefail
+
+# Non-interactive agent shells can lack linuxbrew on PATH; repair if we can.
+_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/brew-path.sh"
+# shellcheck source=/dev/null
+[[ -r "$_lib" ]] && source "$_lib"
+[[ -d /home/linuxbrew/.linuxbrew/bin ]] && \
+  case ":$PATH:" in *":/home/linuxbrew/.linuxbrew/bin:"*) ;; *) PATH="/home/linuxbrew/.linuxbrew/bin:$PATH";; esac
+export PATH
+
+ME="beads-db-resync"
+ROOT=""; BACKUP_DIR=""; DRY_RUN=0; ASSUME_YES=0; DO_RESTORE=0
+AUDIT_ONLY=0; ROLLBACK_DIR=""; WRITE_PROBE=1; KEEP_JSONL_ONLY=0; PROBE=""
+
+die()  { printf '%s: %s\n' "$ME" "$*" >&2; exit 1; }
+note() { printf '  %s\n' "$*"; }
+step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+warn() { printf '\033[33m  ! %s\033[0m\n' "$*" >&2; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C|--directory)   ROOT="${2:?}"; shift 2;;
+    --backup-dir)     BACKUP_DIR="${2:?}"; shift 2;;
+    --rollback)       ROLLBACK_DIR="${2:?}"; shift 2;;
+    --audit-only)     AUDIT_ONLY=1; shift;;
+    --restore)        DO_RESTORE=1; shift;;
+    --no-write-probe) WRITE_PROBE=0; shift;;
+    --keep-jsonl-only) KEEP_JSONL_ONLY=1; shift;;
+    -n|--dry-run)     DRY_RUN=1; shift;;
+    -y|--yes)         ASSUME_YES=1; shift;;
+    -h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; exit 0;;
+    *) printf '%s: unknown arg: %s (try --help)\n' "$ME" "$1" >&2; exit 2;;
+  esac
+done
+
+TS="$(date +%Y%m%d-%H%M%S)"
+
+# ---------------------------------------------------------------- discovery --
+
+resolve_root() {
+  if [[ -n "$ROOT" ]]; then
+    [[ -d "$ROOT" ]] || die "no such directory: $ROOT"
+    ROOT="$(cd "$ROOT" && pwd)"
+  else
+    ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  fi
+  # Walk up for .beads/ so running from a subdirectory works.
+  local d="$ROOT"
+  while [[ ! -d "$d/.beads" && "$d" != "/" ]]; do d="$(dirname "$d")"; done
+  [[ -d "$d/.beads" ]] || die "no .beads/ found at or above $ROOT"
+  ROOT="$d"; BEADS_DIR="$ROOT/.beads"
+}
+
+resolve_db() {
+  DB_NAME="$(python3 - "$BEADS_DIR/metadata.json" <<'PY' 2>/dev/null || true
+import json,sys
+try: print(json.load(open(sys.argv[1])).get("dolt_database") or "")
+except Exception: pass
+PY
+)"
+  DATA_DIR=""
+  for c in "$BEADS_DIR/embeddeddolt" "$BEADS_DIR/dolt"; do
+    [[ -d "$c" ]] && { DATA_DIR="$c"; break; }
+  done
+  if [[ -z "$DATA_DIR" ]]; then
+    # A linked worktree has a tracked .beads/ but no database - the DB lives in
+    # the main checkout. Point there rather than making the user work it out.
+    local main_wt
+    main_wt="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
+    if [[ -n "$main_wt" && "$main_wt" != "$ROOT" && -d "$main_wt/.beads" ]]; then
+      die "no Dolt database under $BEADS_DIR - this looks like a linked worktree. Run: $ME -C $main_wt"
+    fi
+    die "no Dolt data dir under $BEADS_DIR (looked for embeddeddolt/, dolt/)"
+  fi
+
+  if [[ -n "$DB_NAME" && -d "$DATA_DIR/$DB_NAME/.dolt" ]]; then
+    DB_PATH="$DATA_DIR/$DB_NAME"
+  else
+    # Fall back to the only database dir present; refuse to guess between several.
+    local found=() d
+    for d in "$DATA_DIR"/*/; do [[ -d "$d/.dolt" ]] && found+=("${d%/}"); done
+    ((${#found[@]} == 1)) || die "cannot identify the live database under $DATA_DIR (candidates: ${#found[@]}). Set dolt_database in $BEADS_DIR/metadata.json"
+    DB_PATH="${found[0]}"; DB_NAME="$(basename "$DB_PATH")"
+  fi
+}
+
+# bd against the OLD database may need the schema-skew escape hatch: a DB
+# migrated by the accidental v1.2.0/v1.2.1 release reads as "ahead of binary".
+# Always cd into the target rather than using `bd -C`. bd resolves
+# .beads/config.yaml (and therefore sync.remote) from the PROCESS cwd, not from
+# the -C target: `bd -C /other/project bootstrap` run from inside a beads repo
+# plans a clone of THIS repo's remote into /other/project. Verified on bd 1.2.2.
+bd_old() { ( cd "$ROOT" && BD_IGNORE_SCHEMA_SKEW=1 bd "$@" ); }
+bd_new() { ( cd "$ROOT" && bd "$@" ); }
+bd_probe() { ( cd "$PROBE" && bd "$@" ); }
+
+preflight() {
+  command -v bd      >/dev/null || die "bd not on PATH"
+  command -v python3 >/dev/null || die "python3 not on PATH (needed for the audit)"
+  HAVE_DOLT=1; command -v dolt >/dev/null || { HAVE_DOLT=0; warn "dolt CLI not found - table-level audit (events/comments/labels/deps) will be skipped"; }
+
+  BOOTSTRAP_PLAN="$(BD_NON_INTERACTIVE=1 bd_new bootstrap --dry-run 2>&1 || true)"
+  grep -qi 'clone from remote' <<<"$BOOTSTRAP_PLAN" || {
+    printf '%s\n' "$BOOTSTRAP_PLAN" >&2
+    die "bd bootstrap would not clone from a remote. This tool needs a reachable Dolt remote (sync.remote, or refs/dolt/data on git origin)."
+  }
+  REMOTE="$(sed -n 's/.*Remote:[[:space:]]*//p' <<<"$BOOTSTRAP_PLAN" | head -1)"
+
+  # Cross-check the planned remote against the project's own declared remote.
+  # If they disagree, something is resolving config from the wrong place and we
+  # would clone a foreign database over this one.
+  local declared
+  declared="$(sed -n 's/^[[:space:]]*remote:[[:space:]]*//p' "$BEADS_DIR/config.yaml" 2>/dev/null | tr -d '"' | head -1)"
+  if [[ -n "$declared" && -n "$REMOTE" && "$declared" != "$REMOTE" ]]; then
+    die "refusing to continue: $BEADS_DIR/config.yaml declares remote '$declared' but bd plans to clone '$REMOTE'"
+  fi
+
+  DB_BYTES="$(du -sk "$DB_PATH" | cut -f1)"
+  local free_k; free_k="$(df -Pk "$ROOT" | awk 'NR==2{print $4}')"
+  (( free_k > DB_BYTES * 5 / 2 )) || die "not enough free space: need ~$(( DB_BYTES * 5 / 2 / 1024 ))M, have $(( free_k / 1024 ))M"
+
+  # A live server holding the data dir would make the swap unsafe.
+  if pgrep -af 'dolt sql-server' 2>/dev/null | grep -qF "$DATA_DIR"; then
+    die "a dolt sql-server is serving $DATA_DIR - stop it first (bd dolt stop)"
+  fi
+
+  if [[ -z "$BACKUP_DIR" ]]; then
+    local kind="pre-resync"; (( AUDIT_ONLY )) && kind="audit"
+    BACKUP_DIR="$(dirname "$ROOT")/$(basename "$ROOT")-backups/$kind-$TS"
+  fi
+}
+
+# -------------------------------------------------------------------- audit --
+
+# Print one properly-CSV-decoded key per line for a single-column query.
+dolt_keys() {
+  local dbdir="$1" sql="$2"
+  ( cd "$dbdir" && dolt sql -q "$sql" -r csv 2>/dev/null ) \
+    | python3 -c 'import csv,sys
+r=csv.reader(sys.stdin)
+next(r,None)
+for row in r:
+    if row: print(row[0])' | LC_ALL=C sort -u
+}
+
+dolt_has_table() {           # $1 db dir, $2 table
+  ( cd "$1" && dolt sql -q "select 1 from \`$2\` limit 1" -r csv ) >/dev/null 2>&1
+}
+
+# Tables a machine deliberately keeps to itself. beads puts the audit `events`
+# table (and friends) in dolt_ignore so per-machine audit history never has to
+# merge; a fresh clone legitimately has no such table, and that must not read
+# as data loss.
+dolt_ignored_tables() {      # $1 db dir
+  ( cd "$1" && dolt sql -q "select pattern from dolt_ignore where ignored=1" -r csv 2>/dev/null ) \
+    | tail -n +2 | tr -d '"' | LC_ALL=C sort -u
+}
+
+table_audit() {                     # $1 old db dir, $2 new db dir, $3 out json
+  local old="$1" new="$2" out="$3" rc=0
+  local -a names=(events comments labels dependencies config)
+  # NOTE: comments are compared by CONTENT, never by id. A beads recovery that
+  # replays the events table regenerates comment UUIDs, so an id-based compare
+  # reports hundreds of phantom "lost" comments.
+  local -a queries=(
+    "select id from events"
+    "select concat(issue_id,'|',author,'|',created_at,'|',md5(text)) from comments"
+    "select concat(issue_id,'|',label) from labels"
+    "select concat(issue_id,'|',coalesce(depends_on_issue_id,depends_on_wisp_id,depends_on_external,'?'),'|',type) from dependencies"
+    "select \`key\` from config"
+  )
+  local tmp; tmp="$(mktemp -d)"
+  : > "$tmp/rows"
+  dolt_ignored_tables "$new" > "$tmp/ignored"
+  dolt_ignored_tables "$old" >> "$tmp/ignored"
+  local i
+  for i in "${!names[@]}"; do
+    local t="${names[$i]}" q="${queries[$i]}" in_old=0 in_new=0
+    dolt_has_table "$old" "$t" && in_old=1
+    dolt_has_table "$new" "$t" && in_new=1
+
+    if (( ! in_old && ! in_new )); then
+      continue
+    elif (( in_old && ! in_new )); then
+      if grep -qxF "$t" "$tmp/ignored"; then
+        printf '  %-14s %s\n' "$t" "machine-local (dolt_ignore) - absent from a clone by design, kept in the backup"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$t" "-" "-" "0" "machine_local" >> "$tmp/rows"
+      else
+        warn "$t: present in the old DB but MISSING from the fresh clone and not in dolt_ignore"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$t" "-" "-" "-1" "missing_in_new" >> "$tmp/rows"
+        rc=3
+      fi
+      continue
+    elif (( ! in_old && in_new )); then
+      printf '  %-14s %s\n' "$t" "new in the remote (absent locally) - nothing to lose"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$t" "-" "-" "0" "new_in_remote" >> "$tmp/rows"
+      continue
+    fi
+
+    dolt_keys "$old" "$q" > "$tmp/old" || true
+    dolt_keys "$new" "$q" > "$tmp/new" || true
+    local no nn only
+    no="$(wc -l < "$tmp/old")"; nn="$(wc -l < "$tmp/new")"
+    comm -23 "$tmp/old" "$tmp/new" > "$tmp/only" || true
+    only="$(wc -l < "$tmp/only")"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$t" "$no" "$nn" "$only" "compared" >> "$tmp/rows"
+    printf '  %-14s old=%-7s new=%-7s only-in-old=%s\n' "$t" "$no" "$nn" "$only"
+    if (( only > 0 )); then
+      head -20 "$tmp/only" | sed 's/^/      /'
+      (( only > 20 )) && note "    ... and $(( only - 20 )) more"
+      cp "$tmp/only" "$(dirname "$out")/only-old.$t.txt"
+      rc=3
+    fi
+  done
+  python3 - "$tmp/rows" "$out" <<'PYEOF'
+import sys, json
+rows = {}
+for line in open(sys.argv[1]):
+    t, o, n, only, status = line.rstrip("\n").split("\t")
+    rows[t] = {"old": o, "new": n, "only_in_old": int(only), "status": status}
+json.dump(rows, open(sys.argv[2], "w"), indent=1)
+PYEOF
+  rm -rf "$tmp"
+  return $rc
+}
+
+jsonl_audit() {                     # $1 local jsonl, $2 remote jsonl, $3 outdir
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys
+local_p, remote_p, out = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def load(p):
+    issues, mems = {}, {}
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        r = json.loads(line)
+        if r.get("_type") == "memory":
+            mems[r["key"]] = r["value"]
+        elif r.get("_type") == "issue":
+            issues[r["id"]] = r
+    return issues, mems
+
+li, lm = load(local_p)
+ri, rm = load(remote_p)
+
+only_local  = sorted(set(li) - set(ri))
+both        = set(li) & set(ri)
+newer_local = sorted(i for i in both
+                     if (li[i].get("updated_at") or "") > (ri[i].get("updated_at") or ""))
+mem_only    = sorted(set(lm) - set(rm))
+mem_differ  = sorted(k for k in set(lm) & set(rm) if lm[k] != rm[k])
+
+# Content drift on shared issues that the timestamps do NOT explain: these are
+# the rows where a silent local edit could hide.
+FIELDS = ["title", "description", "acceptance_criteria", "notes", "status",
+          "priority", "issue_type", "owner", "created_at", "dependencies"]
+unexplained = {}
+for i in both:
+    d = [f for f in FIELDS if li[i].get(f) != ri[i].get(f)]
+    if d and (li[i].get("updated_at") or "") >= (ri[i].get("updated_at") or ""):
+        unexplained[i] = d
+
+res = {
+    "issues": {"local": len(li), "remote": len(ri), "shared": len(both),
+               "only_local": only_local, "newer_local": newer_local,
+               "content_drift_not_explained_by_timestamp": unexplained},
+    "memories": {"local": len(lm), "remote": len(rm),
+                 "only_local": mem_only, "differing_value": mem_differ},
+}
+res["verdict"] = ("local_only_found"
+                  if (only_local or newer_local or mem_only or unexplained or mem_differ)
+                  else "clean")
+json.dump(res, open(os.path.join(out, "audit.json"), "w"), indent=1)
+
+# A memory that differs on both sides has no timestamp to arbitrate with, so
+# the tool refuses to guess: it writes both versions out for a human to merge.
+if mem_differ:
+    d = os.path.join(out, "memory-conflicts")
+    os.makedirs(d, exist_ok=True)
+    for k in mem_differ:
+        open(os.path.join(d, k + ".local.txt"),  "w", encoding="utf-8").write(lm[k])
+        open(os.path.join(d, k + ".remote.txt"), "w", encoding="utf-8").write(rm[k])
+
+# Everything worth putting back, in bd import shape.
+restore = [li[i] for i in only_local + newer_local]
+restore += [{"_type": "memory", "key": k, "value": lm[k]} for k in mem_only]
+with open(os.path.join(out, "restore.jsonl"), "w", encoding="utf-8") as fh:
+    for r in restore:
+        fh.write(json.dumps(r) + "\n")
+
+print(f"  issues      local={len(li):<7} remote={len(ri):<7} only-local={len(only_local)}  locally-newer={len(newer_local)}")
+print(f"  memories    local={len(lm):<7} remote={len(rm):<7} only-local={len(mem_only)}  differing={len(mem_differ)}")
+if unexplained:
+    print(f"  content drift on {len(unexplained)} shared issues not explained by updated_at:")
+    for i, d in list(unexplained.items())[:15]:
+        print(f"      {i}: {','.join(d)}")
+if mem_differ:
+    print("  memories whose value differs - NOT auto-restored, both versions written to")
+    print(f"  {os.path.join(out, 'memory-conflicts')}/ for you to merge:")
+    for k in mem_differ[:15]:
+        print(f"      {k}")
+print(f"  verdict: {res['verdict']}")
+sys.exit(3 if res["verdict"] == "local_only_found" else 0)
+PY
+}
+
+# ------------------------------------------------------------------ actions --
+
+do_rollback() {
+  local src="$ROLLBACK_DIR/dolt-db.original"
+  [[ -d "$src/.dolt" ]] || die "no Dolt database at $src"
+  resolve_root
+  # Rollback must work even when the swap left nothing behind - that is the
+  # case it exists for - so derive the destination without requiring a live DB.
+  local name data_dir
+  name="$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("dolt_database") or "")
+except Exception: pass' "$BEADS_DIR/metadata.json" 2>/dev/null || true)"
+  [[ -n "$name" ]] || name="$(basename "$(readlink -f "$src")")"
+  for c in "$BEADS_DIR/embeddeddolt" "$BEADS_DIR/dolt"; do
+    [[ -d "$c" ]] && { data_dir="$c"; break; }
+  done
+  [[ -n "${data_dir:-}" ]] || data_dir="$BEADS_DIR/embeddeddolt"
+  mkdir -p "$data_dir"
+  local dest="$data_dir/$name"
+  step "Rolling back $dest from $src"
+  if [[ -e "$dest" ]]; then
+    local aside="$ROLLBACK_DIR/rolled-back-$TS"
+    mv -f "$dest" "$aside"
+    note "the DB that was live until now: $aside"
+  else
+    note "(nothing at $dest - restoring into an empty slot)"
+  fi
+  mv -f "$src" "$dest"
+  note "restored $dest"
+  DB_PATH="$dest"
+  bd_new status 2>&1 | sed -n '1,12p' | sed 's/^/  /' || true
+}
+
+confirm() {
+  (( ASSUME_YES )) && return 0
+  [[ -t 0 ]] || return 0
+  local reply
+  read -r -p "Proceed? [y/N] " reply
+  [[ "$reply" =~ ^[Yy] ]] || die "aborted"
+}
+
+# ---------------------------------------------------------------------- run --
+
+[[ -n "$ROLLBACK_DIR" ]] && { do_rollback; exit 0; }
+
+resolve_root
+resolve_db
+preflight
+
+step "Plan"
+note "project    : $ROOT"
+note "database   : $DB_NAME  ($DB_PATH, $(( DB_BYTES / 1024 ))M)"
+note "remote     : $REMOTE"
+if (( AUDIT_ONLY )); then
+  note "mode       : audit only - the live database is not touched"
+else
+  note "backup to  : $BACKUP_DIR"
+  note "mode       : replace live database with a fresh clone of the remote"
+  (( DO_RESTORE )) && note "restore    : local-only rows will be imported back after the audit"
+fi
+if bd_new status >/dev/null 2>&1; then
+  note "schema     : local DB opens cleanly with this bd"
+else
+  warn "local DB does not open cleanly with this bd (schema skew?) - export will use BD_IGNORE_SCHEMA_SKEW=1"
+fi
+(( DRY_RUN )) && { echo; note "(dry run - nothing done)"; exit 0; }
+confirm
+
+mkdir -p "$BACKUP_DIR"
+
+if (( AUDIT_ONLY )); then step "1/3  Export the current database"; else step "1/5  Export the current database"; fi
+if ! bd_old export --all -o "$BACKUP_DIR/local-all.jsonl" > "$BACKUP_DIR/.export.log" 2>&1; then
+  sed 's/^/  /' "$BACKUP_DIR/.export.log" >&2
+  die "export failed - refusing to touch the database without a readable backup"
+fi
+grep -v '^Warning:' "$BACKUP_DIR/.export.log" | sed 's/^/  /' || true
+[[ -s "$BACKUP_DIR/local-all.jsonl" ]] || die "export produced an empty file - aborting"
+for f in metadata.json config.yaml; do
+  [[ -f "$BEADS_DIR/$f" ]] && cp -f "$BEADS_DIR/$f" "$BACKUP_DIR/$f"
+done
+cp -f "$DB_PATH/.dolt/repo_state.json" "$BACKUP_DIR/repo_state.json" 2>/dev/null || true
+
+if (( AUDIT_ONLY )); then
+  step "2/3  Clone the remote into a scratch workspace"
+  PROBE="$(mktemp -d)"; trap 'rm -rf "$PROBE"' EXIT
+  mkdir -p "$PROBE/.beads"; chmod 700 "$PROBE/.beads"
+  cp -f "$BEADS_DIR/metadata.json" "$PROBE/.beads/metadata.json" 2>/dev/null || true
+  cp -f "$BEADS_DIR/config.yaml"   "$PROBE/.beads/config.yaml"   2>/dev/null || true
+  ( cd "$PROBE" && git init -q . && git remote add origin "$ROOT" >/dev/null 2>&1 || true )
+  BD_NON_INTERACTIVE=1 bd_probe bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
+  NEW_DB=""
+  for c in "$PROBE/.beads/embeddeddolt/$DB_NAME" "$PROBE/.beads/dolt/$DB_NAME"; do
+    [[ -d "$c/.dolt" ]] && { NEW_DB="$c"; break; }
+  done
+  [[ -n "$NEW_DB" ]] || die "probe clone produced no database under $PROBE/.beads"
+  step "3/3  Export the remote database"
+  bd_probe export --all -o "$BACKUP_DIR/remote-all.jsonl" 2>&1 | sed 's/^/  /'
+else
+  step "2/5  Move the live database aside and clone the remote"
+  if ! mv "$DB_PATH" "$BACKUP_DIR/dolt-db.original" 2>/dev/null; then
+    note "(cross-device: copying instead of renaming)"
+    cp -a "$DB_PATH" "$BACKUP_DIR/dolt-db.original"
+    diff -rq "$DB_PATH" "$BACKUP_DIR/dolt-db.original" >/dev/null || die "backup copy does not match the source - aborting"
+    rm -rf "$DB_PATH"
+  fi
+  note "backup: $BACKUP_DIR/dolt-db.original"
+  BD_NON_INTERACTIVE=1 bd_new bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
+  [[ -d "$DB_PATH/.dolt" ]] || die "bootstrap did not produce $DB_PATH - roll back with: $ME --rollback $BACKUP_DIR"
+  NEW_DB="$DB_PATH"
+
+  step "3/5  Verify the fresh database"
+  if ! STATUS_OUT="$(bd_new status 2>&1)"; then
+    printf '%s\n' "$STATUS_OUT" >&2
+    die "fresh DB does not open - roll back with: $ME --rollback $BACKUP_DIR"
+  fi
+  sed -n '3,10p' <<<"$STATUS_OUT" | sed 's/^/  /'
+  if (( WRITE_PROBE )); then
+    # Exercise the ISSUE write path, not just kv: beads records an audit event
+    # on every issue mutation, and a clone of a repo that keeps `events` in
+    # dolt_ignore has no events table, so `bd create` fails while reads and
+    # `bd kv set` both look perfectly healthy.
+    PROBE_OUT="$(bd_new create "beads-db-resync write probe $TS" -t chore -p 4 2>&1)" && PROBE_RC=0 || PROBE_RC=$?
+    if (( PROBE_RC == 0 )); then
+      PROBE_ID="$(sed -n 's/.*Created issue: \([A-Za-z0-9_.-]*\).*/\1/p' <<<"$PROBE_OUT" | head -1)"
+      [[ -n "$PROBE_ID" ]] && bd_new delete "$PROBE_ID" --force >/dev/null 2>&1
+      note "read/write probe: ok (created and removed $PROBE_ID)"
+    else
+      printf '%s\n' "$PROBE_OUT" | sed 's/^/    /' >&2
+      warn "WRITE PROBE FAILED - this database reads fine but will not accept issue writes."
+      if grep -q 'table not found: events' <<<"$PROBE_OUT"; then
+        warn "cause: the remote keeps 'events' in dolt_ignore, so the clone has no events table."
+        warn "repair (the table stays machine-local because dolt_ignore covers it):"
+        warn "  cd $BACKUP_DIR/dolt-db.original && dolt sql -q \"show create table events\""
+        warn "  cd $DB_PATH && dolt sql -q \"<that CREATE TABLE>\""
+        warn "  # optional, to keep this machine's audit history:"
+        warn "  cd $BACKUP_DIR/dolt-db.original && dolt sql -q \"select * from events\" -r csv > /tmp/events.csv"
+        warn "  cd $DB_PATH && dolt table import -u events /tmp/events.csv"
+      fi
+      warn "or undo everything: $ME --rollback $BACKUP_DIR"
+    fi
+  fi
+  bd_new export --all -o "$BACKUP_DIR/remote-all.jsonl" 2>&1 | sed 's/^/  /'
+fi
+
+if (( AUDIT_ONLY )); then step "Compare local against the remote"; else step "4/5  Audit the backup for local-only data"; fi
+AUDIT_RC=0
+jsonl_audit "$BACKUP_DIR/local-all.jsonl" "$BACKUP_DIR/remote-all.jsonl" "$BACKUP_DIR" || AUDIT_RC=$?
+if (( HAVE_DOLT )); then
+  OLD_DB="$BACKUP_DIR/dolt-db.original"; (( AUDIT_ONLY )) && OLD_DB="$DB_PATH"
+  echo
+  table_audit "$OLD_DB" "$NEW_DB" "$BACKUP_DIR/tables.json" || AUDIT_RC=3
+fi
+
+if (( AUDIT_ONLY )); then step "Result"; else step "5/5  Result"; fi
+CONFLICTS=0; [[ -d "$BACKUP_DIR/memory-conflicts" ]] && CONFLICTS=1
+N_RESTORE=0; [[ -s "$BACKUP_DIR/restore.jsonl" ]] && N_RESTORE=$(wc -l < "$BACKUP_DIR/restore.jsonl")
+
+if (( AUDIT_RC == 3 )); then
+  if (( AUDIT_ONLY )); then
+    warn "the local database holds data the remote does not. Review $BACKUP_DIR/audit.json before resyncing."
+  else
+    if (( N_RESTORE > 0 )) && (( DO_RESTORE )); then
+      note "importing $N_RESTORE local-only record(s) back into the fresh database"
+      bd_new import "$BACKUP_DIR/restore.jsonl" 2>&1 | sed 's/^/  /'
+      AUDIT_RC=0
+    elif (( N_RESTORE > 0 )); then
+      warn "$N_RESTORE record(s) exist only in the backup and were NOT restored."
+      warn "review $BACKUP_DIR/audit.json, then: (cd $ROOT && bd import $BACKUP_DIR/restore.jsonl)"
+    fi
+    if (( CONFLICTS )); then
+      warn "some memories differ on both sides and cannot be merged automatically."
+      warn "reconcile by hand from $BACKUP_DIR/memory-conflicts/, then: (cd $ROOT && bd remember \"<merged>\" --key <key>)"
+      AUDIT_RC=3
+    fi
+    if ls "$BACKUP_DIR"/only-old.*.txt >/dev/null 2>&1; then
+      warn "row-level leftovers listed in $BACKUP_DIR/only-old.*.txt (labels and dependency edges ride along with the issues in restore.jsonl; anything else is informational)"
+    fi
+  fi
+else
+  if (( AUDIT_ONLY )); then
+    note "local database and remote agree - a resync would lose nothing"
+  else
+    note "no local-only issues, memories, comments or dependency edges - the old DB was a strict subset"
+  fi
+  if (( KEEP_JSONL_ONLY )) && ! (( AUDIT_ONLY )); then
+    rm -rf "$BACKUP_DIR/dolt-db.original"
+    note "dropped the backed-up Dolt directory (--keep-jsonl-only); JSONL exports and audit kept"
+  fi
+fi
+
+echo
+if (( AUDIT_ONLY )); then note "audit report: $BACKUP_DIR"; else note "backup + audit: $BACKUP_DIR"; fi
+(( AUDIT_ONLY )) || note "undo with: $ME --rollback $BACKUP_DIR"
+(( AUDIT_ONLY )) || note "publish local commits when ready: (cd $ROOT && bd dolt push)"
+exit "$AUDIT_RC"
