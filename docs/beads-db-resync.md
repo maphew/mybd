@@ -45,20 +45,52 @@ before anything is deleted.
 
 ## What it does
 
+The order matters: **everything is validated before anything is destroyed.**
+
 1. **Export** the current DB to `local-all.jsonl` (`bd export --all`, retried
    with `BD_IGNORE_SCHEMA_SKEW=1` so a skewed DB can still be read). Aborts
    without touching anything if the export fails or comes back empty.
-2. **Move** the live Dolt directory into the backup — a rename when possible, a
-   verified `cp -a` when the backup lands on another filesystem.
-3. **Clone** the remote with `bd bootstrap --yes`.
-4. **Verify** the result opens, and that it accepts a *write* (see below).
-5. **Audit** the backup against the fresh clone and write `audit.json`,
+2. **Clone** the remote into a staging workspace beside the backup and prove it
+   there: it must open cleanly, and it must accept a real bead write.
+3. **Audit** the live DB against the staged clone, writing `audit.json`,
    `restore.jsonl`, and per-table `only-old.*.txt`.
-6. **Restore** local-only rows with `bd import` when you pass `--restore`.
+4. **Install** — and only now is anything moved. The live Dolt directory goes
+   into the backup and the staged clone takes its place. If the installed DB
+   fails to open, the original is put straight back.
+5. **Restore** local-only rows with `bd import` when you pass `--restore`.
+
+Any failure in steps 1–3 is a refusal with the live database untouched. That is
+the whole point: an earlier version verified *after* the swap, and the first
+time it met a remote carrying the same schema skew as the local DB it left the
+project broken and the user holding a rollback command. Verifying first turns
+that into "nothing happened, here is what you actually need".
 
 Exit codes: `0` clean · `1` error · `2` bad usage · `3` local-only data found
 and not restored. That makes it safe to script: `beads-db-resync --restore ||
 handle-conflicts`.
+
+## When a resync is the wrong tool
+
+Two failures look like "my DB is broken" but a resync cannot fix either, because
+the problem is in the remote too. The script detects both and refuses.
+
+**The remote carries the same schema skew.** If `bd` reports *"database is at
+v54, binary knows up to v53"* on the local DB *and* on a fresh clone, replacing
+one with the other just downloads the same problem. What you need is the schema
+cursor rollback from
+[RECOVERY-1.2.1](https://github.com/gastownhall/beads/blob/v1.2.2/docs/RECOVERY-1.2.1.md):
+
+```bash
+cd .beads/embeddeddolt/<db>
+dolt sql -q "DELETE FROM schema_migrations WHERE version > 53; CALL DOLT_ADD('schema_migrations'); CALL DOLT_COMMIT('-m', 'recovery: roll schema cursor back to v53 (accidental v1.2.1)', '--author', 'bd recovery <recovery@beads.invalid>')"
+bd status        # clean, no BD_IGNORE_SCHEMA_SKEW
+bd dolt push     # so other clones stop inheriting the skew
+```
+
+Push it. The cursor lives in a versioned table, so the fix propagates and every
+other clone stops re-skewing.
+
+**A clone of the remote is write-dead.** See the `events` trap below.
 
 ## Four traps this encodes
 
@@ -90,6 +122,13 @@ cd <backup>/dolt-db.original && dolt sql -q "select * from events" -r csv > /tmp
 cd <live-db>                 && dolt table import -u events /tmp/events.csv
 ```
 
+**Staging must mirror the project's git identity.** With `routing.mode=auto`,
+bd infers whether it is acting as maintainer or contributor from `origin`'s URL.
+A staging clone whose origin points at a local path is read as a contributor and
+tries to route new beads to `routing.contributor` — which fails with
+`cannot create .beads directory` and looks exactly like a broken clone. The
+script copies the real `origin` URL and `beads.role` into staging.
+
 **Never use `bd -C <dir>` for this.** bd resolves `.beads/config.yaml` — and so
 `sync.remote` — from the **process cwd**, not from the `-C` target. Run
 `bd -C /other/project bootstrap` from inside a beads repo and it plans a clone
@@ -104,13 +143,22 @@ If you would rather not run the script, this is the whole of it:
 ```bash
 cd <project>                                   # cd, do not use bd -C
 bd export --all -o /tmp/local-all.jsonl        # BD_IGNORE_SCHEMA_SKEW=1 if skewed
-mv .beads/embeddeddolt/<db> ~/backups/db.original
+
+# stage the clone somewhere disposable and prove it BEFORE swapping
+mkdir -p /tmp/stage/.beads && cp .beads/{metadata.json,config.yaml} /tmp/stage/.beads/
+cd /tmp/stage && git init -q . && git remote add origin "$(git -C <project> remote get-url origin)"
 bd bootstrap --yes
 bd status                                      # reads
 bd create "probe" -t chore && bd delete <id> --force   # writes - do not skip
 bd export --all -o /tmp/remote-all.jsonl
+
 # diff the two JSONL files by issue id and memory key; compare comments by
 # content; ignore tables listed in dolt_ignore
+
+# only now swap
+cd <project>
+mv .beads/embeddeddolt/<db> ~/backups/db.original
+mv /tmp/stage/.beads/embeddeddolt/<db> .beads/embeddeddolt/<db>
 bd import /tmp/restore.jsonl                   # whatever was local-only
 bd dolt push
 ```

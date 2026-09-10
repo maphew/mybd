@@ -120,7 +120,13 @@ if grep -q 'SOMETHING-ELSE' "$WORK/meta/.beads/metadata.json"; then ok "a real c
 # --- the comments-by-id trap must stay fixed --------------------------------
 if grep -q "md5(text)" "$SUT"; then ok "comments are compared by content, not id"; else bad "comments are compared by content, not id"; fi
 if grep -q "dolt_ignore" "$SUT"; then ok "dolt_ignore tables are not reported as loss"; else bad "dolt_ignore tables are not reported as loss"; fi
-if grep -q 'bd_new create' "$SUT"; then ok "write probe exercises the issue path"; else bad "write probe exercises the issue path"; fi
+if grep -q 'bd_probe create' "$SUT"; then ok "write probe exercises the issue path"; else bad "write probe exercises the issue path"; fi
+# The live DB must only be touched after the clone is proven good.
+if [[ $(grep -n 'mv "$DB_PATH" "$BACKUP_DIR/dolt-db.original"' "$SUT" | cut -d: -f1) -gt $(grep -n 'refusing to install a write-dead database' "$SUT" | cut -d: -f1) ]]; then
+  ok "the swap happens after the clone is validated"
+else bad "the swap happens after the clone is validated"; fi
+if grep -q 'swap reverted automatically' "$SUT"; then ok "a bad install auto-reverts"; else bad "a bad install auto-reverts"; fi
+if grep -q 'REMOTE carries the same schema skew' "$SUT"; then ok "a skewed remote is diagnosed, not downloaded"; else bad "a skewed remote is diagnosed, not downloaded"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

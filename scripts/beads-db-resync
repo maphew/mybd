@@ -39,7 +39,7 @@ export PATH
 
 ME="beads-db-resync"
 ROOT=""; BACKUP_DIR=""; DRY_RUN=0; ASSUME_YES=0; DO_RESTORE=0
-AUDIT_ONLY=0; ROLLBACK_DIR=""; WRITE_PROBE=1; KEEP_JSONL_ONLY=0; PROBE=""
+AUDIT_ONLY=0; ROLLBACK_DIR=""; WRITE_PROBE=1; KEEP_JSONL_ONLY=0; PROBE=""; WRITE_DEAD=0
 
 die()  { printf '%s: %s\n' "$ME" "$*" >&2; exit 1; }
 note() { printf '  %s\n' "$*"; }
@@ -430,7 +430,7 @@ confirm
 
 mkdir -p "$BACKUP_DIR"
 
-if (( AUDIT_ONLY )); then step "1/3  Export the current database"; else step "1/5  Export the current database"; fi
+step "1/4  Export the current database"
 if ! bd_old export --all -o "$BACKUP_DIR/local-all.jsonl" > "$BACKUP_DIR/.export.log" 2>&1; then
   sed 's/^/  /' "$BACKUP_DIR/.export.log" >&2
   die "export failed - refusing to touch the database without a readable backup"
@@ -442,79 +442,127 @@ for f in metadata.json config.yaml; do
 done
 cp -f "$DB_PATH/.dolt/repo_state.json" "$BACKUP_DIR/repo_state.json" 2>/dev/null || true
 
-if (( AUDIT_ONLY )); then
-  step "2/3  Clone the remote into a scratch workspace"
-  PROBE="$(mktemp -d)"; trap 'rm -rf "$PROBE"' EXIT
-  mkdir -p "$PROBE/.beads"; chmod 700 "$PROBE/.beads"
-  cp -f "$BEADS_DIR/metadata.json" "$PROBE/.beads/metadata.json" 2>/dev/null || true
-  cp -f "$BEADS_DIR/config.yaml"   "$PROBE/.beads/config.yaml"   2>/dev/null || true
-  ( cd "$PROBE" && git init -q . && git remote add origin "$ROOT" >/dev/null 2>&1 || true )
-  BD_NON_INTERACTIVE=1 bd_probe bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
-  NEW_DB=""
-  for c in "$PROBE/.beads/embeddeddolt/$DB_NAME" "$PROBE/.beads/dolt/$DB_NAME"; do
-    [[ -d "$c/.dolt" ]] && { NEW_DB="$c"; break; }
-  done
-  [[ -n "$NEW_DB" ]] || die "probe clone produced no database under $PROBE/.beads"
-  step "3/3  Export the remote database"
-  bd_probe export --all -o "$BACKUP_DIR/remote-all.jsonl" 2>&1 | sed 's/^/  /'
-else
-  step "2/5  Move the live database aside and clone the remote"
-  if ! mv "$DB_PATH" "$BACKUP_DIR/dolt-db.original" 2>/dev/null; then
-    note "(cross-device: copying instead of renaming)"
-    cp -a "$DB_PATH" "$BACKUP_DIR/dolt-db.original"
-    diff -rq "$DB_PATH" "$BACKUP_DIR/dolt-db.original" >/dev/null || die "backup copy does not match the source - aborting"
-    rm -rf "$DB_PATH"
-  fi
-  note "backup: $BACKUP_DIR/dolt-db.original"
-  BD_NON_INTERACTIVE=1 bd_new bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
-  [[ -d "$DB_PATH/.dolt" ]] || die "bootstrap did not produce $DB_PATH - roll back with: $ME --rollback $BACKUP_DIR"
-  NEW_DB="$DB_PATH"
-  restore_metadata_formatting
+# The clone is built and fully validated in a staging workspace BEFORE the live
+# database is touched. Verifying after the swap means a bad clone leaves the
+# project broken and the user holding a rollback command; verifying first means
+# a bad clone is simply a refusal with nothing changed.
+step "2/4  Clone the remote into a staging workspace and validate it"
+PROBE="$BACKUP_DIR/.staging"
+rm -rf "$PROBE"; mkdir -p "$PROBE/.beads"; chmod 700 "$PROBE/.beads"
+trap '[[ -n "${PROBE:-}" ]] && rm -rf "$PROBE"; true' EXIT
+for f in metadata.json config.yaml; do
+  [[ -f "$BEADS_DIR/$f" ]] && cp -f "$BEADS_DIR/$f" "$PROBE/.beads/$f"
+done
+# Staging must mirror the project's git identity. bd infers its routing role
+# from origin's URL (routing.mode=auto), so pointing origin at a local path
+# makes it behave as a contributor and try to route new beads to
+# routing.contributor - a write failure that says nothing about the clone.
+ORIGIN_URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)"
+[[ -n "$ORIGIN_URL" ]] || ORIGIN_URL="$ROOT"
+( cd "$PROBE" && git init -q . && git remote add origin "$ORIGIN_URL" >/dev/null 2>&1 || true )
+for k in beads.role user.name user.email; do
+  v="$(git -C "$ROOT" config --get "$k" 2>/dev/null || true)"
+  [[ -n "$v" ]] && git -C "$PROBE" config "$k" "$v"
+done
+BD_NON_INTERACTIVE=1 bd_probe bootstrap --yes 2>&1 | tail -1 | sed 's/^/  /'
+NEW_DB=""
+for c in "$PROBE/.beads/embeddeddolt/$DB_NAME" "$PROBE/.beads/dolt/$DB_NAME"; do
+  [[ -d "$c/.dolt" ]] && { NEW_DB="$c"; break; }
+done
+[[ -n "$NEW_DB" ]] || die "the clone produced no database under $PROBE/.beads (nothing was changed)"
 
-  step "3/5  Verify the fresh database"
-  if ! STATUS_OUT="$(bd_new status 2>&1)"; then
-    printf '%s\n' "$STATUS_OUT" >&2
-    die "fresh DB does not open - roll back with: $ME --rollback $BACKUP_DIR"
+# Does the clone open cleanly, or did we just download the same problem?
+if ! STAGE_STATUS="$(bd_probe status 2>&1)"; then
+  printf '%s\n' "$STAGE_STATUS" | sed 's/^/    /' >&2
+  echo >&2
+  if grep -q 'schema version mismatch' <<<"$STAGE_STATUS"; then
+    warn "the REMOTE carries the same schema skew as your local database."
+    warn "replacing from the remote cannot fix this - you would download the same problem."
+    warn "what you need is the schema-cursor rollback from RECOVERY-1.2.1:"
+    warn ""
+    warn "  cd $DB_PATH"
+    warn "  dolt sql -q \"DELETE FROM schema_migrations WHERE version > 53; CALL DOLT_ADD('schema_migrations'); CALL DOLT_COMMIT('-m', 'recovery: roll schema cursor back to v53 (accidental v1.2.1)', '--author', 'bd recovery <recovery@beads.invalid>')\""
+    warn "  bd status          # should be clean, no BD_IGNORE_SCHEMA_SKEW"
+    warn "  bd dolt push       # so other clones stop inheriting the skew"
+    warn ""
+    warn "https://github.com/gastownhall/beads/blob/v1.2.2/docs/RECOVERY-1.2.1.md"
   fi
-  sed -n '3,10p' <<<"$STATUS_OUT" | sed 's/^/  /'
-  if (( WRITE_PROBE )); then
-    # Exercise the ISSUE write path, not just kv: beads records an audit event
-    # on every issue mutation, and a clone of a repo that keeps `events` in
-    # dolt_ignore has no events table, so `bd create` fails while reads and
-    # `bd kv set` both look perfectly healthy.
-    PROBE_OUT="$(bd_new create "beads-db-resync write probe $TS" -t chore -p 4 2>&1)" && PROBE_RC=0 || PROBE_RC=$?
-    if (( PROBE_RC == 0 )); then
-      PROBE_ID="$(sed -n 's/.*Created issue: \([A-Za-z0-9_.-]*\).*/\1/p' <<<"$PROBE_OUT" | head -1)"
-      [[ -n "$PROBE_ID" ]] && bd_new delete "$PROBE_ID" --force >/dev/null 2>&1
-      note "read/write probe: ok (created and removed $PROBE_ID)"
+  die "the staged clone does not open - your database was NOT touched"
+fi
+sed -n '3,10p' <<<"$STAGE_STATUS" | sed 's/^/  /'
+
+if (( WRITE_PROBE )); then
+  # Exercise the ISSUE write path, not just kv: beads records an audit event on
+  # every issue mutation, and a clone of a repo that keeps `events` in
+  # dolt_ignore has no events table, so `bd create` fails while reads and
+  # `bd kv set` both look perfectly healthy.
+  PROBE_OUT="$(bd_probe create "beads-db-resync write probe $TS" -t chore -p 4 2>&1)" && PROBE_RC=0 || PROBE_RC=$?
+  if (( PROBE_RC == 0 )); then
+    PROBE_ID="$(sed -n 's/.*Created issue: \([A-Za-z0-9_.-]*\).*/\1/p' <<<"$PROBE_OUT" | head -1)"
+    [[ -n "$PROBE_ID" ]] && bd_probe delete "$PROBE_ID" --force >/dev/null 2>&1
+    note "read/write probe: ok (created and removed $PROBE_ID)"
+  else
+    printf '%s\n' "$PROBE_OUT" | sed 's/^/    /' >&2
+    echo >&2
+    warn "the staged clone reads fine but will NOT accept issue writes."
+    if grep -q 'table not found: events' <<<"$PROBE_OUT"; then
+      warn "cause: the remote keeps 'events' in dolt_ignore, so a clone has no events table."
+      warn "repair the staged clone before swapping it in (it stays machine-local):"
+      warn "  cd $DB_PATH && dolt sql -q \"show create table events\"   # copy the DDL"
+      warn "  cd $NEW_DB  && dolt sql -q \"<that CREATE TABLE>\""
+      warn "then re-run with --no-write-probe, or fix it upstream first."
+    fi
+    if (( AUDIT_ONLY )); then
+      WRITE_DEAD=1
+      warn "continuing the audit anyway (--audit-only changes nothing)"
     else
-      printf '%s\n' "$PROBE_OUT" | sed 's/^/    /' >&2
-      warn "WRITE PROBE FAILED - this database reads fine but will not accept issue writes."
-      if grep -q 'table not found: events' <<<"$PROBE_OUT"; then
-        warn "cause: the remote keeps 'events' in dolt_ignore, so the clone has no events table."
-        warn "repair (the table stays machine-local because dolt_ignore covers it):"
-        warn "  cd $BACKUP_DIR/dolt-db.original && dolt sql -q \"show create table events\""
-        warn "  cd $DB_PATH && dolt sql -q \"<that CREATE TABLE>\""
-        warn "  # optional, to keep this machine's audit history:"
-        warn "  cd $BACKUP_DIR/dolt-db.original && dolt sql -q \"select * from events\" -r csv > /tmp/events.csv"
-        warn "  cd $DB_PATH && dolt table import -u events /tmp/events.csv"
-      fi
-      warn "or undo everything: $ME --rollback $BACKUP_DIR"
+      die "refusing to install a write-dead database - your database was NOT touched"
     fi
   fi
-  bd_new export --all -o "$BACKUP_DIR/remote-all.jsonl" 2>&1 | sed 's/^/  /'
 fi
 
-if (( AUDIT_ONLY )); then step "Compare local against the remote"; else step "4/5  Audit the backup for local-only data"; fi
+step "3/4  Compare the backup against the staged clone"
+bd_probe export --all -o "$BACKUP_DIR/remote-all.jsonl" 2>&1 | grep -v '^$' | sed 's/^/  /' || true
+
+if (( AUDIT_ONLY )); then step "Result: local vs remote"; else step "4/4  Audit"; fi
 AUDIT_RC=0
 jsonl_audit "$BACKUP_DIR/local-all.jsonl" "$BACKUP_DIR/remote-all.jsonl" "$BACKUP_DIR" || AUDIT_RC=$?
 if (( HAVE_DOLT )); then
-  OLD_DB="$BACKUP_DIR/dolt-db.original"; (( AUDIT_ONLY )) && OLD_DB="$DB_PATH"
   echo
-  table_audit "$OLD_DB" "$NEW_DB" "$BACKUP_DIR/tables.json" || AUDIT_RC=3
+  table_audit "$DB_PATH" "$NEW_DB" "$BACKUP_DIR/tables.json" || AUDIT_RC=3
 fi
 
-if (( AUDIT_ONLY )); then step "Result"; else step "5/5  Result"; fi
+if (( AUDIT_ONLY )); then
+  rm -rf "$PROBE"
+else
+  # Everything above is read-only. This is the only destructive moment, and it
+  # runs only once the replacement has been proven to open, write, and account
+  # for every row in the backup.
+  step "Install the validated clone"
+  if ! mv "$DB_PATH" "$BACKUP_DIR/dolt-db.original" 2>/dev/null; then
+    note "(cross-device: copying instead of renaming)"
+    cp -a "$DB_PATH" "$BACKUP_DIR/dolt-db.original"
+    diff -rq "$DB_PATH" "$BACKUP_DIR/dolt-db.original" >/dev/null || die "backup copy does not match the source - aborting, nothing changed"
+    rm -rf "$DB_PATH"
+  fi
+  note "previous database: $BACKUP_DIR/dolt-db.original"
+  if ! mv "$NEW_DB" "$DB_PATH" 2>/dev/null; then
+    cp -a "$NEW_DB" "$DB_PATH" || {
+      mv "$BACKUP_DIR/dolt-db.original" "$DB_PATH"
+      die "could not install the staged clone; put the original back - nothing lost"
+    }
+  fi
+  rm -rf "$PROBE"
+  restore_metadata_formatting
+  if ! bd_new status >/dev/null 2>&1; then
+    warn "the installed database does not open - restoring the original"
+    rm -rf "$DB_PATH"; mv "$BACKUP_DIR/dolt-db.original" "$DB_PATH"
+    die "swap reverted automatically; nothing lost"
+  fi
+  note "installed at $DB_PATH"
+fi
+
+step "Result"
 CONFLICTS=0; [[ -d "$BACKUP_DIR/memory-conflicts" ]] && CONFLICTS=1
 N_RESTORE=0; [[ -s "$BACKUP_DIR/restore.jsonl" ]] && N_RESTORE=$(wc -l < "$BACKUP_DIR/restore.jsonl")
 
@@ -549,6 +597,12 @@ else
     rm -rf "$BACKUP_DIR/dolt-db.original"
     note "dropped the backed-up Dolt directory (--keep-jsonl-only); JSONL exports and audit kept"
   fi
+fi
+
+if (( WRITE_DEAD )); then
+  echo
+  warn "NOTE: a fresh clone of this remote cannot accept issue writes (see above)."
+  warn "A resync would leave you needing to recreate the events table by hand."
 fi
 
 echo
