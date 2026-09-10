@@ -4,7 +4,7 @@ Recovered 2026-09-10 from coordination branch `work/mk1`, commit `c28fad7c095a12
 
 ---
 
-# PR #3317 Review/Rework Plan: Add Codex hooks and shared agent plugin
+# PR gastownhall/beads#3317 Review/Rework Plan: Add Codex hooks and shared agent plugin
 
 **Author**: ebrevdo\
 **Status**: open, currently conflicting\
@@ -16,7 +16,7 @@ Recovered 2026-09-10 from coordination branch `work/mk1`, commit `c28fad7c095a12
 
 ## Summary
 
-PR #3317 is directionally valuable: Beads should have a first-class Codex distribution path, and the reusable agent workflow belongs in a skill that can be packaged by a Codex plugin. The current PR is too broad to review or land safely because it combines at least six product decisions:
+PR gastownhall/beads#3317 is directionally valuable: Beads should have a first-class Codex distribution path, and the reusable agent workflow belongs in a skill that can be packaged by a Codex plugin. The current PR is too broad to review or land safely because it combines at least six product decisions:
 
 - Packaging the existing Beads skill as a shared Claude/Codex plugin tree.
 - Adding Codex plugin metadata and a repo-local Codex marketplace entry.
